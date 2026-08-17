@@ -1208,6 +1208,23 @@ export function Step6Cleanse() {
                     </div>
                   )}
 
+                  {/* AI Fix Execution Failures */}
+                  {summary.failures?.items && summary.failures.items.length > 0 && (
+                    <div className="p-3 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/30 dark:bg-red-950/20 space-y-2">
+                      <div className="text-[11.5px] font-bold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                        <span>⚠️ AI Fixer Warnings / Failures ({summary.failures.items.length})</span>
+                      </div>
+                      <div className="rounded-lg border border-red-200/60 dark:border-red-900/30 bg-[var(--bg-primary)] p-2.5 space-y-1.5 max-h-36 overflow-y-auto font-mono text-[10.5px]">
+                        {summary.failures.items.map((fail: any, i: number) => (
+                          <div key={i} className="flex items-start justify-between gap-2 text-red-600 dark:text-red-400">
+                            <span className="font-bold shrink-0">{fail.rule_code || fail.group_id}</span>
+                            <span className="text-[var(--text-tertiary)] truncate">{fail.reason || fail.type}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Manual Review Items */}
                   <div>
                     <div className="text-[11.5px] font-bold text-[var(--text-secondary)] mb-2">

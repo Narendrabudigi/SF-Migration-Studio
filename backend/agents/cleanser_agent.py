@@ -1698,7 +1698,7 @@ def fix_dynamic_rule(df, issue_rows):
 
 CRITICAL DATAFRAME INDEXING & FIELD INSTRUCTIONS:
 1. USE 0-INDEXED `row_index`: Each item in `issue_rows` has integer `row_index` (0-indexed position in `df`). Use `row_idx = int(issue.get('row_index', 0))` to index into `df.at[row_idx, col_name]`. (Do NOT use 1-indexed `row_number` directly as DataFrame index).
-2. TARGET COLUMN MATCHING: Find target column in `df.columns` by checking case-insensitively (e.g. if field is 'COUNTRY', check for 'COUNTRY' or 'LAND1' in `df.columns`).
+2. TARGET COLUMN MATCHING: Find target column in `df.columns` by checking case-insensitively (e.g. if field is 'COUNTRY', check for 'COUNTRY' or 'LAND1' in `df.columns`). If field is 'MULTIPLE' or 'GENERAL', inspect `issue.get('field')` or `issue.get('field_name')` inside each item in `issue_rows` to match target column names in `df.columns`.
 3. DATA-TYPE AWARE PADDING/EXTENSION:
    - If the rule requires target length N (e.g. 4) and value contains text/letters (e.g. 'IN'): Right-pad/extend with '0' or 'X' to length N (e.g. 'IN' -> 'IN00' or 'INXX').
    - If value is purely numeric (e.g. '12'): Left-pad with zeroes to length N (e.g. '0012').
@@ -1862,6 +1862,117 @@ SAFE_DYNAMIC_BUILTINS = {
 }
 
 
+def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict[str, Any]] | None = None) -> list[str]:
+    cols = list(df.columns)
+    if not cols:
+        return []
+
+    # 1. Exact match
+    if field_name in cols:
+        return [field_name]
+
+    # 2. Case-insensitive / clean key match
+    clean_target = _field_key(field_name) if field_name else ""
+    matched = [c for c in cols if _field_key(c) == clean_target]
+    if matched:
+        return matched
+
+    # 3. If field_name is MULTIPLE or GENERAL, inspect issue list for specific fields
+    if field_name in ("MULTIPLE", "GENERAL", "") and issues:
+        resolved = set()
+        for issue in issues:
+            f = issue.get("field") or issue.get("field_name")
+            if f and f not in ("MULTIPLE", "GENERAL"):
+                m = [c for c in cols if _field_key(c) == _field_key(f) or c.lower() == str(f).lower()]
+                resolved.update(m)
+        if resolved:
+            return list(resolved)
+
+    # 4. Partial substring matching (e.g. "Employee External ID" vs "person_id_external" or "employee_id")
+    target_lower = (field_name or "").lower()
+    if "id" in target_lower or "external" in target_lower:
+        id_cols = [c for c in cols if "id" in c.lower() or "external" in c.lower() or "kunnr" in c.lower() or "lifnr" in c.lower()]
+        if id_cols:
+            return id_cols
+
+    return cols if field_name in ("MULTIPLE", "GENERAL") else []
+
+
+def _apply_deterministic_dynamic_fallback(
+    df: pd.DataFrame,
+    rule_code: str,
+    field_name: str,
+    description: str,
+    issues: list[dict[str, Any]],
+    summary: CleaningSummary,
+) -> int:
+    """
+    Deterministic fallback engine for dynamic validation rules when LLM generation
+    is unavailable or fails. Matches common rule intents (numeric, uppercase, trim, date)
+    and applies clean fixes directly.
+    """
+    desc_clean = _clean_key(description)
+    total_fixes = 0
+
+    resolved_cols = _resolve_target_columns(df, field_name, issues)
+
+    # Rule intent heuristics
+    is_numeric_rule = any(kw in desc_clean for kw in ["NUMERIC", "DIGIT", "NUMBER", "INTEGER", "ONLY NUMBERS"])
+    is_uppercase_rule = any(kw in desc_clean for kw in ["UPPERCASE", "CAPITAL", "UPPER"])
+    is_trim_rule = any(kw in desc_clean for kw in ["SPACE", "WHITESPACE", "TRIM", "PADDING"])
+    is_date_rule = any(kw in desc_clean for kw in ["DATE", "YYYYMMDD", "FORMAT"])
+
+    if not (is_numeric_rule or is_uppercase_rule or is_trim_rule or is_date_rule):
+        if "ID" in desc_clean or "CODE" in desc_clean or rule_code.startswith("DYNAMIC_"):
+            is_numeric_rule = True
+        else:
+            return 0
+
+    for issue in issues:
+        row_idx = issue.get("row_index")
+        if row_idx is None:
+            r = issue.get("row_number") or issue.get("row") or 1
+            try:
+                row_idx = max(0, int(r) - 1)
+            except Exception:
+                row_idx = 0
+
+        if row_idx < 0 or row_idx >= len(df.index):
+            continue
+
+        issue_field = issue.get("field") or issue.get("field_name")
+        target_cols = _resolve_target_columns(df, issue_field, None) if issue_field and issue_field not in ("MULTIPLE", "GENERAL") else resolved_cols
+
+        if not target_cols:
+            continue
+
+        for col in target_cols:
+            if col not in df.columns:
+                continue
+            old_val = _stringify(df.at[row_idx, col])
+            new_val = old_val
+
+            if is_numeric_rule:
+                cleaned_digits = re.sub(r"\D", "", old_val)
+                if cleaned_digits:
+                    new_val = cleaned_digits
+            elif is_uppercase_rule:
+                new_val = old_val.upper()
+            elif is_trim_rule:
+                new_val = old_val.strip()
+            elif is_date_rule:
+                norm_d = _normalize_date(old_val)
+                if norm_d:
+                    new_val = norm_d
+
+            if old_val != new_val:
+                df.at[row_idx, col] = new_val
+                summary.add_fix("dynamic", rule_code, row_idx + 1, col, old_val, new_val)
+                total_fixes += 1
+
+    return total_fixes
+
+
 def execute_dynamic_fixers(
     df: pd.DataFrame,
     dynamic_fixer_generation: dict[str, Any],
@@ -1872,13 +1983,14 @@ def execute_dynamic_fixers(
     Execute Phase 4 generated dynamic fixers against the dataset in restricted scope.
 
     Enforces dynamic fixer execution FIRST before standard validation fixes and
-    standard cleanser rules.
+    standard cleanser rules. Includes deterministic fallback for failed AI generation.
     """
     executed_list = []
     skipped_list = []
     failed_list = []
     total_fixes = 0
     applied_dynamic_rules = []
+    handled_group_ids = set()
 
     # 1. Log skipped satisfied rules from generation step
     for item in dynamic_fixer_generation.get("skipped_satisfied_rules", []):
@@ -1999,16 +2111,64 @@ def execute_dynamic_fixers(
                     summary.add_fix("dynamic", rule_code, row_idx + 1, col, old_val, new_val)
                     group_fixes += 1
 
-        executed_list.append({
-            "group_id": group_id,
-            "rule_code": rule_code,
-            "field": field_name,
-            "fixes_applied": group_fixes,
-        })
-        total_fixes += group_fixes
-        if rule_code not in applied_dynamic_rules:
-            applied_dynamic_rules.append(rule_code)
-            summary.add_rule(rule_code)
+        if group_fixes > 0:
+            handled_group_ids.add(group_id)
+            executed_list.append({
+                "group_id": group_id,
+                "rule_code": rule_code,
+                "field": field_name,
+                "fixes_applied": group_fixes,
+            })
+            total_fixes += group_fixes
+            if rule_code not in applied_dynamic_rules:
+                applied_dynamic_rules.append(rule_code)
+                summary.add_rule(rule_code)
+
+    # 4. Deterministic Dynamic Fallback for unhandled dynamic issue groups (failed LLM gen or 0 fixes)
+    issue_groups = execution_plan.get("issue_groups", []) if isinstance(execution_plan, dict) else []
+    dynamic_rule_items = execution_plan.get("dynamic_rules", {}).get("items", []) if isinstance(execution_plan, dict) else []
+    rules_desc_map = {
+        _clean_key(r.get("rule_code") or r.get("rule", {}).get("id")): _dynamic_rule_description(r.get("rule", {}))
+        for r in dynamic_rule_items
+        if isinstance(r, dict)
+    }
+
+    for group in issue_groups:
+        if not isinstance(group, dict) or group.get("scope") != "dynamic":
+            continue
+        g_id = _stringify(group.get("group_id"))
+        if g_id in handled_group_ids:
+            continue
+
+        rule_code = group.get("rule_code") or "DYNAMIC_RULE"
+        field_name = group.get("field_name") or "MULTIPLE"
+        issues = group.get("issues", [])
+        description = rules_desc_map.get(_clean_key(rule_code), issue_group_description := issues[0].get("reason", "") if issues else "")
+
+        fallback_fixes = _apply_deterministic_dynamic_fallback(
+            df,
+            rule_code=rule_code,
+            field_name=field_name,
+            description=description,
+            issues=issues,
+            summary=summary,
+        )
+
+        if fallback_fixes > 0:
+            handled_group_ids.add(g_id)
+            executed_list.append({
+                "group_id": g_id,
+                "rule_code": rule_code,
+                "field": field_name,
+                "fixes_applied": fallback_fixes,
+                "mode": "deterministic_fallback",
+            })
+            total_fixes += fallback_fixes
+            if rule_code not in applied_dynamic_rules:
+                applied_dynamic_rules.append(rule_code)
+                summary.add_rule(rule_code)
+            # Remove from failed_list if fallback succeeded
+            failed_list = [f for f in failed_list if _stringify(f.get("group_id")) != g_id]
 
     summary.dynamic_fixer_execution = {
         "executed": executed_list,

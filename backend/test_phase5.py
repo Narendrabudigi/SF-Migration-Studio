@@ -673,8 +673,74 @@ def test_17_zero_issue_dynamic_policy():
         assert payterms_item["status"] == "suppressed"
         print("  -> PASSED")
 
+
+def test_18_dynamic_1_numeric_fallback():
+    print("\n[Test 18] Dynamic rule DYNAMIC_1 with field MULTIPLE cleans non-numeric chars via deterministic fallback")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        csv_path = tmp_path / "dataset.csv"
+        out_path = tmp_path / "cleaned.csv"
+
+        df = pd.DataFrame([
+            {"person_id_external": "EMP-1001", "first_name": "John"},
+            {"person_id_external": "EMP-1002", "first_name": "Jane"},
+        ])
+        df.to_csv(csv_path, index=False)
+
+        val_report = {
+            "version": "1.0",
+            "issues": [
+                {
+                    "rule_code": "DYNAMIC_1",
+                    "rule_type": "dynamic",
+                    "field": "MULTIPLE",
+                    "row": 1,
+                    "invalid_value": "EMP-1001",
+                    "reason": "Employee External ID must contain only numeric characters",
+                },
+                {
+                    "rule_code": "DYNAMIC_1",
+                    "rule_type": "dynamic",
+                    "field": "MULTIPLE",
+                    "row": 2,
+                    "invalid_value": "EMP-1002",
+                    "reason": "Employee External ID must contain only numeric characters",
+                },
+            ]
+        }
+
+        stored_rules = [
+            {
+                "id": "DYNAMIC_1",
+                "field": "MULTIPLE",
+                "description": "Employee External ID must contain only numeric characters",
+                "label": "DYNAMIC_1",
+            }
+        ]
+
+        summary = CleaningSummary(str(csv_path), None, str(out_path))
+        summary.rows_loaded = len(df)
+        summary.execution_plan = build_cleanser_execution_plan(val_report, dynamic_rules=stored_rules)
+
+        # Simulate LLM generation failure to force fallback engine
+        summary.dynamic_fixer_generation = {
+            "generated_fixers": [],
+            "skipped_satisfied_rules": [],
+            "failed_generations": [{"group_id": "dynamic:DYNAMIC_1:MULTIPLE", "reason": "Simulated LLM key missing"}],
+            "llm_calls": 1,
+        }
+
+        cleaned_df = execute_dynamic_fixers(df, summary.dynamic_fixer_generation, summary.execution_plan, summary)
+
+        assert cleaned_df.at[0, "person_id_external"] == "1001", f"Expected 1001, got {cleaned_df.at[0, 'person_id_external']}"
+        assert cleaned_df.at[1, "person_id_external"] == "1002", f"Expected 1002, got {cleaned_df.at[1, 'person_id_external']}"
+        assert summary.dynamic_fixer_execution["fixes_count"] == 2
+        print("  -> PASSED")
+
+
 if __name__ == "__main__":
     run_all_tests()
     test_15_detailed_summary_structure()
     test_16_end_to_end_dynamic_rule()
     test_17_zero_issue_dynamic_policy()
+    test_18_dynamic_1_numeric_fallback()
