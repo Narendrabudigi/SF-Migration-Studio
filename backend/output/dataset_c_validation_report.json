@@ -1,0 +1,173 @@
+{
+  "version": "1.0",
+  "issues": [
+    {
+      "row": 1,
+      "field": "KUNNR",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 2,
+      "field": "KUNNR",
+      "rule_code": "VAL_NUMERIC_IDENTIFIER_FORMAT",
+      "severity": "ERROR"
+    },
+    {
+      "row": 3,
+      "field": "NAME1",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 4,
+      "field": "LAND1",
+      "rule_code": "VAL_COUNTRY_CODE_FORMAT",
+      "severity": "ERROR"
+    },
+    {
+      "row": 5,
+      "field": "WAERS",
+      "rule_code": "VAL_CURRENCY_CODE_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 6,
+      "field": "SMTP_ADDR",
+      "rule_code": "VAL_EMAIL_ADDRESS_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 7,
+      "field": "ERDAT",
+      "rule_code": "VAL_DATE_YYYYMMDD_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 8,
+      "field": "NAME1",
+      "rule_code": "VAL_FIELD_LENGTH",
+      "severity": "ERROR"
+    },
+    {
+      "row": 9,
+      "field": "STRAS",
+      "rule_code": "VAL_FIELD_LENGTH",
+      "severity": "ERROR"
+    },
+    {
+      "row": 10,
+      "field": "ZTERM",
+      "rule_code": "VAL_PAYMENT_TERMS_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 11,
+      "field": "KUNNR",
+      "rule_code": "VAL_NUMERIC_IDENTIFIER_FORMAT",
+      "severity": "ERROR"
+    },
+    {
+      "row": 11,
+      "field": "SMTP_ADDR",
+      "rule_code": "VAL_EMAIL_ADDRESS_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 11,
+      "field": "ERDAT",
+      "rule_code": "VAL_DATE_YYYYMMDD_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 12,
+      "field": "BUKRS",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 12,
+      "field": "VKORG",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 13,
+      "field": "VTWEG",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 13,
+      "field": "SPART",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 14,
+      "field": "KTOKD",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 15,
+      "field": "LAND1",
+      "rule_code": "VAL_COUNTRY_CODE_FORMAT",
+      "severity": "ERROR"
+    },
+    {
+      "row": 15,
+      "field": "WAERS",
+      "rule_code": "VAL_CURRENCY_CODE_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 26,
+      "field": "KUNNR",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "NAME1",
+      "rule_code": "VAL_FIELD_LENGTH",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "STRAS",
+      "rule_code": "VAL_FIELD_LENGTH",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "SMTP_ADDR",
+      "rule_code": "VAL_EMAIL_ADDRESS_FORMAT",
+      "severity": "WARNING"
+    },
+    {
+      "row": 26,
+      "field": "BUKRS",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "VTWEG",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "SPART",
+      "rule_code": "VAL_REQUIRED_FIELDS",
+      "severity": "ERROR"
+    },
+    {
+      "row": 26,
+      "field": "ERDAT",
+      "rule_code": "VAL_DATE_YYYYMMDD_FORMAT",
+      "severity": "WARNING"
+    }
+  ]
+}

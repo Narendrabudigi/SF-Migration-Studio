@@ -1,0 +1,27 @@
+KUNNR,KTOKD,NAME1,NAME2,LAND1,ORT01,PSTLZ,REGIO,STRAS,TELF1,SMTP_ADDR,BUKRS,VKORG,VTWEG,SPART,WAERS,ZTERM,STCD1,TAXKD,ERDAT
+,kuna," HDFC Bank Limited ",,India,Mumbai,400013,mh," Lower Parel ","+91-22-66521000",ar@hdfcbank.com,1000,1000,10,00,Rupee,net30,AABC-H1001A,1,20260401
+C-3002,KUNA,ICICI Securities Customer,,united states,Mumbai,400051,mh,"Bandra Kurla Complex","+91 (22) 4070 1000",billing@icicisecurities.com,1000,1000,10,00,Dollar,NET 45,AACI-S3002B,1,20260402
+3003,kuna,,," in ",Bengaluru,560001,ka,"MG Road","+91-80-44440000",blankname@customer.com,1000,1000,10,00,rupees,30 DAYS,AACB-N3003C,1,20260403
+3004,KUNA,Infosys BPM Buyer,,I1,Bengaluru,560100,ka,"Electronic City","+91-80-28520261",buyer@infosysbpm.com,1000,1000,10,00,INR,NT30,AABI-P3004D,1,20260404
+3005,KUNA,Maruti Suzuki Dealer,,India,Delhi,110070,dl,"Vasant Kunj","+91-11-46781000",dealer@maruti.com,1000,1000,10,00,R,NET30,AABM-S3005E,1,20260405
+3006,KUNA,Nestle India Distributor,,United Kingdom,Gurugram,122002,hr,"DLF Phase 3","+91-124-3940000",bad-mail,1000,1000,10,00,pound,Immediate,AABN-I3006F,1,20260406
+3007,KUNA,Pidilite Industries Buyer,,Germany,Mumbai,400059,mh,"Andheri East","+91-22-28357000",buyer@pidilite.com,1000,1000,10,00,Euro,Net 45,AABP-I3007G,1,2026-04-07
+3008,KUNA,"Reliance Retail Ventures Customer Long Legal Entity Name",,India,Mumbai,400701,mh,"Navi Mumbai Corporate Park","+91-22-35555000",ar@rilretail.com,1000,1000,10,00,Rupee,NET30,AABR-R3008H,1,20260408
+3009,KUNA,Sun Pharma Advanced Research,,France,Mumbai,400063,mh,"Extremely Long Street Address For Customer Data Migration Tower Wing Annex",+91-22-43244324,ar@sunpharma.com,1000,1000,10,00,Euro,NET60,AABS-P3009I,1,20260409
+3010,KUNA,Titan Company Customer,,us,Bengaluru,560100,ka,"Electronic City Phase 2","+91-80-66609000",customer@titan.co.in,1000,1000,10,00,usd,BADPAY,AABT-C3010J,1,20260410
+99999999999,kuna," UPL Limited Buyer ",,Netherlands,Mumbai,400051,mh,"BKC Tower","+91-22-71528000",invalid-email,1000,1000,10,00,Euro,NET30,AABU-L3011K,1,2026041A
+3012,KUNA,Vedanta Customer,,Switzerland,Mumbai,400021,mh,"Nariman Point","+91-22-66434500",customer@vedanta.com,,," 10 "," 00 ",Franc,NET 45,AABV-E3012L,1,20260412
+3013,kuna,Wipro Consumer Care,,Australia,Bengaluru,560035,ka,"Sarjapur Road","+91-80-30213021",care@wiproconsumer.com,1000,1000,,,"AUS Dollar",NET7,AABW-C3013M,1,20260413
+3014,,Xiaomi India Customer,,China,Bengaluru,560103,ka,"Outer Ring Road","+91-80-45939000",ar@xiaomi.com,1000,1000,10,00,Yuan,COD,AABX-I3014N,1,20260414
+3015,KUNA,Yokogawa India Buyer,,@@,Bengaluru,560058,ka,"Peenya Industrial Area","+91-80-41586000",buyer@yokogawa.com,1000,1000,10,00,123,NET30,AABY-I3015O,1,20260415
+3016,KUNA,Zoho Corporation,,india,Chennai,600130,tn,"Estancia IT Park","+91-44-67447070",billing@zohocorp.com,1000,1000,10,00,Rs,net30,AABZ-C3016P,1,20260416
+3017,KUNA,TVS Motor Company,,south korea,Hosur,635109,tn,"Hosur Plant","+91-4344-276780",finance@tvsmotor.com,1000,1000,10,00,USD,NET 60,AABT-M3017Q,1,20260417
+3018,KUNA,Asian Paints Dealer,,Singapore,Mumbai,400055,mh,"Santacruz East","+91-22-62181000",dealer@asianpaints.com,1000,1000,10,00,SGD,Due on Receipt,AABA-P3018R,1,20260418
+3019,KUNA,Bajaj Electricals Customer,,UAE,Mumbai,400001,mh,"Fort Office","+91-22-22043780",customer@bajajelectricals.com,1000,1000,10,00,Dirham,2/10 NET30,AABB-E3019S,1,20260419
+3020,kuna,Blue Star Limited,,canada,Mumbai,400059,mh,"Andheri East","+91-22-66544000",billing@bluestarindia.com,1000,1000,10,00,Canadian Dollar,NET45,AABB-S3020T,1,20260420
+3021,KUNA,Colgate Palmolive India,,Brazil,Mumbai,400051,mh,"Bandra Kurla Complex","+91-22-67095050",sap@colpal.com,1000,1000,10,00,Dollar,NET30,AABC-P3021U,1,20260421
+3022,KUNA,Dabur India Customer,,italy,Ghaziabad,201010,up,"Sahibabad Industrial Area","+91-120-3962100",customer@dabur.com,1000,1000,10,00,Euro,NET15,AABD-I3022V,1,20260422
+0000003023,KUNA,EIH Limited Customer,Domestic Account,IN,Delhi,110001,DL,Connaught Place,+91-11-23890000,customer@eihhotels.com,1000,1000,10,00,INR,NT30,AABE-I3023W,1,20260423
+0000003024,KUNA,Fortis Healthcare,Domestic Account,IN,Gurugram,122002,HR,Sector 44,+91-124-4921021,accounts@fortishealthcare.com,1000,1000,10,00,INR,NT45,AABF-H3024X,1,20260424
+0000003025,KUNA,Godrej Consumer Products,Domestic Account,IN,Mumbai,400079,MH,Vikhroli East,+91-22-25188010,ar@godrejcp.com,1000,1000,10,00,INR,NT30,AABG-C3025Y,1,20260425
+,kuna," International Mega Customer Corporation With Excess Legal Name ",,United States,Mumbai,400001,mh," Very Long Street Address For Migration Validation Failure Tower Annex Block North ",+91-22-99999999,not-an-email,,1000,,,"Dollar",NET 30,AAB-EXTREME999!,1,2026/04/26

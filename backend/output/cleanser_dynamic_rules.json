@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "created_at": "2026-08-11T06:18:51.826149+00:00",
+      "description": "Country code length should be 4 digits long.",
+      "error_message": "Country code must be 4 digits long.",
+      "field": "COUNTRY",
+      "id": "CUSTOMER_1",
+      "label": "Country Code Length",
+      "priority": 100,
+      "project_id": "26bcb9d9-b81d-4c43-b58e-570317165910",
+      "severity": "ERROR",
+      "source": "validation_dynamic_rule",
+      "target_object": "CUSTOMER"
+    }
+  ],
+  "version": "1.0"
+}

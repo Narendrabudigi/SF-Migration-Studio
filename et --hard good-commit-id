@@ -1,0 +1,40 @@
+[33mc5ae21b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m First Push of SF studio
+[33m99c1e76[m Fixed Backend Connection Issue
+[33m112e141[m validated updated
+[33m94a57e6[m transform updated
+[33mb1aefac[m feat(cleanse): convert edited rules to dynamic prompts on Enter, make audit log & preview full-width, format record identifiers with Row # and Master Key
+[33m130ce02[m Ui modifications
+[33mc86a530[m Merge branch 'main' of https://github.com/DunakaChetan/SAP-Migration-Studio
+[33m62d193c[m Updated
+[33m1659a30[m Updated
+[33ma2729da[m Extaract filter harmonization and cleansing update
+[33mb683244[m Updated
+[33mc92a63f[m Updated
+[33m07dafb1[m Updated
+[33mceff855[m Updated
+[33mcdd02d8[m Harmonization update
+[33m42195ad[m validation update
+[33m9b22a71[m Updated cleanser related codes and frontend
+[33mf898621[m Transformation
+[33m6a80c1e[m Backend URI Updated
+[33m5d1449f[m Bugs Fixed
+[33mf57e499[m Bugs Fixed
+[33m4618286[m Updated the report section and added edit option for dynamic rules in validation.
+[33m30f325a[m fixed the session id issue in npm build
+[33me1e8752[m validation and cleanser update including database updates.
+[33mc2f1c51[m Phase 7 end-to-end integration and verification
+[33m56fa7b5[m Add detailed structured execution summary for cleanser (Phase 6)
+[33m2facfc1[m Execute generated dynamic fixers in cleanser flow (Phase 5)
+[33m2c78dfe[m Add cleanser execution planning
+[33m0bfe0bd[m Pass complete validation reports to cleanser
+[33m9de036a[m Ignore Python cache files
+[33m6ae9db5[m Add local cleanser dynamic rule store
+[33mad835b2[m Starting new updates for cleanser
+[33me3ca283[m pulled lqatest codes into my repo and started adding chatbot to cleanser
+[33mb4751c2[m Harmonization and validation update
+[33m7137c31[m Updated
+[33mb831506[m Update
+[33maa09cab[m Updated
+[33m8b69a13[m Add standalone rule-based Cleanser Agent with FastAPI integration
+[33m5aad66c[m Updated
+[33m97c206e[m first commit

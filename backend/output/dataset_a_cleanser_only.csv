@@ -1,0 +1,30 @@
+KUNNR,KTOKD,NAME1,NAME2,LAND1,ORT01,PSTLZ,REGIO,STRAS,TELF1,SMTP_ADDR,BUKRS,VKORG,VTWEG,SPART,WAERS,ZTERM,STCD1,TAXKD,ERDAT
+1001,kuna," Infosys Technologies Ltd ",,India," Bengaluru ",560100,ka," Electronics City Phase 1 ","+91-80-28520261"," sales@infosys.com ",1000,1000," 10 "," 00 ",Rupee,NET30,AABC-I0932G,1,20260201
+1002,KUNA,Tata Consultancy Services,,in,Mumbai,400051,mh,"TCS House Raveline Street","+91 22 67789999",procurement@tcs.com,1000,1000,10,00,rupees,"Net 45",AAAC-T2727Q,1,20260202
+1003,KUNA,Wipro Limited,,INDIA,Hyderabad,500081,ts," Sarjapur Road ","+91.40.28440011",vendor@wipro.com,1000,1000,10,00,INR,"30 DAYS",aaacw0737b,1,20260203
+1004,kuna,HCL Technologies Ltd,,United States,Noida,201301,up,"Plot No 3A Sector 126","+91-120-6125000",info@hcl.com,1000,1000,10,00,Dollar,NET60,AABC-H0209G,1,20260204
+1005,KUNA,Tech Mahindra Limited,,us,Pune,411001,mh,"Gateway Building Senapati Road","+91 (20) 6660 1234",sales@techmahindra.com,1000,1000,10,00,usd,NET 30,AABC-T1174H,1,20260205
+1006,KUNA,Accenture Solutions Pvt Ltd,,United Kingdom,Bengaluru,560100,ka,"Divyasree Technopolis Yarrabanda","+91-80-40640000",india@accenture.com,1000,1000,10,00,pound,45 DAYS,AABC-A0099G,1,20260206
+1007,KUNA,IBM India Pvt Ltd,,UK,Bengaluru,560045,ka,"Manyata Tech Park","+91-80-26780000"," india@ibm.com ",1000,1000,10,00,sterling,NET45,AAACI3037M,1,20260207
+1008,KUNA,Larsen Toubro Infotech,,Germany,Mumbai,400709,mh,"Saki Naka Technology Centre","+91-22-67761000",lti@lntinfotech.com,1000,1000,10,00,Euro,NET 60,AAACL2345P,1,20260208
+1009,KUNA,Mphasis Limited,,de,Bengaluru,560071,ka,"Bagmane World Technology Centre","+91-80-33664400",info@mphasis.com,1000,1000,10,00,eur,60 DAYS,AABCM4256Q,1,20260209
+1010,KUNA,Capgemini Technology Services,,France,Pune,411014,mh,"Talwade IT Park","+91-20-66006000",accounts@capgemini.com,1000,1000,10,00,EUROS,NET15,AACC-F1111Z,1,20260210
+1011,KUNA,Cognizant Technology Solutions,,Australia,Chennai,600096,tn,"Okkiyam Thoraipakkam","+91-44-42096000",billing@cognizant.com,1000,1000,10,00,AUS Dollar,NET7,AACC-T2222Y,1,20260211
+1012,KUNA,LTIMindtree Limited,,Canada,Mumbai,400079,mh,"LBS Marg Vikhroli","+91-22-67766776",ar@ltimindtree.com,1000,1000,10,00,Canadian Dollar,Immediate,AACL-M3333X,1,20260212
+1013,kuna,Honeywell Automation India,,Japan,Pune,411013,mh,"Hadapsar Industrial Estate","+91-20-66039400",customer@honeywell.com,1000,1000,10,00,Yen,Cash,AACH-I4444W,1,20260213
+1014,KUNA,Samsung India Electronics,,China,Gurugram,122002,hr,"DLF Cyber City","+91-124-4881234",sap@samsung.com,1000,1000,10,00,Yuan,COD,AACS-S5555V,1,20260214
+1015,KUNA,Schneider Electric India,,Singapore,Bengaluru,560066,ka,"Whitefield Main Road","+91-80-45678900",orders@se.com,1000,1000,10,00,SGD,"Due on Receipt",AACS-E6666U,1,20260215
+1016,KUNA,Emerson Process Management,,UAE,Pune,411057,mh,"Hinjewadi Phase 2","+91-20-67220000",emerson@corp.com,1000,1000,10,00,Dirham,"2/10 NET30",AACE-P7777T,1,20260216
+1017,KUNA,ABB Global Industries,,United Arab Emirates,Bengaluru,560048,ka,"Mahadevapura Industrial Area","+91-80-22949022",global@abb.com,1000,1000,10,00,AED,NET30,AACA-2109H,1,20260217
+1018,KUNA,Bosch Automotive Electronics,,Netherlands,Bengaluru,560030,ka,"Adugodi Hosur Road","+91-80-67521111",finance@bosch.in,1000,1000,10,00,Euro,NET45,AABC-B3422Q,1,20260218
+1019,KUNA,Siemens Digital Industries,,Sweden,Mumbai,400018,mh,"Worli Industrial Estate","+91-22-39677000",india@siemens.com,1000,1000,10,00,EUR,NET30,AAACS0863M,1,20260219
+1020,KUNA,Novartis Healthcare Pvt Ltd,,Switzerland,Hyderabad,500081,ts,"HITEC City Madhapur","+91-40-67670000",care@novartis.com,1000,1000,10,00,Franc,NET 45,AACN-9090Q,1,20260220
+1021,KUNA,Fiat India Automobiles,,Italy,Pune,411019,mh,"Ranjangaon MIDC","+91-2138-660000",sap@fiat.com,1000,1000,10,00,Euro,NET60,AACF-1212P,1,20260221
+1022,KUNA,Zara Retail India,,Spain,Mumbai,400013,mh,"Lower Parel Tower","+91-22-61234567",retail@zara.in,1000,1000,10,00,EUR,30DAYS,AACZ-3434N,1,20260222
+1023,KUNA,Embraer Aviation India,,Brazil,Delhi,110037,dl,"Aerocity Business Park","+91-11-40404040",india@embraer.com,1000,1000,10,00,Dollar,NET30,AACE-5656M,1,20260223
+1024,KUNA,Hyundai Motor India,,South Korea,Chennai,600089,tn,"Irrungattukottai Plant","+91-44-47100000",accounts@hyundai.com,1000,1000,10,00,USD,Net 30,AACH-7878L,1,20260224
+1025,KUNA,Deloitte Consulting India,,india,Hyderabad,500032,ts,"Financial District Nanakramguda","+91-40-71256000",billing@deloitte.com,1000,1000,10,00,Rs,NT30,AACD-9090K,1,20260225
+0000001026,KUNA,Apollo Tyres Limited,Domestic Account,IN,Gurugram,122001,HR,Sector 32,+91-124-2721000,customer@apollotyres.com,1000,1000,10,00,INR,NT30,AACA1026P,1,20260226
+0000001027,KUNA,Birla Corporation Limited,Domestic Account,IN,Kolkata,700001,WB,Birla Building,+91-33-66166777,accounts@birlacorp.com,1000,1000,10,00,INR,NT45,AACB1027Q,1,20260227
+0000001028,KUNA,Ceat Limited,Domestic Account,IN,Mumbai,400030,MH,Annie Besant Road,+91-22-24930621,billing@ceat.com,1000,1000,10,00,INR,NT60,AACC1028R,1,20260228
+1029,KUNA,"National Aluminium Company Limited Extra Long Legal Name",,IN,Bhubaneswar,751013,od,"Nalco Corporate Office","+91-674-2301988",customer@nalcoindia.com,1000,1000,10,00,INR,NT30,AACN-1029S,1,20260301
