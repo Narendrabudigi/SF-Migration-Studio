@@ -185,14 +185,15 @@ export function Step2AIMapping() {
         };
       });
 
-      // Ensure all loaded source fields are added to headers if they don't exist
-      const newHeaders = new Set(state.headers);
-      enrichedMappings.forEach((m: any) => {
-        if (m.src) newHeaders.add(m.src);
+      // Filter loaded mappings so only source fields present in the uploaded Excel data are retained
+      const validLoadedMappings = enrichedMappings.filter((m: any) => {
+        if (!m.src) return false;
+        if (state.headers.length === 0) return true;
+        const cleanSrc = m.src.replace(/^\[\d+\]\s*/, '').trim();
+        return state.headers.some(h => h === m.src || h.replace(/^\[\d+\]\s*/, '').trim() === cleanSrc);
       });
 
-      dispatch({ type: 'SET_FIELD', field: 'headers', value: Array.from(newHeaders) });
-      dispatch({ type: 'SET_FIELD', field: 'mapping', value: enrichedMappings });
+      dispatch({ type: 'SET_FIELD', field: 'mapping', value: validLoadedMappings });
       dispatch({ type: 'SET_FIELD', field: 'isMappingSaved', value: true });
 
       toast(`Loaded ${enrichedMappings.length} mappings from history!`, 'ok');
@@ -202,6 +203,13 @@ export function Step2AIMapping() {
     }
   };
 
+  const effectiveHeaders = React.useMemo(() => {
+    if (state.uploadedData && state.uploadedData.length > 0) {
+      return Object.keys(state.uploadedData[0]);
+    }
+    return state.headers || [];
+  }, [state.uploadedData, state.headers]);
+
   const obj = OBJS[state.obj];
   const validMappings = state.mapping.filter(m => m.sap && m.sap.trim() !== "");
   const hi = validMappings.filter((m) => m.conf >= 80).length;
@@ -209,7 +217,7 @@ export function Step2AIMapping() {
 
   const mappedSources = state.mapping.map(m => m.src);
   const mappedSaps = state.mapping.map(m => m.sap);
-  const unmappedSourceList = state.headers.filter(h => !mappedSources.includes(h));
+  const unmappedSourceList = effectiveHeaders.filter(h => !mappedSources.includes(h));
   const unmappedSapList = sapFields.filter(f => !mappedSaps.includes(f.field_name));
 
   // Calculate unmapped source fields instead of target fields
@@ -249,7 +257,7 @@ export function Step2AIMapping() {
     OBJS[state.obj].fields.forEach((f) => {
       const syns = sem[f.n] || [f.n];
       let best: string | null = null, bs = 0;
-      state.headers.forEach((h) => {
+      effectiveHeaders.forEach((h) => {
         const hu = h.toUpperCase(), fn = f.n.toUpperCase();
         let sc = 0;
         if (hu === fn || syns.map((s) => s.toUpperCase()).includes(hu)) sc = 90;
@@ -289,12 +297,10 @@ export function Step2AIMapping() {
     setTimeout(() => tick(3, 'Cache & Overrides applied'), 1600);
     try {
       const objName = state.obj || 'Biographical Info';
-      const data = await generateMapping(state.src, objName, state.headers);
+      const data = await generateMapping(state.src, objName, effectiveHeaders);
       const mapping = data.mappings || [];
 
-      // Ensure all mapped source fields are synced into state.headers so they show in the UI panel
-      const newHeaders = Array.from(new Set([...state.headers, ...mapping.map((m: any) => m.src).filter(Boolean)]));
-      dispatch({ type: 'SET_FIELD', field: 'headers', value: newHeaders });
+      // Retain exact source fields uploaded from Step 1 without injecting un-uploaded fields
 
       setTimeout(() => tick(4, 'Transforms assigned'), 2200);
       setTimeout(() => {
@@ -346,7 +352,7 @@ export function Step2AIMapping() {
         <GridCol span={3} className="flex flex-col gap-4 h-[calc(100vh-40px)]">
           {/* Source Fields Card */}
           <Card className="flex flex-col flex-1 min-h-0">
-            <CardHeader title={`Source Fields (${state.headers.length})`} subtitle={state.src} />
+            <CardHeader title={`Source Fields (${effectiveHeaders.length})`} subtitle={state.src} />
             <div className="px-3 pt-2">
               <input
                 type="text"
@@ -357,13 +363,13 @@ export function Step2AIMapping() {
               />
             </div>
             <CardBody className="p-3 space-y-2 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent">
-              {state.headers.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => (
+              {effectiveHeaders.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => (
                 <div key={`${f}-${i}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[10px] font-mono text-[var(--text-secondary)]">
                   <span>{f}</span>
                   {state.mapping.find((m) => m.src === f) && <Badge variant="green" className="text-[8px]">mapped</Badge>}
                 </div>
               ))}
-              {state.headers.length === 0 && (
+              {effectiveHeaders.length === 0 && (
                 <div className="text-[10px] text-[var(--text-tertiary)] text-center py-4">No source fields loaded.</div>
               )}
             </CardBody>

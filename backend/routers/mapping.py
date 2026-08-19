@@ -234,10 +234,15 @@ def generate_mapping(req: MapRequest):
     except Exception as e:
         logger.warning(f"AI Mapping Agent call failed: {e}")
         raw_mappings = []
+
+    if not isinstance(raw_mappings, list):
+        raw_mappings = []
+    else:
+        raw_mappings = [m for m in raw_mappings if isinstance(m, dict)]
     
     # Normalized Fuzzy Semantic Matcher to ensure ALL unmapped source fields get matched
-    already_mapped_srcs = {m.get("source_field") for m in raw_mappings if m.get("source_field")}
-    already_mapped_targets = {m.get("target_field") for m in raw_mappings if m.get("target_field")}
+    already_mapped_srcs = {m.get("source_field") for m in raw_mappings if isinstance(m, dict) and m.get("source_field")}
+    already_mapped_targets = {m.get("target_field") for m in raw_mappings if isinstance(m, dict) and m.get("target_field")}
 
     if unmapped_fields:
         for sf in unmapped_fields:
@@ -296,11 +301,24 @@ def generate_mapping(req: MapRequest):
             })
 
     formatted = []
+    valid_source_set = set(req.sourceFields) if req.sourceFields else None
+    valid_clean_set = {re.sub(r"^\[\d+\]\s*", "", str(s)).strip().lower() for s in req.sourceFields} if req.sourceFields else None
+    
     for m in raw_mappings:
-        target_f = str(m.get("target_field", "")).strip()
-        if not target_f or target_f.lower() in ["none", "n/a", "null"]:
+        if not isinstance(m, dict):
             continue
-            
+        src_field = m.get("source_field")
+        target_f = str(m.get("target_field", "")).strip()
+        
+        if not src_field or not target_f or target_f.lower() in ["none", "n/a", "null"]:
+            continue
+
+        # If source fields were explicitly supplied by the caller, do NOT output synthetic or un-uploaded source fields
+        if valid_source_set:
+            clean_src = re.sub(r"^\[\d+\]\s*", "", str(src_field)).strip().lower()
+            if src_field not in valid_source_set and clean_src not in valid_clean_set:
+                continue
+
         tr_rule = m.get("transform_rule", "none")
         if isinstance(tr_rule, str):
             if "Pad" in tr_rule:
@@ -313,7 +331,7 @@ def generate_mapping(req: MapRequest):
                 tr_rule = "trim"
                 
         formatted.append({
-            "src": m.get("source_field"),
+            "src": src_field,
             "sap": target_f,
             "tr": tr_rule,
             "conf": m.get("confidence", 0)
