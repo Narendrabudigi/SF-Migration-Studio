@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
@@ -37,7 +37,6 @@ export function Step5Validate() {
   const { toast } = useToast();
   const { showLoad, tick, hideLoad } = useLoading();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
 
   const [source, setSource] = useState<Source>('harmonized');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -47,7 +46,7 @@ export function Step5Validate() {
   const [openResultsAccordion, setOpenResultsAccordion] = useState(false);
 
   // Dynamic Rules State
-  const [customPrompts, setCustomPrompts] = useState<string[]>([]);
+  const [customPrompts, setCustomPrompts] = useState<string[]>(state.customPrompts || []);
   const [editedStandardRulePrompts, setEditedStandardRulePrompts] = useState<Record<string, string>>({}); // standardRuleId -> prompt text
   const [newPromptInput, setNewPromptInput] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -78,14 +77,67 @@ export function Step5Validate() {
   const [appliedStandardRules, setAppliedStandardRules] = useState<string[] | null>(null);
   const [selectedRulesReceived, setSelectedRulesReceived] = useState<string[] | null>(null);
 
+  // Sync state.dynamicRules into local savedDynamicRules when store changes
+  useEffect(() => {
+    if (state.dynamicRules && Array.isArray(state.dynamicRules)) {
+      setSavedDynamicRules(state.dynamicRules);
+      setSelectedDynamicRules(prev => {
+        const updated = { ...prev };
+        state.dynamicRules.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+    }
+  }, [state.dynamicRules]);
+
+  // Load saved validation report and dynamic rules from Supabase on mount
+  useEffect(() => {
+    if (!state.projectId) return;
+
+    const loadSaved = async () => {
+      try {
+        const objName = state.obj || 'Biographical Info';
+        const res = await fetch(`${VALIDATE_API}/api/validate/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'success') {
+            if (data.dynamic_rules && Array.isArray(data.dynamic_rules) && data.dynamic_rules.length > 0) {
+              if (!state.dynamicRules || state.dynamicRules.length === 0) {
+                dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: data.dynamic_rules });
+                setSavedDynamicRules(data.dynamic_rules);
+              }
+            }
+            if (data.report && Array.isArray(data.report) && data.report.length > 0) {
+              if (!state.validationReport || state.validationReport.length === 0) {
+                dispatch({ type: 'SET_FIELD', field: 'validationReport', value: data.report });
+                dispatch({ type: 'SET_FIELD', field: 'isValidatedSaved', value: true });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load saved validation from Supabase:', err);
+      }
+    };
+
+    loadSaved();
+  }, [state.projectId, state.obj, dispatch]);
+
   const handleAddPrompt = () => {
     if (!newPromptInput.trim()) return;
-    setCustomPrompts([...customPrompts, newPromptInput.trim()]);
+    const updated = [...customPrompts, newPromptInput.trim()];
+    setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
     setNewPromptInput('');
   };
 
   const handleRemovePrompt = (index: number) => {
-    setCustomPrompts(customPrompts.filter((_, i) => i !== index));
+    const updated = customPrompts.filter((_, i) => i !== index);
+    setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
     if (editingIndex === index) {
       setEditingIndex(null);
       setEditingText('');
@@ -102,6 +154,7 @@ export function Step5Validate() {
     const updated = [...customPrompts];
     updated[index] = editingText.trim();
     setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
     setEditingIndex(null);
     setEditingText('');
   };
@@ -126,7 +179,7 @@ export function Step5Validate() {
     const targetObj = OBJS[obj];
     const sfKey = targetObj?.fields.find(f => f.key)?.n;
     const key = sfKey || 'person-id-external';
-    const value = row?.[key] ?? row?.[key.toLowerCase()] ?? row?.[key.toUpperCase()] ?? row?.['user-id'] ?? row?.['KUNNR'] ?? row?.['ID'];
+    const value = row?.[key] ?? row?.[key.toLowerCase()] ?? row?.[key.toUpperCase()] ?? row?.['user-id'] ?? row?.['person-id-external'] ?? row?.['KUNNR'] ?? row?.['ID'];
     return value !== undefined && value !== null && String(value).trim() ? String(value).trim() : '';
   };
 
@@ -134,6 +187,8 @@ export function Step5Validate() {
   const eR = state.validated.filter((v) => v.st === 'ERROR').length;
   const wR = state.validated.filter((v) => v.st === 'WARN').length;
   const pR = state.validated.filter((v) => v.st === 'PASS').length;
+
+  const toggleSelectRule = (id: string) => setSelectedRules((s) => ({ ...s, [id]: !s[id] }));
 
   async function runValidation() {
     if (source === 'upload' && !uploadedFile) {
@@ -209,26 +264,41 @@ export function Step5Validate() {
         setUploadMeta(null);
       }
 
-      const newDynRules = data.dynamic_rules || [];
+      const returnedDynRules = data.dynamic_rules || [];
+      // Merge returned dynamic rules with existing saved dynamic rules without dropping unselected ones
+      const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+      const newlyAddedRules = returnedDynRules.filter((r: any) => !existingIds.has(r.id));
+      const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
+
+      setSavedDynamicRules(combinedDynamicRules);
       dispatch({
         type: 'BATCH_UPDATE',
         updates: {
           validated: data.validated,
           validationReport: data.report,
-          dynamicRules: newDynRules,
+          dynamicRules: combinedDynamicRules,
           stats: { ...state.stats, errors: data.stats.errors, warns: data.stats.warns, passed: data.stats.passed },
         },
       });
-      // Update selected dynamic rules state to include new ones
+
+      // Update selected dynamic rules state to include newly added ones
       setSelectedDynamicRules((d) => {
         const updated = { ...d };
-        newDynRules.forEach((r: any) => {
-          if (!(r.id in updated)) {
+        newlyAddedRules.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
             updated[r.id] = true;
           }
         });
         return updated;
       });
+
+      // Clear compiled custom prompts and edited standard prompts so they don't linger or duplicate
+      if (allPrompts.length > 0) {
+        setCustomPrompts([]);
+        dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+        setEditedStandardRulePrompts({});
+      }
+
       // debug: show what server received and what it applied
       setSelectedRulesReceived(Array.isArray(data.selected_rules_received) ? data.selected_rules_received : null);
       setAppliedStandardRules(Array.isArray(data.applied_standard_rules) ? data.applied_standard_rules : null);
@@ -241,9 +311,6 @@ export function Step5Validate() {
       toast(`${msg}`, 'err');
     }
   }
-
-
-  const toggleSelectRule = (id: string) => setSelectedRules((s) => ({ ...s, [id]: !s[id] }));
 
   const startEditStandard = (id: string, label: string, desc: string) => {
     setStandardEditingId(id);
@@ -274,8 +341,10 @@ export function Step5Validate() {
     setStandardEditingId(null);
   };
 
-  const deleteDynamicRule = (rid: string) => {
-    setSavedDynamicRules((d) => d.filter((r) => r.id !== rid));
+  const deleteDynamicRule = async (rid: string) => {
+    const remaining = savedDynamicRules.filter((r) => r.id !== rid);
+    setSavedDynamicRules(remaining);
+    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: remaining });
     setSelectedDynamicRules((d) => {
       const updated = { ...d };
       delete updated[rid];
@@ -292,6 +361,50 @@ export function Step5Validate() {
         return updated;
       });
     }
+
+    // Persist deletion immediately to Supabase database
+    if (state.projectId) {
+      try {
+        const res = await fetch(`${VALIDATE_API}/api/validate/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: remaining
+          })
+        });
+        if (res.ok) {
+          toast('Rule deleted from database', 'ok');
+        }
+      } catch (err) {
+        console.error('Failed to sync rule deletion with database:', err);
+      }
+    }
+  };
+
+  const handleClearAllDynamicRules = async () => {
+    setSavedDynamicRules([]);
+    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+    setSelectedDynamicRules({});
+    if (state.projectId) {
+      try {
+        const res = await fetch(`${VALIDATE_API}/api/validate/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: []
+          })
+        });
+        if (res.ok) {
+          toast('All dynamic rules removed from database', 'ok');
+        }
+      } catch (err) {
+        console.error('Failed to clear rules in database:', err);
+      }
+    }
   };
 
   const toggleSelectDynamicRule = (rid: string) => {
@@ -303,6 +416,7 @@ export function Step5Validate() {
       toast('No project selected to save rules', 'err');
       return;
     }
+    showLoad('Saving rules...', 'Compiling and saving dynamic rules to database');
     try {
       // Compile custom prompts + edited standard rule prompts into executable rules
       const allPrompts = [
@@ -344,9 +458,14 @@ export function Step5Validate() {
       // update local saved rules state and migration store
       setSavedDynamicRules(payloadRules || []);
       dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: payloadRules || [] });
-      const info = resJson ? (resJson.inserted || resJson.message || resJson) : 'Rules saved to project';
-      toast(typeof info === 'string' ? info : 'Rules saved to project', 'ok');
+      // clear pending prompts
+      setCustomPrompts([]);
+      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+      setEditedStandardRulePrompts({});
+      hideLoad();
+      toast('Rules saved to database successfully!', 'ok');
     } catch (err: any) {
+      hideLoad();
       toast(err.message || 'Failed to save rules', 'err');
     }
   };
@@ -541,9 +660,20 @@ export function Step5Validate() {
                         )}
                         <span className="text-[10.5px] text-[var(--text-tertiary)]">{r.description}</span>
                       </div>
-                      <Badge variant={r.failCount > 0 ? 'red' : 'green'}>
-                        {r.failCount > 0 ? `${r.failCount} failing` : 'All pass'}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        {r.is_dynamic && (
+                          <button
+                            onClick={() => deleteDynamicRule(r.rule)}
+                            className="text-[var(--text-tertiary)] hover:text-red-500 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer"
+                            title="Delete this dynamic rule from database"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <Badge variant={r.failCount > 0 ? 'red' : 'green'}>
+                          {r.failCount > 0 ? `${r.failCount} failing` : 'All pass'}
+                        </Badge>
+                      </div>
                     </div>
                     {r.failures.length > 0 && (
                       <div className="mt-1.5 space-y-0.5">
@@ -759,8 +889,14 @@ export function Step5Validate() {
             {/* Saved Dynamic Rules */}
             {savedDynamicRules.length > 0 && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 px-3 py-2">
+                <div className="flex items-center justify-between px-3 py-2">
                   <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider">⚡ Saved Rules ({savedDynamicRules.length})</span>
+                  <button
+                    onClick={handleClearAllDynamicRules}
+                    className="text-[10px] text-red-500 hover:text-red-600 font-semibold cursor-pointer"
+                  >
+                    Clear All
+                  </button>
                 </div>
                 <div className="space-y-1.5 px-2 max-h-[180px] overflow-y-auto scrollbar-thin">
                   {savedDynamicRules.map((r) => (

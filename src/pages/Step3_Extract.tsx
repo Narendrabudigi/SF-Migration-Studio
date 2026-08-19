@@ -71,36 +71,93 @@ export function Step3Extract() {
     }
   }, [extractedTables.length]);
 
+  // Load saved extraction from Supabase on mount
+  useEffect(() => {
+    if (!state.projectId) return;
+
+    const loadSaved = async () => {
+      try {
+        const objName = state.obj || 'Biographical Info';
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'success' && data.data && data.data.length > 0) {
+            if (!state.extracted || state.extracted.length === 0) {
+              dispatch({ type: 'SET_FIELD', field: 'extracted', value: data.data });
+              dispatch({ type: 'SET_FIELD', field: 'isDataSaved', value: true });
+            }
+            if (data.tables && data.tables.length > 0 && (!state.extractedTables || state.extractedTables.length === 0)) {
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load saved extraction:', err);
+      }
+    };
+
+    loadSaved();
+  }, [state.projectId, state.obj]);
+
   // Auto-hydrate EDA stats and tables if state has extracted data but missing metrics on page switch
   useEffect(() => {
     if (state.extracted && state.extracted.length > 0 && (!state.edaStats || state.edaStats.length === 0)) {
       const objName = state.obj || 'Biographical Info';
-      fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/execute_file`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_object: objName,
-          mappings: state.mapping,
-          raw_data: state.extracted
+      const rawPayload = (state.uploadedData && state.uploadedData.length > 0) ? state.uploadedData : (state.rawData && state.rawData.length > 0 ? state.rawData : null);
+
+      if (rawPayload) {
+        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/execute_file`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_object: objName,
+            mappings: state.mapping,
+            raw_data: rawPayload
+          })
         })
-      })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data) {
-          dispatch({ type: 'SET_FIELD', field: 'edaStats', value: data.eda_stats || [] });
-          dispatch({ type: 'SET_FIELD', field: 'reportMetrics', value: data.summary_metrics || null });
-          dispatch({ type: 'SET_FIELD', field: 'complianceData', value: data.compliance_data || [] });
-          if (data.tables && (!state.extractedTables || state.extractedTables.length === 0)) {
-            dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            dispatch({ type: 'SET_FIELD', field: 'edaStats', value: data.eda_stats || [] });
+            dispatch({ type: 'SET_FIELD', field: 'reportMetrics', value: data.summary_metrics || null });
+            dispatch({ type: 'SET_FIELD', field: 'complianceData', value: data.compliance_data || [] });
+            if (data.tables && (!state.extractedTables || state.extractedTables.length === 0)) {
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+            if (data.aiAnalysis?.report && !state.aiReport) {
+              dispatch({ type: 'SET_FIELD', field: 'aiReport', value: data.aiAnalysis.report });
+            }
           }
-          if (data.aiAnalysis?.report && !state.aiReport) {
-            dispatch({ type: 'SET_FIELD', field: 'aiReport', value: data.aiAnalysis.report });
+        })
+        .catch(err => console.error('Failed to auto-hydrate EDA stats:', err));
+      } else {
+        fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/eda_report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_object: objName,
+            mappings: state.mapping,
+            records: state.extracted
+          })
+        })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            dispatch({ type: 'SET_FIELD', field: 'edaStats', value: data.eda_stats || [] });
+            dispatch({ type: 'SET_FIELD', field: 'reportMetrics', value: data.summary_metrics || null });
+            dispatch({ type: 'SET_FIELD', field: 'complianceData', value: data.compliance_data || [] });
+            if (data.tables && (!state.extractedTables || state.extractedTables.length === 0)) {
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+            if (data.aiAnalysis?.report && !state.aiReport) {
+              dispatch({ type: 'SET_FIELD', field: 'aiReport', value: data.aiAnalysis.report });
+            }
           }
-        }
-      })
-      .catch(err => console.error('Failed to auto-hydrate EDA stats:', err));
+        })
+        .catch(err => console.error('Failed to auto-hydrate EDA report:', err));
+      }
     }
-  }, [state.extracted, state.edaStats, state.mapping, state.obj, dispatch, state.extractedTables, state.aiReport]);
+  }, [state.extracted, state.edaStats, state.mapping, state.obj, dispatch, state.extractedTables, state.aiReport, state.uploadedData, state.rawData]);
 
   const saveDataToDB = async () => {
     if (!state.projectId) {

@@ -650,32 +650,278 @@ export function Step4Harmonize() {
   const [tablePages, setTablePages] = useState<Record<string, number>>({});
   const extractedTables = state.extractedTables || [];
 
-  // Initialize selectedOutputTables when extractedTables are available
+  // Initialize selectedOutputTables when extractedTables or result.tables are available
   useEffect(() => {
-    if (extractedTables.length > 0) {
-      setSelectedOutputTables(new Set(extractedTables.map((t: any) => t.table_name)));
+    const tablesToUse = (result as any)?.tables || extractedTables || [];
+    if (tablesToUse.length > 0) {
+      setSelectedOutputTables(new Set(tablesToUse.map((t: any) => t.table_name)));
     }
-  }, [extractedTables.length]);
+  }, [extractedTables.length, (result as any)?.tables]);
 
   // Editable Rule Config (Inline box per rule)
   const [ruleConfig, setRuleConfig] = useState<Record<string, RuleItemConfig>>({ ...DEFAULT_RULE_CONFIG });
   const [expandedRuleKey, setExpandedRuleKey] = useState<string | null>(null);
 
   // Dynamic AI Rules
-  const [customPrompts, setCustomPrompts] = useState<string[]>([]);
+  const [customPrompts, setCustomPrompts] = useState<string[]>(state.customPrompts || []);
   const [newPromptInput, setNewPromptInput] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState('');
+  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.dynamicRules || []);
+  const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
+    Object.fromEntries((state.dynamicRules || []).map((r: any) => [r.id, true]))
+  );
+
+  const dedupeRules = (rules: any[]) => {
+    const seenIds = new Set<string>();
+    return rules.map((r, idx) => {
+      let ruleId = r.id || r.rule;
+      if (!ruleId || seenIds.has(ruleId)) {
+        ruleId = `DYNAMIC_HARM_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+      }
+      seenIds.add(ruleId);
+      return { ...r, id: ruleId };
+    });
+  };
+
+  // Sync state.dynamicRules into local savedDynamicRules when store changes
+  useEffect(() => {
+    if (state.dynamicRules && Array.isArray(state.dynamicRules)) {
+      const deduped = dedupeRules(state.dynamicRules);
+      setSavedDynamicRules(deduped);
+      setSelectedDynamicRules(prev => {
+        const updated = { ...prev };
+        deduped.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+    }
+  }, [state.dynamicRules]);
+
+  // Load saved harmonized data & dynamic rules on mount if available in DB
+  useEffect(() => {
+    if (!state.projectId) return;
+
+    const loadSavedData = async () => {
+      try {
+        const objName = state.obj || sapObject;
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'success') {
+            if (data.data && data.data.length > 0 && !result) {
+              setResult({
+                final_table: data.data,
+                columns: data.data.length > 0 ? Object.keys(data.data[0]) : [],
+                tables: data.tables || [],
+                stats: { total_input: data.data.length, total_output: data.data.length },
+                fix_log: [],
+                dynamic_rules: data.dynamic_rules || [],
+                custom_prompts: data.custom_prompts || [],
+              });
+            }
+            if (data.custom_prompts && Array.isArray(data.custom_prompts)) {
+              setCustomPrompts(data.custom_prompts);
+              dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: data.custom_prompts });
+            }
+            const rawDynRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
+            const loadedRules = dedupeRules(rawDynRules);
+            setSavedDynamicRules(loadedRules);
+            dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
+            setSelectedDynamicRules(prev => {
+              const updated = { ...prev };
+              loadedRules.forEach((r: any) => {
+                if (r?.id && !(r.id in updated)) {
+                  updated[r.id] = true;
+                }
+              });
+              return updated;
+            });
+            if (data.tables && data.tables.length > 0) {
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load saved harmonized data:', e);
+      }
+    };
+
+    loadSavedData();
+  }, [state.projectId, state.obj, sapObject, dispatch]);
 
   const enabledRuleCount = RULE_LIST.filter(r => (ruleConfig[r.key] !== undefined ? ruleConfig[r.key].enabled : true)).length;
   const totalRuleCount = RULE_LIST.length;
 
   const handleAddPrompt = () => {
     if (!newPromptInput.trim()) return;
-    setCustomPrompts([...customPrompts, newPromptInput.trim()]);
+    const next = [...customPrompts, newPromptInput.trim()];
+    setCustomPrompts(next);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: next });
     setNewPromptInput('');
   };
 
   const handleRemovePrompt = (index: number) => {
-    setCustomPrompts(customPrompts.filter((_, i) => i !== index));
+    const next = customPrompts.filter((_, i) => i !== index);
+    setCustomPrompts(next);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: next });
+    if (editingIndex === index) {
+      setEditingIndex(null);
+      setEditingText('');
+    }
+  };
+
+  const handleStartEdit = (index: number) => {
+    setEditingIndex(index);
+    setEditingText(customPrompts[index]);
+  };
+
+  const handleSaveEdit = (index: number) => {
+    if (!editingText.trim()) return;
+    const updated = [...customPrompts];
+    updated[index] = editingText.trim();
+    setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
+    setEditingIndex(null);
+    setEditingText('');
+  };
+
+  const handleCancelEdit = () => {
+    setEditingIndex(null);
+    setEditingText('');
+  };
+
+  const deleteDynamicRule = async (rid: string) => {
+    const remaining = savedDynamicRules.filter((r) => r.id !== rid && r.label !== rid);
+    setSavedDynamicRules(remaining);
+    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: remaining });
+    if (result) {
+      setResult({ ...result, dynamic_rules: remaining });
+    }
+    setSelectedDynamicRules((d) => {
+      const updated = { ...d };
+      delete updated[rid];
+      return updated;
+    });
+
+    // Persist deletion immediately to Supabase database
+    if (state.projectId) {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || sapObject,
+            rules: remaining
+          })
+        });
+        if (res.ok) {
+          toast('Rule deleted from database', 'ok');
+        }
+      } catch (err) {
+        console.error('Failed to sync rule deletion with database:', err);
+      }
+    }
+  };
+
+  const handleClearAllDynamicRules = async () => {
+    setSavedDynamicRules([]);
+    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+    setSelectedDynamicRules({});
+    if (result) {
+      setResult({ ...result, dynamic_rules: [] });
+    }
+    if (state.projectId) {
+      try {
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || sapObject,
+            rules: []
+          })
+        });
+        if (res.ok) {
+          toast('All dynamic rules removed from database', 'ok');
+        }
+      } catch (err) {
+        console.error('Failed to clear rules in database:', err);
+      }
+    }
+  };
+
+  const toggleSelectDynamicRule = (rid: string) => {
+    setSelectedDynamicRules((d) => {
+      const current = d[rid] !== false; // default is true
+      return { ...d, [rid]: !current };
+    });
+  };
+
+  const saveRulesToDB = async () => {
+    if (!state.projectId) {
+      toast('No project selected to save rules', 'err');
+      return;
+    }
+    showLoad('Saving rules...', 'Compiling and saving dynamic harmonization rules to database');
+    try {
+      let compiled: any[] = [];
+      if (customPrompts.length > 0) {
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/generate-dynamic-rules`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompts: customPrompts,
+            target_object: state.obj || sapObject,
+            actual_columns: result?.columns || (state.extracted.length > 0 ? Object.keys(state.extracted[0]) : [])
+          })
+        });
+        if (!res.ok) throw new Error('Failed to compile prompts');
+        const json = await res.json();
+        compiled = json.rules || [];
+      }
+
+      const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+      const newlyCompiled = dedupeRules(compiled).filter((r: any) => !existingIds.has(r.id));
+      const payloadRules = [...savedDynamicRules, ...newlyCompiled];
+
+      const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: state.projectId,
+          target_object: state.obj || sapObject,
+          rules: payloadRules
+        })
+      });
+      if (!res2.ok) throw new Error('Failed to save rules to database');
+
+      setSavedDynamicRules(payloadRules);
+      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: payloadRules });
+      setSelectedDynamicRules((d) => {
+        const updated = { ...d };
+        newlyCompiled.forEach((r: any) => {
+          if (r?.id) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+      if (result) {
+        setResult({ ...result, dynamic_rules: payloadRules });
+      }
+      setCustomPrompts([]);
+      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+      hideLoad();
+      toast('Harmonization rules saved to database successfully!', 'ok');
+    } catch (err: any) {
+      hideLoad();
+      toast(err.message || 'Failed to save rules', 'err');
+    }
   };
 
   const toggleRule = (key: string) => {
@@ -726,7 +972,13 @@ export function Step4Harmonize() {
 
     showLoad('Saving data...', 'Persisting harmonized records to database');
     try {
-      const currentTables = extractedTables.length > 0 ? extractedTables : (state.extractedTables || []);
+      const resultTables = (result as any)?.tables;
+      const currentTables = (resultTables && resultTables.length > 0)
+        ? resultTables
+        : (extractedTables.length > 0 ? extractedTables : (state.extractedTables || []));
+
+      const currentDynRules = savedDynamicRules.length > 0 ? savedDynamicRules : ((result as any)?.dynamic_rules || state.dynamicRules || []);
+
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -734,7 +986,9 @@ export function Step4Harmonize() {
           project_id: state.projectId,
           target_object: state.obj,
           payload: result.final_table,
-          tables: currentTables
+          tables: currentTables,
+          dynamic_rules: currentDynRules,
+          custom_prompts: customPrompts,
         })
       });
 
@@ -742,6 +996,9 @@ export function Step4Harmonize() {
 
       hideLoad();
       dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: currentTables });
+      dispatch({ type: 'SET_FIELD', field: 'harmonized', value: result.final_table });
+      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: currentDynRules });
+      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: customPrompts });
       dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: true });
       toast('Harmonized data saved to database successfully!', 'ok');
     } catch (err: any) {
@@ -802,6 +1059,7 @@ export function Step4Harmonize() {
         if (!state.projectId) {
           throw new Error("No Project ID found. Please extract and save data in Step 3 first.");
         }
+        const selectedDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
         res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/flow`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -818,11 +1076,13 @@ export function Step4Harmonize() {
             primary_source: state.src || primarySource,
             preview: isPreview,
             rule_config: ruleConfig,
-            custom_prompts: customPrompts.length > 0 ? customPrompts : null,
+            custom_prompts: customPrompts,
+            dynamic_rules: selectedDynRules,
           })
         });
       } else {
         // Multi mode
+        const selectedDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
         if (!state.projectId) {
           // If multi mode with standalone uploads
           const formData = new FormData();
@@ -842,6 +1102,7 @@ export function Step4Harmonize() {
           formData.append('preview', isPreview ? 'true' : 'false');
           formData.append('rule_config_json', JSON.stringify(ruleConfig));
           if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
+          if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
 
           res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize`, { method: 'POST', body: formData });
         } else {
@@ -862,6 +1123,7 @@ export function Step4Harmonize() {
           formData.append('preview', isPreview ? 'true' : 'false');
           formData.append('rule_config_json', JSON.stringify(ruleConfig));
           if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
+          if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
 
           res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/multi-flow`, { method: 'POST', body: formData });
         }
@@ -892,8 +1154,28 @@ export function Step4Harmonize() {
           } else {
             setPreviewData(null);
             setResult(data);
-            if (data.tables && data.tables.length > 0 && (!state.extractedTables || state.extractedTables.length === 0)) {
+            if (data.tables && data.tables.length > 0) {
               dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+
+            const returnedDynRules = data.dynamic_rules || [];
+            const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+            const newlyAddedRules = dedupeRules(returnedDynRules).filter((r: any) => !existingIds.has(r.id));
+            const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
+            setSavedDynamicRules(combinedDynamicRules);
+            dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: combinedDynamicRules });
+            setSelectedDynamicRules((d) => {
+              const updated = { ...d };
+              newlyAddedRules.forEach((r: any) => {
+                if (r?.id && !(r.id in updated)) {
+                  updated[r.id] = true;
+                }
+              });
+              return updated;
+            });
+            if (customPrompts.length > 0) {
+              setCustomPrompts([]);
+              dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
             }
             toast(
               `Harmonized: ${data.stats.total_output} rows from ${data.stats.total_input} input rows`,
@@ -922,7 +1204,7 @@ export function Step4Harmonize() {
       }, 400);
       return () => clearTimeout(timer);
     }
-  }, [ruleConfig, customPrompts]);
+  }, [ruleConfig, customPrompts, selectedDynamicRules]);
 
   function handleProceed() {
     setPreviewData(null);
@@ -1156,10 +1438,15 @@ export function Step4Harmonize() {
               ? result.columns
               : (outputRows.length > 0 ? Object.keys(outputRows[0]) : []);
 
-            const allTables: TableInfo[] = extractedTables.length > 0
-              ? extractedTables.map((t: any) => ({
+            const resultTables = (result as any)?.tables;
+            const tablesSource = (resultTables && resultTables.length > 0)
+              ? resultTables
+              : (extractedTables.length > 0 ? extractedTables : []);
+
+            const allTables: TableInfo[] = tablesSource.length > 0
+              ? tablesSource.map((t: any) => ({
                   table_name: t.table_name,
-                  columns: targetCols.length > 0 ? targetCols : t.columns
+                  columns: (t.columns && t.columns.length > 0) ? t.columns : targetCols
                 }))
               : [{ table_name: 'Harmonized Output', columns: targetCols }];
 
@@ -1399,28 +1686,146 @@ export function Step4Harmonize() {
               {customPrompts.length > 0 ? (
                 <div className="space-y-1.5 pt-1">
                   <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
-                    <span>Transform Rules ({customPrompts.length})</span>
+                    <span>Transform Prompts ({customPrompts.length})</span>
                     <span className="text-[9.5px] text-purple-600 dark:text-purple-400 font-semibold normal-case">
                       ⚡ 1 LLM Call
                     </span>
                   </div>
-                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto scrollbar-thin">
+                  <div className="space-y-1.5 max-h-[160px] overflow-y-auto scrollbar-thin">
                     {customPrompts.map((p, idx) => (
-                      <div key={idx} className="flex items-start justify-between p-2 rounded-lg bg-[var(--bg-tertiary)]/70 text-[10.5px] border border-[var(--border)] gap-1.5">
-                        <div className="flex gap-1.5">
-                          <span className="text-purple-600 font-bold shrink-0">⚡</span>
-                          <span className="text-[var(--text-primary)] font-medium leading-tight">#{idx + 1}. {p}</span>
-                        </div>
-                        <button onClick={() => handleRemovePrompt(idx)} className="text-[var(--text-tertiary)] hover:text-red-500 p-0.5 cursor-pointer shrink-0">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      <div key={idx} className="p-2 rounded-lg bg-[var(--bg-tertiary)]/70 text-[10.5px] border border-[var(--border)] space-y-1.5">
+                        {editingIndex === idx ? (
+                          <div className="space-y-1.5">
+                            <textarea
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              rows={2}
+                              className="w-full p-1.5 rounded text-[10.5px] bg-[var(--bg-primary)] border border-purple-400 text-[var(--text-primary)] focus:outline-none"
+                            />
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={handleCancelEdit}
+                                className="px-2 py-0.5 rounded text-[9.5px] text-[var(--text-tertiary)] hover:bg-[var(--bg-secondary)] cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleSaveEdit(idx)}
+                                className="px-2 py-0.5 rounded text-[9.5px] bg-purple-600 text-white font-semibold cursor-pointer"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start justify-between gap-1.5">
+                            <div className="flex gap-1.5 min-w-0 flex-1">
+                              <span className="text-purple-600 font-bold shrink-0">⚡</span>
+                              <span className="text-[var(--text-primary)] font-medium leading-tight break-words">#{idx + 1}. {p}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleStartEdit(idx)}
+                                className="text-[var(--text-tertiary)] hover:text-purple-600 p-0.5 cursor-pointer"
+                                title="Edit prompt"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleRemovePrompt(idx)}
+                                className="text-[var(--text-tertiary)] hover:text-red-500 p-0.5 cursor-pointer"
+                                title="Remove prompt"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Sparkles className="w-3.5 h-3.5 text-purple-600" />}
+                    onClick={saveRulesToDB}
+                    className="w-full mt-2"
+                  >
+                    Save Rules
+                  </Button>
                 </div>
               ) : (
                 <div className="text-[10px] text-[var(--text-tertiary)] italic px-1 py-1">
                   No custom AI rules added yet. Add prompts above to create LLM-generated transform functions.
+                </div>
+              )}
+
+              {/* Saved / Persisted Dynamic Transforms */}
+              {savedDynamicRules.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
+                  <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
+                    <span>⚡ Saved Rules ({savedDynamicRules.length})</span>
+                    <button
+                      type="button"
+                      onClick={handleClearAllDynamicRules}
+                      className="text-[9.5px] text-red-500 hover:underline cursor-pointer font-bold"
+                      title="Clear all active dynamic rules"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto scrollbar-thin">
+                    {savedDynamicRules.map((dr: any, idx: number) => {
+                      const isSelected = selectedDynamicRules[dr.id] !== false;
+                      return (
+                        <div
+                          key={dr.id || idx}
+                          className={`p-2 rounded-lg border text-[10px] space-y-1 transition-all ${
+                            isSelected
+                              ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900/50'
+                              : 'bg-gray-50/50 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-1.5 font-semibold text-purple-700 dark:text-purple-300">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <button
+                                onClick={() => toggleSelectDynamicRule(dr.id)}
+                                className={`w-4 h-4 rounded flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                                  isSelected
+                                    ? 'bg-purple-600 text-white shadow-xs'
+                                    : 'border border-gray-300 dark:border-gray-600 bg-transparent'
+                                }`}
+                              >
+                                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                              </button>
+                              <span className="truncate flex-1 font-bold">{dr.label || dr.id || `Rule #${idx + 1}`}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {dr.target_field && (
+                                <span className="px-1.5 py-0.2 rounded text-[8.5px] font-mono bg-purple-200/80 dark:bg-purple-900/60 text-purple-900 dark:text-purple-200">
+                                  {dr.target_field}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => deleteDynamicRule(dr.id)}
+                                className="text-[var(--text-tertiary)] hover:text-red-500 p-0.5 cursor-pointer transition-colors"
+                                title="Delete this rule from database"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          {dr.description && (
+                            <div className="text-[9.5px] text-[var(--text-secondary)] leading-tight pl-6">
+                              {dr.description}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </CardBody>

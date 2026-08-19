@@ -60,10 +60,10 @@ def _clean_text(value: Any, default: str = "") -> str:
 
 def _rule_id(rule: dict[str, Any]) -> str:
     existing = _clean_text(rule.get("id") or rule.get("rule_code"))
-    if existing:
+    if existing and existing not in ("DYNAMIC_1", "DYNAMIC_RULE_1", "DYNAMIC_DEFAULT"):
         return existing
 
-    # Stable fallback prevents duplicate entries when no runtime ID is supplied.
+    # Stable unique fallback based on rule content
     basis = "|".join(
         [
             _clean_text(rule.get("project_id")),
@@ -71,10 +71,11 @@ def _rule_id(rule: dict[str, Any]) -> str:
             _clean_text(rule.get("field"), "GENERAL").upper(),
             _clean_text(rule.get("label")),
             _clean_text(rule.get("description")),
+            _clean_text(rule.get("python_code")),
             _clean_text(rule.get("error_message")),
         ]
     )
-    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:8]
     return f"DYNAMIC_{digest}"
 
 
@@ -177,6 +178,41 @@ def upsert_rules(
     merged = sorted(by_key.values(), key=lambda item: (str(item.get("created_at", "")), str(item.get("id", ""))))
     save_rules(merged, store_path)
     return merged
+
+
+def replace_rules_for_object(
+    rules: list[dict[str, Any]],
+    *,
+    project_id: str | None = None,
+    target_object: str | None = None,
+    store_path: str | Path | None = None,
+    source: str = "validation_dynamic_rule",
+    priority: int = 100,
+) -> list[dict[str, Any]]:
+    existing_rules = load_rules(store_path)
+    pid_clean = (project_id or "").strip()
+    obj_clean = (target_object or "").strip().upper()
+
+    kept_rules = []
+    for r in existing_rules:
+        r_pid = str(r.get("project_id", "")).strip()
+        r_obj = str(r.get("target_object", "")).strip().upper()
+        if pid_clean and obj_clean and r_pid == pid_clean and r_obj == obj_clean:
+            continue
+        kept_rules.append(r)
+
+    for rule in rules:
+        normalized = normalize_dynamic_rule(
+            rule,
+            project_id=project_id,
+            target_object=target_object,
+            source=source,
+            priority=priority,
+        )
+        kept_rules.append(normalized)
+
+    save_rules(kept_rules, store_path)
+    return kept_rules
 
 
 def get_rules(

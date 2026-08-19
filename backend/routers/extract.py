@@ -451,3 +451,37 @@ def generate_ai_summary(req: AISummaryRequest):
     except Exception as e:
         logger.error(f"Failed to generate AI summary: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class EDAReportRequest(BaseModel):
+    target_object: str
+    mappings: list
+    records: list
+
+@router.post("/eda_report")
+def generate_eda_report(req: EDAReportRequest):
+    try:
+        agent = ExtractAgent()
+        quality_report = agent.generate_eda_quality_report(
+            harmonized_results=req.records,
+            target_object=req.target_object,
+            mappings=req.mappings
+        )
+        tables = agent.group_records_by_sap_structure(
+            harmonized_results=req.records,
+            target_object=req.target_object,
+            mappings=req.mappings
+        )
+        return {
+            "status": "success",
+            "eda_stats": quality_report.get("eda_stats", []),
+            "compliance_data": quality_report.get("compliance_data", []),
+            "summary_metrics": quality_report.get("summary_metrics", {}),
+            "tables": tables,
+            "aiAnalysis": {
+                "report": quality_report.get("ai_report", {})
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate EDA report: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

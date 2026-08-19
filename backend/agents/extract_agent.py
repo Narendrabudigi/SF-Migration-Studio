@@ -605,13 +605,25 @@ You MUST return the output as a valid JSON object matching this exact schema:
                 if col not in cols_by_table[sheet]:
                     cols_by_table[sheet].append(col)
 
-        # 3. Sort key columns first for each table, and filter out tables containing only key fields
+        # 3. Sort key columns first for each table, and ensure main primary key is present in all sheets
+        main_keys = []
+        for c in all_cols:
+            c_clean = re.sub(r"^\[\d+\]", "", c).upper().replace("_", "-")
+            if any(k == c_clean or k in c_clean for k in ["PERSON-ID-EXTERNAL", "USER-ID", "KUNNR", "LIFNR", "MATNR", "ACCOUNT-NUMBER", "PARTY-NUMBER"]):
+                if c not in main_keys:
+                    main_keys.append(c)
+
         result_tables = []
         for sheet, cols in cols_by_table.items():
             if not cols:
                 continue
-            key_cols = [c for c in cols if is_column_key(c)]
-            non_key_cols = [c for c in cols if c not in key_cols]
+            sheet_cols = list(cols)
+            for mk in reversed(main_keys):
+                if mk not in sheet_cols:
+                    sheet_cols.insert(0, mk)
+
+            key_cols = [c for c in sheet_cols if is_column_key(c)]
+            non_key_cols = [c for c in sheet_cols if c not in key_cols]
             final_cols = key_cols + non_key_cols
             
             result_tables.append({

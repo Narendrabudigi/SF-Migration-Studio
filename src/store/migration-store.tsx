@@ -66,6 +66,7 @@ export interface MigrationState {
   isValidatedSaved: boolean;
   validationReport: any[];
   dynamicRules: any[];
+  customPrompts: string[];
   isCleansedSaved: boolean;
   cleansingSummary: any;
   transformSummary: any;
@@ -114,6 +115,7 @@ const defaultState: MigrationState = {
   isValidatedSaved: false,
   validationReport: [],
   dynamicRules: [],
+  customPrompts: [],
   isCleansedSaved: false,
   cleansingSummary: null,
   transformSummary: null,

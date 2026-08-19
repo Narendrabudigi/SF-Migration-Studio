@@ -1,6 +1,7 @@
 import io
 import csv
 import logging
+import uuid
 from typing import Dict, List, Any, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
@@ -72,7 +73,18 @@ def generate_dynamic_rules(req: GenerateRulesRequest):
         raise HTTPException(400, "No rule prompts provided")
 
     fields_list = OBJS.get(req.target_object.upper(), [])
-    fields_desc = ", ".join([f"{f['n']} ({f['l']})" for f in fields_list])
+    if not fields_list or len(fields_list) < 5:
+        try:
+            client = supabase_service.get_client()
+            res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+            if res_obj.data:
+                res_f = client.table("sf_fields").select("field_name, field_description, is_mandatory").eq("object_id", res_obj.data[0]["id"]).execute()
+                if res_f.data:
+                    fields_list = [{"n": f["field_name"], "l": f.get("field_description") or f["field_name"], "req": f.get("is_mandatory", False)} for f in res_f.data]
+        except Exception:
+            pass
+
+    fields_desc = ", ".join([f"{f['n']} ({f.get('l', f['n'])})" for f in fields_list])
 
     actual_cols_desc = ""
     if req.actual_columns:
@@ -87,34 +99,34 @@ Convert EACH natural language custom business rule prompt into a single-line Pyt
 CRITICAL INSTRUCTIONS FOR `python_code`:
 1. VIOLATION CONTRACT: `python_code` MUST evaluate to `True` when a row VIOLATES (FAILS) the rule. It MUST evaluate to `False` when the row IS VALID (PASSES).
 2. POSITIVE/NEGATIVE PHRASING & LENGTH CONSTRAINTS:
-   When user prompt states what a field "should be" or "must be" (e.g., "Country iso should be of 2 letters, not 4 digits", "Currency iso should be 4 digits", "Postal code must be 5 digits"):
+   When user prompt states what a field "should be" or "must be" (e.g., "Country iso should be of 2 letters, not 4 digits", "Currency iso should be 4 digits", "Postal code must be 5 digits", "First name must not be empty"):
    - Identify the VALID REQUIREMENT (e.g. valid length is 2, or valid length is 4).
    - Invert it in `python_code` so ANY non-compliant value evaluates to `True` (Violation)!
-   - "should be 2 letters / digits" -> `len(str(row.get('LAND1', '')).strip()) != 2`
+   - "should be 2 letters / digits" -> `len(str(row.get('country-of-birth', '')).strip()) != 2`
    - "should be 4 digits" -> `len(str(row.get('WAERS', '')).strip()) != 4`
    - "must be 5 digits" -> `len(str(row.get('PSTLZ', '')).strip()) != 5`
-   - "must not be empty" -> `not str(row.get('SMTP_ADDR', '')).strip()`
+   - "must not be empty" -> `not str(row.get('first-name', '')).strip()`
 3. COUNTRY ISO MAPPING:
    Country values in table are stored as 2-letter ISO codes (e.g., 'IN' for India, 'US' for USA/United States, 'DE' for Germany, 'GB' for UK, 'CA' for Canada, 'FR' for France, 'AU' for Australia).
    When user prompt mentions a country by name or code:
-   - "when country is India" -> `str(row.get('LAND1', '')).strip().upper() in ['IN', 'INDIA']`
-   - "when country is US" or "when country is USA" -> `str(row.get('LAND1', '')).strip().upper() in ['US', 'USA', 'UNITED STATES']`
+   - "when country is India" -> `str(row.get('country-of-birth', '')).strip().upper() in ['IN', 'INDIA']`
+   - "when country is US" or "when country is USA" -> `str(row.get('country-of-birth', '')).strip().upper() in ['US', 'USA', 'UNITED STATES']`
 4. CONDITIONAL CONSTRAINTS COMBINATION:
    Combine condition and violation with AND:
    e.g., "Postal code must be 2 digits when country is india":
-   `str(row.get('LAND1', '')).strip().upper() in ['IN', 'INDIA'] and len(str(row.get('PSTLZ', '')).strip()) != 2`
+   `str(row.get('country-of-birth', '')).strip().upper() in ['IN', 'INDIA'] and len(str(row.get('PSTLZ', '')).strip()) != 2`
 5. DYNAMIC FIELD LOOKUP CONTRACT:
    If `ACTUAL DATASET COLUMNS PRESENT IN TABLE` is provided, ALWAYS match the user prompt concept to the EXACT column header present in that list!
    Examples based on actual table columns:
-   - "country" -> use 'COUNTRY' (or 'LAND1')
+   - "first name" / "name" -> use 'first-name' (or 'FIRST_NAME')
+   - "last name" -> use 'last-name'
+   - "person id" / "worker id" -> use 'person-id-external'
+   - "user id" -> use 'user-id'
+   - "country" -> use 'country-of-birth' (or 'LAND1')
    - "postal code" / "zip" -> use 'POST_CODE1' (or 'PSTLZ')
    - "phone" / "telephone" -> use 'TELNR_LONG' (or 'TELF1')
-   - "email" -> use 'SMTP_ADDR'
-   - "city" -> use 'CITY2' (or 'ORT01')
-   - "state" / "region" -> use 'UF' (or 'REGIO')
-   - "street" / "address" -> use 'STREET' (or 'STRAS')
-   - "customer" / "bp" -> use 'BPEXT' or 'KUNNR'
-   Set the `field` property of the JSON rule object to the exact column name present in the table (e.g. "COUNTRY", "POST_CODE1", "TELNR_LONG", "CITY2", "UF", "STREET", "SMTP_ADDR", "BPEXT", etc.).
+   - "email" -> use 'SMTP_ADDR' (or 'email')
+   Set the `field` property of the JSON rule object to the exact column name present in the table (e.g. "first-name", "country-of-birth", "person-id-external", "user-id", "COUNTRY", "PSTLZ", etc.).
 
 Output MUST be a JSON object with key "rules" containing a list of rule objects:
 {{
@@ -147,8 +159,12 @@ Output MUST be a JSON object with key "rules" containing a list of rule objects:
             raw_code = r.get("python_code") or "False"
             sanitized_code = sanitize_python_code(raw_code, prompt_str)
             
+            rule_id = r.get("id")
+            if not rule_id or rule_id in ("DYNAMIC_1", "DYNAMIC_RULE_1", "DYNAMIC_DEFAULT"):
+                rule_id = f"DYNAMIC_{uuid.uuid4().hex[:8]}"
+                
             cleaned_rules.append({
-                "id": r.get("id") or f"DYNAMIC_RULE_{idx}",
+                "id": rule_id,
                 "label": r.get("label") or f"Custom Rule {idx}",
                 "description": r.get("description") or prompt_str,
                 "field": r.get("field") or "GENERAL",
@@ -160,6 +176,7 @@ Output MUST be a JSON object with key "rules" containing a list of rule objects:
     except Exception as e:
         logger.exception("Failed to generate dynamic rules via LLM")
         raise HTTPException(500, f"Failed to generate dynamic rules: {str(e)}")
+
 
 @router.post("/validate/flow")
 def validate_flow(req: ValidateFlowRequest):
@@ -212,6 +229,7 @@ def validate_flow(req: ValidateFlowRequest):
         logger.exception("Validation flow failed")
         raise HTTPException(500, f"Validation flow failed: {str(e)}")
 
+
 @router.post("/validate/upload-csv")
 async def validate_upload(
     obj: str = Form(...),
@@ -253,6 +271,7 @@ async def validate_upload(
     result["filename"] = file.filename
     return result
 
+
 def _rows_to_csv(rows: List[Dict[str, str]], cols: List[str]) -> str:
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
@@ -260,6 +279,7 @@ def _rows_to_csv(rows: List[Dict[str, str]], cols: List[str]) -> str:
     for r in rows:
         writer.writerow(r)
     return buf.getvalue()
+
 
 @router.get("/validate/sample-csv")
 def sample_csv(obj: str = "CUSTOMER", count: int = 200):
@@ -279,11 +299,13 @@ def sample_csv(obj: str = "CUSTOMER", count: int = 200):
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
 
+
 class SaveValidationRequest(BaseModel):
     project_id: str
     target_object: str
     payload: list
     dynamic_rules: Optional[List[Dict[str, Any]]] = None
+
 
 @router.post("/validate/save")
 def save_validation(req: SaveValidationRequest):
@@ -294,7 +316,7 @@ def save_validation(req: SaveValidationRequest):
         if not res_obj.data:
             res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
         if not res_obj.data:
-            raise HTTPException(status_code=400, detail=f"SuccessFactors object '{req.target_object}' not found.")
+            raise HTTPException(400, detail=f"SuccessFactors object '{req.target_object}' not found.")
         object_id = res_obj.data[0]["id"]
         
         # Delete old validation if any
@@ -347,7 +369,7 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
         if not res_obj.data:
             res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
         if not res_obj.data:
-            raise HTTPException(status_code=400, detail=f"SuccessFactors object '{req.target_object}' not found.")
+            raise HTTPException(400, detail=f"SuccessFactors object '{req.target_object}' not found.")
         object_id = res_obj.data[0]["id"]
 
         # Remove previous dynamic rules for this project/object
@@ -366,29 +388,26 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
                 "payload": req.rules
             }).execute()
 
-        # ALSO persist to local JSON store and attempt to upload to Supabase Storage (if configured)
+        # ALSO persist to local JSON store
         storage_result = None
         try:
-            from services.cleanser_dynamic_rules import upsert_rules, DEFAULT_STORE_PATH
+            from services.cleanser_dynamic_rules import replace_rules_for_object, DEFAULT_STORE_PATH
 
-            # Upsert into local file store (backend/output/cleanser_dynamic_rules.json by default)
-            upserted = upsert_rules(req.rules or [], project_id=req.project_id, target_object=req.target_object)
+            # Replace in local file store (backend/output/cleanser_dynamic_rules.json by default)
+            upserted = replace_rules_for_object(req.rules or [], project_id=req.project_id, target_object=req.target_object)
 
             # Attempt upload to Supabase Storage bucket named 'dynamic_rules' (best-effort)
             try:
                 path = DEFAULT_STORE_PATH
                 with path.open('rb') as fh:
                     content = fh.read()
-                # Use storage API if available
                 if hasattr(client, 'storage'):
                     bucket = 'dynamic_rules'
                     remote_path = f"{req.project_id}_{req.target_object}_dynamic_rules.json"
                     try:
-                        # upload might accept bytes or file-like object depending on client
                         storage_resp = client.storage.from_(bucket).upload(remote_path, content, {'upsert': True})
                         storage_result = getattr(storage_resp, 'data', storage_resp)
                     except Exception as e:
-                        # some supabase client versions expect different args; try fallback upload via files API
                         try:
                             storage_resp = client.storage.from_(bucket).upload(remote_path, fh)
                             storage_result = getattr(storage_resp, 'data', storage_resp)
@@ -411,10 +430,48 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
             resp_payload["inserted"] = insert_resp.data if insert_resp and hasattr(insert_resp, 'data') else None
         except Exception:
             resp_payload["inserted"] = None
-        resp_payload["local_store"] = True
-        resp_payload["storage_upload"] = storage_result
-
+        if storage_result is not None:
+            resp_payload["storage"] = storage_result
         return resp_payload
     except Exception as e:
-        logger.exception("Failed to save dynamic rules")
+        logger.error(f"Failed to save dynamic rules: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to save dynamic rules: {str(e)}")
+
+
+@router.get("/validate/load/{project_id}")
+def load_saved_validation(project_id: str, target_object: Optional[str] = None):
+    try:
+        client = supabase_service.get_client()
+        query = client.table("validation_report").select("*, sf_objects(name)").eq("project_id", project_id)
+        res_obj = None
+        if target_object:
+            res_obj = client.table("sf_objects").select("id").ilike("name", target_object).execute()
+            if res_obj.data:
+                query = query.eq("object_id", res_obj.data[0]["id"])
+                
+        res = query.order("created_at", desc=True).limit(1).execute()
+        
+        report_payload = []
+        if res.data and len(res.data) > 0:
+            report_payload = res.data[0].get("payload", [])
+
+        # Load dynamic rules from dynamic_rules table
+        dynamic_rules = []
+        try:
+            dr_query = client.table("dynamic_rules").select("payload").eq("project_id", project_id)
+            if target_object and res_obj and res_obj.data:
+                dr_query = dr_query.eq("object_id", res_obj.data[0]["id"])
+            res_dr = dr_query.order("created_at", desc=True).limit(1).execute()
+            if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                dynamic_rules = res_dr.data[0]["payload"]
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "report": report_payload,
+            "dynamic_rules": dynamic_rules,
+        }
+    except Exception as e:
+        logger.error(f"Failed to load validation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to load validation: {str(e)}")

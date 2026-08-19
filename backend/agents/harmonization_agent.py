@@ -609,11 +609,14 @@ class HarmonizationAgent:
 
     def _find_country_columns(self, df: pd.DataFrame) -> List[str]:
         target_cols = []
-        schema_fields = self.schema.get("country_fields", [])
+        schema_fields = [f.upper() for f in self.schema.get("country_fields", [])]
         for col in df.columns:
             col_upper = col.upper()
             base = col_upper.split(".")[-1] if "." in col_upper else col_upper
-            if base in schema_fields or base in ["LAND1", "COUNTRY", "COUNTRY_CODE", "LAND", "NATION", "CTRY", "BILLING_COUNTRY", "SHIP_COUNTRY"] or "COUNTRY" in col_upper or "LAND" in base or "CTRY" in col_upper:
+            base_norm = base.replace("_", "-")
+            if (base in schema_fields or base_norm in schema_fields or 
+                base in ["LAND1", "COUNTRY", "COUNTRY_CODE", "COUNTRY-OF-BIRTH", "NATIONALITY", "LOCATION-COUNTRY", "LAND", "NATION", "CTRY", "BILLING_COUNTRY", "SHIP_COUNTRY"] or 
+                "COUNTRY" in col_upper or "LAND" in base or "CTRY" in col_upper or "NATIONALITY" in col_upper):
                 target_cols.append(col)
                 continue
             sample_vals = [str(v).strip().upper() for v in df[col].dropna().head(15)]
@@ -623,11 +626,14 @@ class HarmonizationAgent:
 
     def _find_currency_columns(self, df: pd.DataFrame) -> List[str]:
         target_cols = []
-        schema_fields = self.schema.get("currency_fields", [])
+        schema_fields = [f.upper() for f in self.schema.get("currency_fields", [])]
         for col in df.columns:
             col_upper = col.upper()
             base = col_upper.split(".")[-1] if "." in col_upper else col_upper
-            if base in schema_fields or base in ["WAERS", "CURRENCY", "CURRENCY_CODE", "CURR", "CCY", "PRICE_CURR"] or "WAERS" in col_upper or "CURR" in base or "CCY" in col_upper:
+            base_norm = base.replace("_", "-")
+            if (base in schema_fields or base_norm in schema_fields or 
+                base in ["WAERS", "CURRENCY", "CURRENCY_CODE", "CURRENCY-CODE", "CURR", "CCY", "PRICE_CURR"] or 
+                "CURRENCY" in col_upper or "WAERS" in col_upper or "CURR" in base or "CCY" in col_upper):
                 target_cols.append(col)
                 continue
             sample_vals = [str(v).strip().upper() for v in df[col].dropna().head(15)]
@@ -637,7 +643,7 @@ class HarmonizationAgent:
 
     def _find_payterm_columns(self, df: pd.DataFrame) -> List[str]:
         target_cols = []
-        schema_fields = self.schema.get("payterm_fields", [])
+        schema_fields = [f.upper() for f in self.schema.get("payterm_fields", [])]
         for col in df.columns:
             col_upper = col.upper()
             base = col_upper.split(".")[-1] if "." in col_upper else col_upper
@@ -651,7 +657,7 @@ class HarmonizationAgent:
 
     def _find_mattype_columns(self, df: pd.DataFrame) -> List[str]:
         target_cols = []
-        schema_fields = self.schema.get("mattype_fields", [])
+        schema_fields = [f.upper() for f in self.schema.get("mattype_fields", [])]
         for col in df.columns:
             col_upper = col.upper()
             base = col_upper.split(".")[-1] if "." in col_upper else col_upper
@@ -665,21 +671,26 @@ class HarmonizationAgent:
 
     def _rule_1_dedup(self, df: pd.DataFrame) -> pd.DataFrame:
         """Rule 1: Key-based dedup — remove rows with duplicate key field, keep first."""
-        key_field = self.schema["key_field"]
+        key_field = self.schema.get("key_field", "")
         key_col = None
 
-        # 1. Exact or suffix match with schema key field (e.g. KUNNR, S_CUST_GEN.KUNNR)
-        for col in df.columns:
-            base = col.split(".")[-1] if "." in col else col
-            if base == key_field:
-                key_col = col
-                break
+        # 1. Exact or suffix match with schema key field (e.g. person-id-external, user-id, KUNNR)
+        if key_field:
+            for col in df.columns:
+                base = col.split(".")[-1] if "." in col else col
+                if (base.lower() == key_field.lower() or 
+                    base.lower().replace("_", "-") == key_field.lower().replace("_", "-")):
+                    key_col = col
+                    break
 
-        # 2. Known ERP key column names
+        # 2. Known ERP / SuccessFactors key column names
         if key_col is None:
             for col in df.columns:
-                base = col.split(".")[-1].upper() if "." in col else col.upper()
-                if base in ["KUNNR", "LIFNR", "MATNR", "ACCOUNT_NUMBER", "PARTY_NUMBER", "CUSTOMER_NUMBER", "VENDOR_NUMBER", "MATERIAL_NUMBER", "ID"]:
+                base = col.split(".")[-1].upper().replace("_", "-") if "." in col else col.upper().replace("_", "-")
+                if base in [
+                    "PERSON-ID-EXTERNAL", "USER-ID", "PERNR", "KUNNR", "LIFNR", "MATNR",
+                    "ACCOUNT-NUMBER", "PARTY-NUMBER", "CUSTOMER-NUMBER", "VENDOR-NUMBER", "MATERIAL-NUMBER", "ID"
+                ]:
                     key_col = col
                     break
 
@@ -700,13 +711,13 @@ class HarmonizationAgent:
         return df.reset_index(drop=True)
 
     def _row_key_info(self, df: pd.DataFrame, idx: Any) -> str:
-        """Find key field name and value for a row (e.g. KUNNR, LIFNR, MATNR) to enrich log messages."""
+        """Find key field name and value for a row to enrich log messages."""
         for col in df.columns:
-            base = col.split(".")[-1].upper() if "." in col else col.upper()
-            if base in ["KUNNR", "LIFNR", "MATNR", "ID", "ACCOUNT_NUMBER", "CUSTOMER_NUMBER", "VENDOR_NUMBER", "MATERIAL_NUMBER"]:
+            base = col.split(".")[-1].upper().replace("_", "-") if "." in col else col.upper().replace("_", "-")
+            if base in ["PERSON-ID-EXTERNAL", "USER-ID", "PERNR", "KUNNR", "LIFNR", "MATNR", "ID", "ACCOUNT-NUMBER", "CUSTOMER-NUMBER", "VENDOR-NUMBER", "MATERIAL-NUMBER"]:
                 val = str(df.at[idx, col]).strip()
                 if val and val != "nan":
-                    return f" [{base}: {val}]"
+                    return f" [{col}: {val}]"
         return ""
 
     def _rule_3_country_iso(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None, iso_length: int = 2) -> pd.DataFrame:
@@ -1051,27 +1062,51 @@ class HarmonizationAgent:
         for rule in dynamic_rules:
             rule_id = rule.get("id", "DYNAMIC")
             label = rule.get("label", rule_id)
-            target_field = rule.get("target_field", "")
+            target_field = str(rule.get("target_field", "")).strip()
             python_code = rule.get("python_code", "")
 
             if not python_code or not target_field:
                 self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — missing code or target field")
                 continue
 
-            # Find the actual column in df
+            # Strip markdown formatting if returned by LLM
+            python_code = re.sub(r"^```(?:python|py)?\s*", "", python_code.strip(), flags=re.IGNORECASE)
+            python_code = re.sub(r"```$", "", python_code).strip()
+
+            # Find the actual column in df (exact, suffix, or normalized matching)
             actual_col = None
+            target_norm = target_field.lower().replace("-", "").replace("_", "").replace(" ", "")
             for col in df.columns:
-                if col.upper() == target_field.upper() or col.split('.')[-1].upper() == target_field.upper():
+                col_str = str(col)
+                col_norm = col_str.lower().replace("-", "").replace("_", "").replace(" ", "")
+                if (col_str.upper() == target_field.upper() or 
+                    col_str.split('.')[-1].upper() == target_field.upper() or 
+                    col_norm == target_norm):
                     actual_col = col
                     break
 
             if actual_col is None:
-                self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — field '{target_field}' not found in data")
+                self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — field '{target_field}' not found in dataset columns: {list(df.columns)}")
                 continue
 
             try:
                 # Build the transform function from LLM code
-                exec_globals = {"re": re, "pd": pd}
+                exec_globals = {
+                    "re": re,
+                    "pd": pd,
+                    "str": str,
+                    "int": int,
+                    "float": float,
+                    "len": len,
+                    "bool": bool,
+                    "list": list,
+                    "dict": dict,
+                    "set": set,
+                    "min": min,
+                    "max": max,
+                    "round": round,
+                    "abs": abs,
+                }
                 exec(python_code, exec_globals)
                 transform_fn = exec_globals.get("transform")
                 if not callable(transform_fn):
@@ -1079,13 +1114,20 @@ class HarmonizationAgent:
                     continue
 
                 changed_count = 0
-                for idx in df.index:
-                    old_val = str(df.at[idx, actual_col]) if df.at[idx, actual_col] is not None else ""
-                    row_dict = {k: str(v) if v is not None else "" for k, v in df.iloc[idx].to_dict().items()}
+                error_logged = False
+                for pos, idx in enumerate(df.index):
+                    old_val = str(df.at[idx, actual_col]) if df.at[idx, actual_col] is not None and str(df.at[idx, actual_col]) != "nan" else ""
+                    row_dict = {k: str(v) if v is not None and str(v) != "nan" else "" for k, v in df.iloc[pos].to_dict().items()}
                     try:
                         new_val = str(transform_fn(old_val, row_dict))
-                    except Exception:
+                        if new_val == "None" or new_val == "nan":
+                            new_val = ""
+                    except Exception as err:
+                        if not error_logged:
+                            self.fix_log.append(f"[DynamicAI] Error executing row transform for '{label}': {err}")
+                            error_logged = True
                         new_val = old_val
+
                     if new_val != old_val:
                         df.at[idx, actual_col] = new_val
                         changed_count += 1
@@ -1096,7 +1138,9 @@ class HarmonizationAgent:
                 if changed_count > 5:
                     self.fix_log.append(f"[DynamicAI] ... and {changed_count - 5} more changes for '{label}'")
                 elif changed_count == 0:
-                    self.fix_log.append(f"[DynamicAI] Rule '{label}' — no changes needed")
+                    self.fix_log.append(f"[DynamicAI] Rule '{label}' evaluated on '{actual_col}' — 0 changes needed")
+                else:
+                    self.fix_log.append(f"[DynamicAI] Rule '{label}' successfully modified {changed_count} rows in '{actual_col}'")
 
             except Exception as e:
                 self.fix_log.append(f"[DynamicAI] Error executing rule '{label}': {str(e)[:100]}")

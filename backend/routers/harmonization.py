@@ -23,6 +23,7 @@ from pydantic import BaseModel
 import pandas as pd
 
 from services.supabase_client import supabase_service
+from agents.extract_agent import ExtractAgent
 from agents.harmonization_agent import (
     HarmonizationAgent,
     HarmonizationConfig,
@@ -71,6 +72,7 @@ async def run_harmonization(
     preview: str = Form("false"),
     rule_config_json: str = Form(""),
     custom_prompts_json: str = Form(""),
+    dynamic_rules_json: str = Form(""),
 ):
     try:
         config = HarmonizationConfig(
@@ -95,15 +97,20 @@ async def run_harmonization(
             except Exception:
                 pass
 
+        dynamic_rules_list = []
+        if dynamic_rules_json:
+            try:
+                dynamic_rules_list = json.loads(dynamic_rules_json)
+                if not isinstance(dynamic_rules_list, list):
+                    dynamic_rules_list = [dynamic_rules_list]
+            except Exception:
+                pass
+
         primary_content = await primary_file.read()
         primary_df = parse_data_from_upload(primary_content, primary_file.filename or "data.csv")
 
         # Collect custom instructions for fallback LLM generator
         all_prompts = _collect_custom_prompts(rule_config, custom_prompts)
-        dynamic_rules = None
-        if all_prompts:
-            actual_columns = list(primary_df.columns)
-            dynamic_rules = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
 
         if mode == "single":
             primary_mappings = None
@@ -112,6 +119,15 @@ async def run_harmonization(
                 primary_mappings = parse_mapping_from_upload(
                     pm_content, primary_mapping_file.filename or "mapping.csv"
                 )
+
+            mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings or [])
+            actual_columns = list(mapped_df_preview.columns)
+
+            dynamic_rules = list(dynamic_rules_list) if dynamic_rules_list else []
+            if all_prompts:
+                compiled = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
+                dynamic_rules.extend(compiled)
+
             result = agent.run_single_source(
                 primary_df, primary_mappings,
                 primary_source=primary_source,
@@ -142,6 +158,14 @@ async def run_harmonization(
                 sm_content, secondary_mapping_file.filename or "mapping.csv"
             )
 
+            mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings or [])
+            actual_columns = list(mapped_df_preview.columns)
+
+            dynamic_rules = list(dynamic_rules_list) if dynamic_rules_list else []
+            if all_prompts:
+                compiled = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
+                dynamic_rules.extend(compiled)
+
             result = agent.run_multi_source(
                 primary_df, secondary_df, primary_mappings, secondary_mappings,
                 primary_source=primary_source, secondary_source=secondary_source,
@@ -159,12 +183,35 @@ async def run_harmonization(
         final_rows = result.final_table.fillna("").to_dict(orient="records") if not result.final_table.empty else []
         columns = list(result.final_table.columns) if not result.final_table.empty else []
 
+        # Build Harmonized Table Structure with SuccessFactors Column Names
+        try:
+            extract_agent = ExtractAgent()
+            sample_for_grouping = final_rows if final_rows else (mapped_df_preview.fillna("").to_dict(orient="records") if not mapped_df_preview.empty else [])
+            harmonized_tables = extract_agent.group_records_by_sap_structure(
+                harmonized_results=sample_for_grouping,
+                target_object=sap_object,
+                mappings=primary_mappings or []
+            )
+        except Exception as e:
+            logger.warning(f"Could not group harmonized records into SF tables: {e}")
+            harmonized_tables = []
+
+        if not harmonized_tables:
+            harmonized_tables = [{
+                "table_name": f"{sap_object} Data",
+                "columns": columns if columns else actual_columns,
+                "row_count": len(final_rows)
+            }]
+
         return {
             "session_id": session_id,
             "final_table": final_rows,
             "columns": columns,
+            "tables": harmonized_tables,
             "stats": result.stats,
             "fix_log": result.fix_log,
+            "dynamic_rules": dynamic_rules or [],
+            "custom_prompts": all_prompts or [],
             "is_preview": is_preview,
         }
 
@@ -189,6 +236,7 @@ class HarmonizeFlowRequest(BaseModel):
     preview: bool = False
     rule_config: Optional[Dict[str, Any]] = None
     custom_prompts: Optional[List[str]] = None
+    dynamic_rules: Optional[List[Dict[str, Any]]] = None
 
 @router.post("/harmonize/flow")
 def run_harmonization_flow(req: HarmonizeFlowRequest):
@@ -211,7 +259,7 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
         # 1. Fetch Extracted Data from DB
         res_data = client.table("extracted_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).execute()
         if not res_data.data:
-            raise HTTPException(400, "No extracted data found for this project and object in the database.")
+            raise HTTPException(400, "No extracted data found. Please extract and save data in Step 3 first.")
         
         extracted_payload = res_data.data[0]["payload"]
         if not extracted_payload:
@@ -254,30 +302,18 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
         if not primary_mappings:
             raise HTTPException(400, "No valid mappings could be constructed from the database.")
 
-        # 3. Generate dynamic rules from custom prompts / custom instructions (single LLM call fallback)
+        # 3. Determine dynamic rules to execute
+        mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings)
+        actual_columns = list(mapped_df_preview.columns)
+
+        # 1. Start with the client-supplied dynamic rules (which are the selected/checked rules)
+        dynamic_rules = list(req.dynamic_rules) if req.dynamic_rules else []
+
+        # 2. Compile any custom prompts or inline custom instructions if provided
         all_prompts = _collect_custom_prompts(req.rule_config, req.custom_prompts)
-        dynamic_rules = None
         if all_prompts:
-            actual_columns = list(primary_df.columns)
-            dynamic_rules = _generate_dynamic_rules_internal(all_prompts, req.sap_object, actual_columns)
-
-        # Query stored active dynamic rules from DB if project_id and object specified
-        stored_rules = []
-        try:
-            res_obj = client.table("sf_objects").select("id").ilike("name", req.sap_object).execute()
-            if res_obj.data:
-                object_id = res_obj.data[0]["id"]
-                res_rules = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
-                if res_rules.data and isinstance(res_rules.data[0].get("payload"), list):
-                    stored_rules = [r for r in res_rules.data[0]["payload"] if isinstance(r, dict) and r.get("enabled", True) is not False]
-        except Exception:
-            pass
-
-        if stored_rules:
-            if dynamic_rules is None:
-                dynamic_rules = stored_rules
-            else:
-                dynamic_rules.extend(stored_rules)
+            compiled = _generate_dynamic_rules_internal(all_prompts, req.sap_object, actual_columns)
+            dynamic_rules.extend(compiled)
 
         # 4. Run Agent
         result = agent.run_single_source(
@@ -296,13 +332,35 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
         final_rows = result.final_table.fillna("").to_dict(orient="records") if not result.final_table.empty else []
         columns = list(result.final_table.columns) if not result.final_table.empty else []
 
+        # 5. Build Harmonized Table Structure with SuccessFactors Column Names
+        try:
+            extract_agent = ExtractAgent()
+            sample_for_grouping = final_rows if final_rows else (mapped_df_preview.fillna("").to_dict(orient="records") if not mapped_df_preview.empty else [])
+            harmonized_tables = extract_agent.group_records_by_sap_structure(
+                harmonized_results=sample_for_grouping,
+                target_object=req.sap_object,
+                mappings=primary_mappings
+            )
+        except Exception as e:
+            logger.warning(f"Could not group harmonized records into SF tables: {e}")
+            harmonized_tables = []
+
+        if not harmonized_tables:
+            harmonized_tables = [{
+                "table_name": f"{req.sap_object} Data",
+                "columns": columns if columns else actual_columns,
+                "row_count": len(final_rows)
+            }]
+
         return {
             "session_id": session_id,
             "final_table": final_rows,
             "columns": columns,
-            "tables": extracted_tables,
+            "tables": harmonized_tables,
             "stats": result.stats,
             "fix_log": result.fix_log,
+            "dynamic_rules": dynamic_rules or [],
+            "custom_prompts": all_prompts or [],
             "is_preview": req.preview,
         }
 
@@ -331,6 +389,7 @@ async def run_harmonization_multi_flow(
     preview: str = Form("false"),
     rule_config_json: str = Form(""),
     custom_prompts_json: str = Form(""),
+    dynamic_rules_json: str = Form(""),
 ):
     """
     Multi-source harmonization with primary data from DB and secondary data uploaded.
@@ -358,6 +417,15 @@ async def run_harmonization_multi_flow(
         if custom_prompts_json:
             try:
                 custom_prompts = json.loads(custom_prompts_json)
+            except Exception:
+                pass
+
+        dynamic_rules_list = []
+        if dynamic_rules_json:
+            try:
+                dynamic_rules_list = json.loads(dynamic_rules_json)
+                if not isinstance(dynamic_rules_list, list):
+                    dynamic_rules_list = [dynamic_rules_list]
             except Exception:
                 pass
 
@@ -428,12 +496,18 @@ async def run_harmonization_multi_flow(
         sm_content = await secondary_mapping_file.read()
         secondary_mappings = parse_mapping_from_upload(sm_content, secondary_mapping_file.filename or "mapping.csv")
 
-        # 4. Generate dynamic rules from custom prompts / custom instructions (single LLM call)
+        # 4. Determine post-mapping SF columns for dynamic rules
+        mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings)
+        actual_columns = list(mapped_df_preview.columns)
+
+        # 1. Start with the client-supplied dynamic rules (which are the selected/checked rules)
+        dynamic_rules = list(dynamic_rules_list) if dynamic_rules_list else []
+
+        # 2. Compile any custom prompts or inline custom instructions if provided
         all_prompts = _collect_custom_prompts(rule_config, custom_prompts)
-        dynamic_rules = None
         if all_prompts:
-            actual_columns = list(primary_df.columns)
-            dynamic_rules = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
+            compiled = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
+            dynamic_rules.extend(compiled)
 
         # 5. Run Multi-Source Agent
         result = agent.run_multi_source(
@@ -452,13 +526,35 @@ async def run_harmonization_multi_flow(
         final_rows = result.final_table.fillna("").to_dict(orient="records") if not result.final_table.empty else []
         columns = list(result.final_table.columns) if not result.final_table.empty else []
 
+        # Build Harmonized Table Structure with SuccessFactors Column Names
+        try:
+            extract_agent = ExtractAgent()
+            sample_for_grouping = final_rows if final_rows else (mapped_df_preview.fillna("").to_dict(orient="records") if not mapped_df_preview.empty else [])
+            harmonized_tables = extract_agent.group_records_by_sap_structure(
+                harmonized_results=sample_for_grouping,
+                target_object=sap_object,
+                mappings=primary_mappings
+            )
+        except Exception as e:
+            logger.warning(f"Could not group harmonized records into SF tables: {e}")
+            harmonized_tables = []
+
+        if not harmonized_tables:
+            harmonized_tables = [{
+                "table_name": f"{sap_object} Data",
+                "columns": columns if columns else actual_columns,
+                "row_count": len(final_rows)
+            }]
+
         return {
             "session_id": session_id,
             "final_table": final_rows,
             "columns": columns,
-            "tables": extracted_tables,
+            "tables": harmonized_tables,
             "stats": result.stats,
             "fix_log": result.fix_log,
+            "dynamic_rules": dynamic_rules or [],
+            "custom_prompts": all_prompts or [],
             "is_preview": is_preview,
         }
 
@@ -518,13 +614,31 @@ CRITICAL RULES:
     for i, p in enumerate(prompts, 1):
         user_msg += f"{i}. {p}\n"
 
+    import uuid
     try:
         rules = llm_orchestrator.execute_json_prompt(system_prompt, user_msg)
         if not isinstance(rules, list):
             rules = [rules]
 
-        logger.info(f"Generated {len(rules)} dynamic harmonization rules from {len(prompts)} prompts via LLMOrchestrator")
-        return rules
+        cleaned_rules = []
+        for idx, r in enumerate(rules, 1):
+            if not isinstance(r, dict):
+                continue
+            rule_id = r.get("id")
+            if not rule_id or rule_id in ("DYNAMIC_HARM_1", "DYNAMIC_HARM_<N>", "DYNAMIC_1", "DYNAMIC_RULE_1"):
+                rule_id = f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}"
+            prompt_str = prompts[min(idx - 1, len(prompts) - 1)] if prompts else ""
+            cleaned_rules.append({
+                "id": rule_id,
+                "label": r.get("label") or f"Transform Rule {idx}",
+                "description": r.get("description") or prompt_str,
+                "target_field": r.get("target_field") or "",
+                "python_code": r.get("python_code") or "",
+                "enabled": r.get("enabled", True),
+            })
+
+        logger.info(f"Generated {len(cleaned_rules)} dynamic harmonization rules from {len(prompts)} prompts via LLMOrchestrator")
+        return cleaned_rules
 
     except Exception as e:
         logger.exception(f"Failed to generate dynamic harmonization rules: {e}")
@@ -546,6 +660,50 @@ def generate_dynamic_rules(req: GenerateHarmonizationRulesRequest):
     rules = _generate_dynamic_rules_internal(req.prompts, req.target_object, actual_cols)
 
     return {"rules": rules, "count": len(rules)}
+
+
+class SaveHarmonizationDynamicRulesRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: Optional[List[Dict[str, Any]]] = None
+
+@router.post("/harmonize/rules/save")
+def save_harmonization_dynamic_rules(req: SaveHarmonizationDynamicRulesRequest):
+    try:
+        client = supabase_service.get_client()
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+        if not res_obj.data:
+            res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+        if not res_obj.data:
+            raise HTTPException(400, f"SuccessFactors object '{req.target_object}' not found")
+        object_id = res_obj.data[0]["id"]
+
+        # Delete old dynamic rules for this project/object
+        del_res = client.table("dynamic_rules") \
+            .delete() \
+            .eq("project_id", req.project_id) \
+            .eq("object_id", object_id) \
+            .execute()
+
+        insert_resp = None
+        if req.rules:
+            insert_resp = client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": req.rules
+            }).execute()
+
+        # Also persist to local store if available
+        try:
+            from services.cleanser_dynamic_rules import replace_rules_for_object
+            replace_rules_for_object(req.rules or [], project_id=req.project_id, target_object=req.target_object, source="harmonization_dynamic_rule")
+        except Exception:
+            pass
+
+        return {"status": "success", "message": "Harmonization dynamic rules saved to database."}
+    except Exception as e:
+        logger.error(f"Failed to save dynamic rules in harmonization: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save dynamic rules: {str(e)}")
 
 
 @router.get("/harmonize/download/{session_id}")
@@ -571,6 +729,8 @@ class SaveHarmonizedRequest(BaseModel):
     target_object: str
     payload: list
     tables: Optional[list] = None
+    dynamic_rules: Optional[list] = None
+    custom_prompts: Optional[list] = None
 
 @router.post("/harmonize/save")
 def save_harmonized_data(req: SaveHarmonizedRequest):
@@ -593,16 +753,87 @@ def save_harmonized_data(req: SaveHarmonizedRequest):
         
         stored_payload = {
             "rows": req.payload,
-            "tables": req.tables or []
-        } if req.tables else req.payload
+            "tables": req.tables or [],
+            "custom_prompts": req.custom_prompts or [],
+            "dynamic_rules": req.dynamic_rules or [],
+        } if (req.tables or req.custom_prompts or req.dynamic_rules) else req.payload
 
         client.table("harmonized_data").insert({
             "project_id": req.project_id,
             "object_id": obj_id,
             "payload": stored_payload
         }).execute()
+
+        # Also persist dynamic_rules to the dynamic_rules table in Supabase!
+        if req.dynamic_rules is not None:
+            try:
+                client.table("dynamic_rules") \
+                    .delete() \
+                    .eq("project_id", req.project_id) \
+                    .eq("object_id", obj_id) \
+                    .execute()
+
+                if req.dynamic_rules:
+                    client.table("dynamic_rules").insert({
+                        "project_id": req.project_id,
+                        "object_id": obj_id,
+                        "payload": req.dynamic_rules
+                    }).execute()
+            except Exception as de:
+                logger.warning(f"Could not persist dynamic_rules in database: {de}")
         
-        return {"status": "success"}
+        return {"status": "success", "message": "Harmonized data and dynamic rules saved successfully"}
     except Exception as e:
         logger.exception("Save harmonized data failed")
         raise HTTPException(500, f"Failed to save data: {str(e)}")
+
+
+@router.get("/harmonize/load/{project_id}")
+def load_harmonized_data(project_id: str, target_object: Optional[str] = None):
+    try:
+        client = supabase_service.get_client()
+        query = client.table("harmonized_data").select("*, sf_objects(name)").eq("project_id", project_id)
+        if target_object:
+            res_obj = client.table("sf_objects").select("id").ilike("name", target_object).execute()
+            if res_obj.data:
+                query = query.eq("object_id", res_obj.data[0]["id"])
+                
+        res = query.order("created_at", desc=True).limit(1).execute()
+        if not res.data:
+            return {"status": "not_found", "data": [], "tables": [], "dynamic_rules": [], "custom_prompts": []}
+            
+        raw_payload = res.data[0].get("payload")
+        rows = []
+        tables = []
+        custom_prompts = []
+        dynamic_rules = []
+        if isinstance(raw_payload, dict):
+            rows = raw_payload.get("rows", [])
+            tables = raw_payload.get("tables", [])
+            custom_prompts = raw_payload.get("custom_prompts", [])
+            dynamic_rules = raw_payload.get("dynamic_rules", [])
+        elif isinstance(raw_payload, list):
+            rows = raw_payload
+
+        # Also fallback to dynamic_rules table if not in payload
+        if not dynamic_rules:
+            try:
+                obj_id = res.data[0].get("object_id")
+                if obj_id:
+                    res_dr = client.table("dynamic_rules").select("payload").eq("project_id", project_id).eq("object_id", obj_id).order("created_at", desc=True).limit(1).execute()
+                    if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                        dynamic_rules = res_dr.data[0]["payload"]
+            except Exception:
+                pass
+
+        return {
+            "status": "success",
+            "data": rows,
+            "tables": tables,
+            "custom_prompts": custom_prompts,
+            "dynamic_rules": dynamic_rules,
+            "object_name": res.data[0].get("sf_objects", {}).get("name", target_object) if res.data[0].get("sf_objects") else target_object
+        }
+    except Exception as e:
+        logger.error(f"Failed to load harmonized data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to load harmonized data: {str(e)}")

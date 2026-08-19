@@ -105,6 +105,10 @@ export function filterRowsByKey(
  * For a given table definition t (from extractedTables), and data rows (from extract, harmonize, or cleanse),
  * resolve the columns to display and map the row data so every column value is correctly populated.
  */
+/**
+ * For a given table definition t (from extractedTables), and data rows (from extract, harmonize, or cleanse),
+ * resolve the columns to display and map the row data so every column value is correctly populated.
+ */
 export function getTableDisplayData(
   table: TableInfo,
   rows: Record<string, any>[],
@@ -115,16 +119,31 @@ export function getTableDisplayData(
     return { columns: table.columns, rows: [] };
   }
 
-  const sampleRow = rows[0] || {};
-  const rowKeys = Object.keys(sampleRow);
-  const rowKeysLower = new Map<string, string>();
-  rowKeys.forEach(k => rowKeysLower.set(k.toLowerCase(), k));
+  // Common SuccessFactors & HR synonyms map (normalized lowercase alphanumeric -> array of alias keys)
+  const SF_SYNONYMS: Record<string, string[]> = {
+    'userid': ['person-id-external', 'person_id_external', 'personidexternal', 'user-id', 'user_id', 'userid', 'pernr', 'worker_id', 'worker-id', 'employee_id', 'employee-id', 'empid', 'emp_id'],
+    'personidexternal': ['person-id-external', 'person_id_external', 'personidexternal', 'user-id', 'user_id', 'userid', 'pernr', 'worker_id', 'worker-id', 'employee_id'],
+    'firstname': ['first-name', 'first_name', 'firstname', 'fname', 'given_name', 'givenname', 'name1', 'name_first'],
+    'lastname': ['last-name', 'last_name', 'lastname', 'lname', 'surname', 'family_name', 'name2', 'name_last'],
+    'dateofbirth': ['date-of-birth', 'date_of_birth', 'dateofbirth', 'dob', 'birth_date', 'birthdate', 'gbdat'],
+    'countryofbirth': ['country-of-birth', 'country_of_birth', 'countryofbirth', 'birth_country', 'nationality', 'citizenship', 'land1', 'country'],
+    'gender': ['gender', 'gender-description', 'gender_description', 'genderdescription', 'sex', 'gesch'],
+    'genderdescription': ['gender-description', 'gender_description', 'genderdescription', 'gender', 'sex', 'gesch'],
+    'maritalstatus': ['marital-status', 'marital_status', 'maritalstatus', 'marital', 'famst'],
+    'citizenship': ['citizenship', 'nationality', 'country-of-birth', 'country_of_birth', 'country'],
+    'preferredlanguage': ['preferred-language', 'preferred_language', 'preferredlanguage', 'language', 'spras'],
+    'formeremployee': ['former-employee', 'former_employee', 'formeremployee', 'status'],
+    'personalnotes': ['personal-notes', 'personal_notes', 'personalnotes', 'notes', 'remarks', 'comments'],
+    'sourcefile': ['source-file', 'source_file', 'sourcefile', 'source', 'source_name'],
+  };
 
-  // Build mapping lookup:
-  // src (clean/base/full/norm) -> sap (clean/base/full)
-  // sap (clean/base/full/norm) -> src (clean/base/full)
-  const srcToSapMap = new Map<string, string[]>();
-  const sapToSrcMap = new Map<string, string[]>();
+  const norm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Build mapping lookups:
+  // norm(src) -> array of sap keys
+  // norm(sap) -> array of src keys
+  const srcNormToSapKeys = new Map<string, string[]>();
+  const sapNormToSrcKeys = new Map<string, string[]>();
 
   (mappings || []).forEach(m => {
     const srcStr = typeof m === 'object' ? String(m.src || m.source_field_name || '') : '';
@@ -134,135 +153,119 @@ export function getTableDisplayData(
     const sapClean = sapStr.replace(/^\[\d+\]\s*/, '').trim();
     const sapBase = sapClean.split('.').pop() || '';
 
-    const sapCandidates = [sapBase, sapClean, sapStr].filter(Boolean);
-    const srcCandidates = [srcBase, srcClean, srcStr].filter(Boolean);
+    const sapCand = [sapStr, sapClean, sapBase].filter(Boolean);
+    const srcCand = [srcStr, srcClean, srcBase].filter(Boolean);
 
-    const normSrcClean = srcClean.toLowerCase().replace(/[\s_\-]/g, '');
-    const normSrcBase = srcBase.toLowerCase().replace(/[\s_\-]/g, '');
-
-    [srcClean.toLowerCase(), srcBase.toLowerCase(), srcStr.toLowerCase(), normSrcClean, normSrcBase].forEach(k => {
-      if (k) srcToSapMap.set(k, sapCandidates);
+    [srcStr, srcClean, srcBase].forEach(k => {
+      const n = norm(k);
+      if (n) {
+        const existing = srcNormToSapKeys.get(n) || [];
+        srcNormToSapKeys.set(n, Array.from(new Set([...existing, ...sapCand])));
+      }
     });
 
-    [sapClean.toLowerCase(), sapBase.toLowerCase(), sapStr.toLowerCase()].forEach(k => {
-      if (k) sapToSrcMap.set(k, srcCandidates);
+    [sapStr, sapClean, sapBase].forEach(k => {
+      const n = norm(k);
+      if (n) {
+        const existing = sapNormToSrcKeys.get(n) || [];
+        sapNormToSrcKeys.set(n, Array.from(new Set([...existing, ...srcCand])));
+      }
     });
   });
 
-  // For each column defined in table.columns, determine displayCol and actualKey
-  const columnBindings: { displayCol: string; actualKey: string }[] = [];
+  // For each column in table.columns, build candidate key list
+  const colCandidates = new Map<string, string[]>();
+  const finalColumns: string[] = [];
 
   table.columns.forEach(col => {
+    finalColumns.push(col);
     const colClean = col.replace(/^\[\d+\]\s*/, '').trim();
     const colBase = colClean.split('.').pop() || '';
-    const colLower = col.toLowerCase();
-    const colCleanLower = colClean.toLowerCase();
-    const colBaseLower = colBase.toLowerCase();
-    const normColClean = colCleanLower.replace(/[\s_\-]/g, '');
+    const nCol = norm(colClean);
 
-    // 1. If preferTargetFields is true, check srcToSapMap FIRST to resolve mapped Target field
-    if (preferTargetFields) {
-      const sapCandidates = srcToSapMap.get(colLower) || srcToSapMap.get(colCleanLower) || srcToSapMap.get(colBaseLower) || srcToSapMap.get(normColClean) || [];
-      for (const sapCand of sapCandidates) {
-        if (sampleRow[sapCand] !== undefined) {
-          columnBindings.push({ displayCol: sapCand, actualKey: sapCand });
-          return;
-        }
-        const sapCandLower = sapCand.toLowerCase();
-        if (rowKeysLower.has(sapCandLower)) {
-          const actual = rowKeysLower.get(sapCandLower)!;
-          columnBindings.push({ displayCol: actual, actualKey: actual });
-          return;
-        }
-      }
+    const candidates: string[] = [col, colClean, colBase];
+
+    // Check mappings
+    const fromSap = sapNormToSrcKeys.get(nCol) || [];
+    const fromSrc = srcNormToSapKeys.get(nCol) || [];
+    candidates.push(...fromSap, ...fromSrc);
+
+    // Check SF synonyms
+    if (SF_SYNONYMS[nCol]) {
+      SF_SYNONYMS[nCol].forEach(syn => {
+        candidates.push(syn);
+        const synSap = sapNormToSrcKeys.get(norm(syn)) || [];
+        const synSrc = srcNormToSapKeys.get(norm(syn)) || [];
+        candidates.push(...synSap, ...synSrc);
+      });
     }
 
-    // 2. Direct match in rowKeys
-    if (sampleRow[col] !== undefined) {
-      columnBindings.push({ displayCol: col, actualKey: col });
-      return;
-    }
-    if (sampleRow[colClean] !== undefined) {
-      columnBindings.push({ displayCol: colClean, actualKey: colClean });
-      return;
-    }
-    if (sampleRow[colBase] !== undefined) {
-      columnBindings.push({ displayCol: colBase, actualKey: colBase });
-      return;
-    }
-    if (rowKeysLower.has(colLower)) {
-      const actual = rowKeysLower.get(colLower)!;
-      columnBindings.push({ displayCol: actual, actualKey: actual });
-      return;
-    }
-    if (rowKeysLower.has(colBaseLower)) {
-      const actual = rowKeysLower.get(colBaseLower)!;
-      columnBindings.push({ displayCol: actual, actualKey: actual });
-      return;
-    }
-
-    // 3. Check if col is a src field, and row has mapped sap field
-    const sapCandidates = srcToSapMap.get(colLower) || srcToSapMap.get(colCleanLower) || srcToSapMap.get(colBaseLower) || srcToSapMap.get(normColClean) || [];
-    for (const sapCand of sapCandidates) {
-      if (sampleRow[sapCand] !== undefined) {
-        columnBindings.push({ displayCol: sapCand, actualKey: sapCand });
-        return;
-      }
-      const sapCandLower = sapCand.toLowerCase();
-      if (rowKeysLower.has(sapCandLower)) {
-        const actual = rowKeysLower.get(sapCandLower)!;
-        columnBindings.push({ displayCol: actual, actualKey: actual });
-        return;
-      }
-    }
-
-    // 4. Soft fuzzy match against rowKeys in sampleRow (ignoring spaces, underscores, hyphens)
-    for (const rKey of rowKeys) {
-      const rKeyNorm = rKey.toLowerCase().replace(/[\s_\-]/g, '');
-      if (rKeyNorm === normColClean || (normColClean.length >= 4 && rKeyNorm.includes(normColClean)) || (rKeyNorm.length >= 4 && normColClean.includes(rKeyNorm))) {
-        if (sampleRow[rKey] !== undefined) {
-          columnBindings.push({ displayCol: rKey, actualKey: rKey });
-          return;
-        }
-      }
-    }
-
-    // 5. Check if col is a sap field, and row has mapped src field
-    const srcCandidates = sapToSrcMap.get(colLower) || sapToSrcMap.get(colCleanLower) || sapToSrcMap.get(colBaseLower) || [];
-    for (const srcCand of srcCandidates) {
-      if (sampleRow[srcCand] !== undefined) {
-        columnBindings.push({ displayCol: srcCand, actualKey: srcCand });
-        return;
-      }
-      const srcCandLower = srcCand.toLowerCase();
-      if (rowKeysLower.has(srcCandLower)) {
-        const actual = rowKeysLower.get(srcCandLower)!;
-        columnBindings.push({ displayCol: actual, actualKey: actual });
-        return;
-      }
-    }
-
-    // Fallback: keep col
-    columnBindings.push({ displayCol: col, actualKey: col });
+    // Deduplicate candidates
+    colCandidates.set(col, Array.from(new Set(candidates.filter(Boolean))));
   });
 
-  // If table had NO matching columns at all in rowKeys, fallback to all rowKeys
-  const matchedCount = columnBindings.filter(b => sampleRow[b.actualKey] !== undefined).length;
-  if (matchedCount === 0 && rowKeys.length > 0) {
-    return {
-      columns: rowKeys,
-      rows: rows
-    };
-  }
-
-  const finalColumns = columnBindings.map(b => b.displayCol);
-
-  // Normalize rows so row[displayCol] = row[actualKey]
+  // Project normalized rows
   const normalizedRows = rows.map(r => {
     const projected: Record<string, any> = {};
-    columnBindings.forEach(b => {
-      projected[b.displayCol] = r[b.actualKey] !== undefined ? r[b.actualKey] : (r[b.displayCol] ?? '');
+    const rKeys = Object.keys(r);
+    const rKeysNormMap = new Map<string, string>();
+    rKeys.forEach(k => rKeysNormMap.set(norm(k), k));
+
+    finalColumns.forEach(col => {
+      const cands = colCandidates.get(col) || [col];
+      let val: any = undefined;
+
+      // 1. Direct candidate check (first non-empty value)
+      for (const cand of cands) {
+        if (r[cand] !== undefined && r[cand] !== null && String(r[cand]).trim() !== '') {
+          val = r[cand];
+          break;
+        }
+      }
+
+      // 2. Direct candidate check (first defined value if all empty)
+      if (val === undefined) {
+        for (const cand of cands) {
+          if (r[cand] !== undefined) {
+            val = r[cand];
+            break;
+          }
+        }
+      }
+
+      // 3. Normalized key check against row keys
+      if (val === undefined) {
+        for (const cand of cands) {
+          const nCand = norm(cand);
+          if (rKeysNormMap.has(nCand)) {
+            const actualKey = rKeysNormMap.get(nCand)!;
+            if (r[actualKey] !== undefined && r[actualKey] !== null && String(r[actualKey]).trim() !== '') {
+              val = r[actualKey];
+              break;
+            }
+          }
+        }
+      }
+
+      // 4. Substring / base-name fuzzy match
+      if (val === undefined) {
+        const nCol = norm(col.replace(/^\[\d+\]\s*/, ''));
+        if (nCol.length >= 3) {
+          for (const rk of rKeys) {
+            const nrk = norm(rk);
+            if (nrk.endsWith(nCol) || nrk.includes(nCol)) {
+              if (r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== '') {
+                val = r[rk];
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      projected[col] = val !== undefined ? val : (r[col] ?? '');
     });
+
     if (r.SOURCE !== undefined && projected.SOURCE === undefined) {
       projected.SOURCE = r.SOURCE;
     }

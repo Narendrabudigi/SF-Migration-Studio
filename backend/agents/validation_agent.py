@@ -125,31 +125,41 @@ DATE_RE = re.compile(r"^\d{8}$")
 PAYMENT_TERM_RE = re.compile(r"^[A-Z]{2}\d{2}$")
 
 
+def _norm_k(k: Any) -> str:
+    return re.sub(r'[^A-Z0-9]', '', str(k or '').upper())
+
+
 class SmartRow:
     """
     Smart dictionary wrapper for row data supporting case-insensitive lookups,
-    spaces/underscores flexibility, SuccessFactors & SAP field alias mapping, and fuzzy stem matching.
+    spaces/underscores/hyphens flexibility, SuccessFactors & SAP field alias mapping, and fuzzy stem matching.
     """
     ALIASES = {
-        "person-id-external": ["person-id-external", "person_id_external", "personIdExternal", "PERSON_ID", "PERSONID", "PER_PERSON_ID"],
-        "user-id": ["user-id", "user_id", "userId", "USER_ID", "USERID", "EMP_ID", "EMPLOYEE_ID"],
-        "first-name": ["first-name", "first_name", "firstName", "FIRST_NAME", "FIRSTNAME"],
-        "last-name": ["last-name", "last_name", "lastName", "LAST_NAME", "LASTNAME"],
-        "hire-date": ["hire-date", "hire_date", "hireDate", "HIRE_DATE"],
+        "person-id-external": ["person-id-external", "person_id_external", "personIdExternal", "PERSON_ID", "PERSONID", "PER_PERSON_ID", "PERNR", "USER_ID", "USERID", "WORKER_ID", "EMPLOYEE_ID"],
+        "user-id": ["user-id", "user_id", "userId", "USER_ID", "USERID", "EMP_ID", "EMPLOYEE_ID", "PERNR", "person-id-external"],
+        "first-name": ["first-name", "first_name", "firstName", "FIRST_NAME", "FIRSTNAME", "F_NAME", "GIVEN_NAME", "NAME1"],
+        "last-name": ["last-name", "last_name", "lastName", "LAST_NAME", "LASTNAME", "L_NAME", "SURNAME", "NAME2"],
+        "hire-date": ["hire-date", "hire_date", "hireDate", "HIRE_DATE", "ENTRY_DATE"],
         "start-date": ["start-date", "start_date", "startDate", "START_DATE", "EFFECTIVE_DATE"],
-        "date-of-birth": ["date-of-birth", "date_of_birth", "dateOfBirth", "BIRTH_DATE", "DOB"],
-        "country-of-birth": ["country-of-birth", "country_of_birth", "countryOfBirth", "BIRTH_COUNTRY"],
+        "date-of-birth": ["date-of-birth", "date_of_birth", "dateOfBirth", "BIRTH_DATE", "DOB", "DATEOFBIRTH", "GBDAT"],
+        "country-of-birth": ["country-of-birth", "country_of_birth", "countryOfBirth", "BIRTH_COUNTRY", "COUNTRYOFBIRTH", "NATIONALITY", "CITIZENSHIP", "LAND1", "COUNTRY"],
+        "gender": ["gender", "gender-description", "gender_description", "GENDER", "SEX", "GESCH"],
+        "marital-status": ["marital-status", "marital_status", "MARITAL_STATUS", "MARITALSTATUS", "FAMST"],
+        "citizenship": ["citizenship", "nationality", "country-of-birth", "country_of_birth", "COUNTRY", "LAND1"],
+        "preferred-language": ["preferred-language", "preferred_language", "language", "LANGUAGE", "SPRAS"],
+        "former-employee": ["former-employee", "former_employee", "FORMER_EMPLOYEE", "STATUS"],
+        "personal-notes": ["personal-notes", "personal_notes", "notes", "REMARKS"],
         "PSTLZ": ["PSTLZ", "POSTALCODE", "POSTCODE", "ZIP", "ZIPCODE", "POSTAL_CODE", "POST_CODE1", "POSTCODE1", "POST_CODE", "PSTLZ_CODE", "zip-code"],
-        "LAND1": ["LAND1", "COUNTRYKEY", "COUNTRY_KEY", "LAND", "COUNTRY", "COUNTRY_NAME", "country-of-birth", "nationality"],
-        "SMTP_ADDR": ["SMTP_ADDR", "EMAIL", "EMAILADDRESS", "SMTP", "EMAIL_ADDR", "email-address"],
+        "LAND1": ["LAND1", "COUNTRYKEY", "COUNTRY_KEY", "LAND", "COUNTRY", "COUNTRY_NAME", "country-of-birth", "nationality", "citizenship"],
+        "SMTP_ADDR": ["SMTP_ADDR", "EMAIL", "EMAILADDRESS", "SMTP", "EMAIL_ADDR", "email-address", "email_address"],
         "KUNNR": ["KUNNR", "CUSTOMER", "CUSTOMERNUMBER", "CUSTOMER_ID", "CUSTOMER_NO", "BPEXT", "PARTNER"],
         "LIFNR": ["LIFNR", "VENDOR", "VENDORNUMBER", "VENDOR_ID", "VENDOR_NO"],
-        "NAME1": ["NAME1", "NAME", "CUSTOMERNAME", "VENDORNAME", "NAMORG1", "ORGANIZATIONNAME"],
+        "NAME1": ["NAME1", "NAME", "CUSTOMERNAME", "VENDORNAME", "NAMORG1", "ORGANIZATIONNAME", "first-name"],
         "ORT01": ["ORT01", "CITY", "CITY2", "CITY1", "TOWN"],
         "REGIO": ["REGIO", "STATE", "REGION", "PROVINCE", "UF"],
         "STRAS": ["STRAS", "STREET", "ADDRESS", "STREET1", "ADDRESS1"],
         "TELF1": ["TELF1", "PHONE", "TELEPHONE", "MOBILE", "TELNR_LONG", "TELNR", "phone-number"],
-        "WAERS": ["WAERS", "CURRENCY", "CUKY", "currency-code"],
+        "WAERS": ["WAERS", "CURRENCY", "CUKY", "currency-code", "currency"],
         "ZTERM": ["ZTERM", "PAYMENT_TERMS", "PAYTERMS", "PAYMENTTERMS"],
         "BUKRS": ["BUKRS", "COMPANY_CODE", "COMPANYCODE", "COMPANY"],
         "MATNR": ["MATNR", "MATERIAL", "MATERIAL_NUMBER"],
@@ -159,8 +169,9 @@ class SmartRow:
         self._data = data or {}
         self._norm_map = {}
         for k in self._data.keys():
-            nk = str(k).upper().replace(" ", "").replace("_", "")
-            self._norm_map[nk] = k
+            nk = _norm_k(k)
+            if nk:
+                self._norm_map[nk] = k
 
     def get_actual_key(self, key: str) -> str:
         """
@@ -170,24 +181,24 @@ class SmartRow:
             return ""
         if key in self._data:
             return key
-        target_norm = str(key).upper().replace(" ", "").replace("_", "")
+        target_norm = _norm_k(key)
         if target_norm in self._norm_map:
             return self._norm_map[target_norm]
-        target_stem = re.sub(r'\d+$', '', target_norm)
+        
+        # Match via aliases
         for std_key, alias_list in self.ALIASES.items():
-            all_candidates = [std_key] + alias_list
-            all_stems = [re.sub(r'\d+$', '', c) for c in all_candidates]
-            if target_norm in all_candidates or target_stem in all_stems:
+            all_candidates = [_norm_k(std_key)] + [_norm_k(c) for c in alias_list]
+            if target_norm in all_candidates:
                 for candidate in all_candidates:
                     if candidate in self._norm_map:
                         return self._norm_map[candidate]
-                    cand_stem = re.sub(r'\d+$', '', candidate)
-                    for k_norm, original_key in self._norm_map.items():
-                        if re.sub(r'\d+$', '', k_norm) == cand_stem:
-                            return original_key
-        for k_norm, original_key in self._norm_map.items():
-            if target_stem and target_stem in k_norm:
-                return original_key
+
+        # Fuzzy substring match
+        if len(target_norm) >= 4:
+            for k_norm, original_key in self._norm_map.items():
+                if target_norm in k_norm or k_norm in target_norm:
+                    return original_key
+
         return key
 
     def get(self, key: str, default: Any = "") -> Any:
@@ -199,36 +210,27 @@ class SmartRow:
             val = self._data[key]
             return val if val is not None else default
 
-        target_norm = str(key).upper().replace(" ", "").replace("_", "")
+        target_norm = _norm_k(key)
         # 2. Normalized key match
         if target_norm in self._norm_map:
             val = self._data[self._norm_map[target_norm]]
             return val if val is not None else default
 
-        # Stem matching (e.g. POSTCODE1 -> POSTCODE)
-        target_stem = re.sub(r'\d+$', '', target_norm)
-
-        # 3. SAP Alias match
+        # 3. SAP / SF Alias match
         for std_key, alias_list in self.ALIASES.items():
-            all_candidates = [std_key] + alias_list
-            all_stems = [re.sub(r'\d+$', '', c) for c in all_candidates]
-            
-            if target_norm in all_candidates or target_stem in all_stems:
+            all_candidates = [_norm_k(std_key)] + [_norm_k(c) for c in alias_list]
+            if target_norm in all_candidates:
                 for candidate in all_candidates:
                     if candidate in self._norm_map:
                         val = self._data[self._norm_map[candidate]]
                         return val if val is not None else default
-                    cand_stem = re.sub(r'\d+$', '', candidate)
-                    for k_norm, original_key in self._norm_map.items():
-                        if re.sub(r'\d+$', '', k_norm) == cand_stem:
-                            val = self._data[original_key]
-                            return val if val is not None else default
 
         # 4. Substring match fallback
-        for k_norm, original_key in self._norm_map.items():
-            if target_stem and target_stem in k_norm:
-                val = self._data[original_key]
-                return val if val is not None else default
+        if len(target_norm) >= 4:
+            for k_norm, original_key in self._norm_map.items():
+                if target_norm in k_norm or k_norm in target_norm:
+                    val = self._data[original_key]
+                    return val if val is not None else default
 
         return default
 
@@ -347,22 +349,32 @@ class ValidationAgent:
             if f["len"] and len(sv) > f["len"]:
                 errs.append({"f": actual_field_name, "m": f"Exceeds max length {f['len']} (actual {len(sv)})", "sev": "ERROR", "rule": "FIELD_LENGTH"})
 
-            if std_field_name == "LAND1" and not COUNTRY_RE.match(sv):
-                errs.append({"f": actual_field_name, "m": "Country must be ISO 2-3 chars", "sev": "ERROR", "rule": "COUNTRY_ISO"})
+            std_norm = _norm_k(std_field_name)
 
-            if f["t"] == "CUKY" and not CURRENCY_RE.match(sv):
+            # Country ISO
+            if std_norm in ("LAND1", "COUNTRYKEY", "COUNTRYOFBIRTH", "NATIONALITY", "CITIZENSHIP", "COUNTRY"):
+                if not COUNTRY_RE.match(sv):
+                    errs.append({"f": actual_field_name, "m": "Country must be ISO 2-3 chars", "sev": "ERROR", "rule": "COUNTRY_ISO"})
+
+            # Currency ISO
+            if (f.get("t") == "CUKY" or std_norm in ("WAERS", "CURRENCY", "CURRENCYCODE", "CUKY")) and not CURRENCY_RE.match(sv):
                 warns.append({"f": actual_field_name, "m": "Must be 3-letter ISO currency", "sev": "WARN", "rule": "CURRENCY_ISO"})
 
-            if std_field_name in ("KUNNR", "LIFNR") and not NUMERIC_ID_RE.match(sv):
+            # Numeric ID
+            if std_norm in ("KUNNR", "LIFNR") and not NUMERIC_ID_RE.match(sv):
                 errs.append({"f": actual_field_name, "m": "Must be numeric ≤10 digits", "sev": "ERROR", "rule": "NUMERIC_ID"})
 
-            if std_field_name == "SMTP_ADDR" and not EMAIL_RE.match(sv):
+            # Email Format
+            if std_norm in ("SMTPADDR", "EMAIL", "EMAILADDRESS") and not EMAIL_RE.match(sv):
                 warns.append({"f": actual_field_name, "m": "Invalid email format", "sev": "WARN", "rule": "EMAIL_FORMAT"})
 
-            if f["t"] == "DATS" and not DATE_RE.match(sv):
-                warns.append({"f": actual_field_name, "m": "Must be YYYYMMDD", "sev": "WARN", "rule": "DATE_FORMAT"})
+            # Date Format (Accepts YYYYMMDD or YYYY-MM-DD)
+            if (f.get("t") == "DATS" or std_norm in ("DATEOFBIRTH", "HIREDATE", "STARTDATE", "PAYDATE", "ERDAT")):
+                if not (DATE_RE.match(sv) or re.match(r"^\d{4}-\d{2}-\d{2}$", sv)):
+                    warns.append({"f": actual_field_name, "m": "Must be valid date format (YYYYMMDD or YYYY-MM-DD)", "sev": "WARN", "rule": "DATE_FORMAT"})
 
-            if std_field_name == "ZTERM" and not PAYMENT_TERM_RE.match(sv):
+            # Payment Terms
+            if std_norm in ("ZTERM", "PAYMENTTERMS", "PAYTERMS") and not PAYMENT_TERM_RE.match(sv):
                 warns.append({"f": actual_field_name, "m": "Must match SAP terms format e.g. NT30", "sev": "WARN", "rule": "PAYMENT_TERMS"})
 
         st = "ERROR" if errs else ("WARN" if warns else "PASS")
@@ -437,29 +449,28 @@ class ValidationAgent:
                 f_label = (dr.get("label") or "").lower()
                 
                 # Match strictly against the primary target field name or explicit label prefix
-                if f_name in ("LAND1", "COUNTRY", "COUNTRYKEY", "COUNTRY_KEY") or f_label.startswith("country iso"):
+                if f_name in ("LAND1", "COUNTRY", "COUNTRYKEY", "COUNTRY_KEY", "COUNTRY-OF-BIRTH", "NATIONALITY", "CITIZENSHIP") or f_label.startswith("country iso"):
                     overridden_rule_ids.add("COUNTRY_ISO")
-                elif f_name in ("WAERS", "CURRENCY", "CUKY") or f_label.startswith("currency iso"):
+                elif f_name in ("WAERS", "CURRENCY", "CUKY", "CURRENCY-CODE") or f_label.startswith("currency iso"):
                     overridden_rule_ids.add("CURRENCY_ISO")
-                elif f_name in ("SMTP_ADDR", "EMAIL", "EMAIL_ADDR") or f_label.startswith("email"):
+                elif f_name in ("SMTP_ADDR", "EMAIL", "EMAIL_ADDR", "EMAIL-ADDRESS") or f_label.startswith("email"):
                     overridden_rule_ids.add("EMAIL_FORMAT")
-                elif f_name in ("KUNNR", "LIFNR", "CUSTOMER", "VENDOR") and f_label.startswith("numeric"):
+                elif (f_name in ("KUNNR", "LIFNR", "CUSTOMER", "VENDOR", "PERSON-ID-EXTERNAL", "USER-ID")) and f_label.startswith("numeric"):
                     overridden_rule_ids.add("NUMERIC_ID")
                 elif f_name in ("ZTERM", "PAYMENT_TERMS", "PAYTERMS") or f_label.startswith("payment"):
                     overridden_rule_ids.add("PAYMENT_TERMS")
+                elif f_name in ("DATE-OF-BIRTH", "HIRE-DATE", "START-DATE", "PAY-DATE", "ERDAT") or f_label.startswith("date"):
+                    overridden_rule_ids.add("DATE_FORMAT")
 
         present_field_keys = set()
         for row in rows:
             if not isinstance(row, dict):
                 continue
             for key in row.keys():
-                present_field_keys.add(str(key).upper().replace(" ", "").replace("_", ""))
-
-        def normalize_field_name(name: str) -> str:
-            return str(name).upper().replace(" ", "").replace("_", "")
+                present_field_keys.add(_norm_k(key))
 
         def has_field(*candidates: str) -> bool:
-            target_keys = {normalize_field_name(c) for c in candidates if c}
+            target_keys = {_norm_k(c) for c in candidates if c}
             if not target_keys:
                 return False
             for normalized in target_keys:
@@ -476,15 +487,15 @@ class ValidationAgent:
             if rule_id == "FIELD_LENGTH":
                 return any(f.get("len") for f in fields) and any(has_field(f["n"]) for f in fields if f.get("len"))
             if rule_id == "COUNTRY_ISO":
-                return has_field("LAND1", "COUNTRY", "COUNTRYKEY", "COUNTRY_KEY")
+                return has_field("LAND1", "COUNTRY", "COUNTRYKEY", "COUNTRY_KEY", "country-of-birth", "nationality", "citizenship")
             if rule_id == "CURRENCY_ISO":
-                return has_field("WAERS", "CURRENCY", "CUKY")
+                return has_field("WAERS", "CURRENCY", "CUKY", "currency-code")
             if rule_id == "NUMERIC_ID":
-                return has_field("KUNNR", "LIFNR", "CUSTOMER", "VENDOR")
+                return has_field("KUNNR", "LIFNR", "CUSTOMER", "VENDOR", "person-id-external", "user-id")
             if rule_id == "EMAIL_FORMAT":
-                return has_field("SMTP_ADDR", "EMAIL", "EMAILADDRESS")
+                return has_field("SMTP_ADDR", "EMAIL", "EMAILADDRESS", "email-address")
             if rule_id == "DATE_FORMAT":
-                return any(f.get("t") == "DATS" for f in fields) and any(has_field(f["n"]) for f in fields if f.get("t") == "DATS")
+                return any(f.get("t") == "DATS" for f in fields) or has_field("date-of-birth", "hire-date", "start-date", "pay-date", "ERDAT")
             if rule_id == "PAYMENT_TERMS":
                 return has_field("ZTERM", "PAYMENT_TERMS", "PAYTERMS")
             return True
