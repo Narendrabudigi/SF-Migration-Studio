@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any
 import logging
 
 from services.supabase_client import supabase_service
@@ -16,10 +16,10 @@ class MapRequest(BaseModel):
     sourceFields: List[str]
 
 class MappingItem(BaseModel):
-    src: str
-    sap: str
-    tr: str
-    conf: int
+    src: Optional[str] = ""
+    sap: Optional[str] = ""
+    tr: Optional[str] = "trim"
+    conf: Optional[Any] = 100
     req: Optional[bool] = False
     sapLabel: Optional[str] = ""
     note: Optional[str] = ""
@@ -336,19 +336,25 @@ def save_all_mappings(req: SaveAllRequest):
         raise HTTPException(404, "Target object not found")
     obj_id = obj_res.data[0]["id"]
     
-    fields_res = client.table("sf_fields").select("id, field_name, sf_structure").eq("object_id", obj_id).execute()
-    field_map = {}
+    # 1. Fetch all fields for current object as primary priority, plus global fields for cross-object fallbacks
+    fields_res = client.table("sf_fields").select("id, field_name, sf_structure, object_id").execute()
+    
+    primary_field_map = {}
+    global_field_map = {}
+    
     for f in fields_res.data:
         struct = f.get('sf_structure') or ''
-        full_name = f"{struct}.{f['field_name']}" if struct else f['field_name']
+        fname = f.get('field_name') or ''
+        full_name = f"{struct}.{fname}" if struct else fname
+        fid = f["id"]
+        f_obj_id = f.get("object_id")
         
-        if full_name not in field_map:
-            field_map[full_name] = []
-        field_map[full_name].append(f["id"])
-        
-        if f['field_name'] not in field_map:
-            field_map[f['field_name']] = []
-        field_map[f['field_name']].append(f["id"])
+        for k in [full_name, fname, norm_field(full_name), norm_field(fname)]:
+            if k:
+                if f_obj_id == obj_id and k not in primary_field_map:
+                    primary_field_map[k] = fid
+                if k not in global_field_map:
+                    global_field_map[k] = fid
         
     existing = client.table("user_corrected_mappings") \
         .select("id, sf_fields!inner(object_id)") \
@@ -363,17 +369,59 @@ def save_all_mappings(req: SaveAllRequest):
         
     inserts = []
     for i, m in enumerate(req.mappings):
-        if not m.src:
+        if not m.src or not m.sap:
             continue
-        if m.sap in field_map:
-            fid = field_map[m.sap][0]
+            
+        target_key = m.sap.strip()
+        target_norm = norm_field(target_key)
+        target_base = target_key.split(".")[-1]
+        target_base_norm = norm_field(target_base)
+
+        # Lookup order: primary object fields -> global cross-object fields
+        fid = (
+            primary_field_map.get(target_key)
+            or primary_field_map.get(target_norm)
+            or primary_field_map.get(target_base)
+            or primary_field_map.get(target_base_norm)
+            or global_field_map.get(target_key)
+            or global_field_map.get(target_norm)
+            or global_field_map.get(target_base)
+            or global_field_map.get(target_base_norm)
+        )
+
+        # Fallback: if custom field not in sf_fields at all, auto-create it dynamically
+        if not fid:
+            struct = target_key.split(".")[0] if "." in target_key else ""
+            fname = target_key.split(".")[-1] if "." in target_key else target_key
+            try:
+                ins_res = client.table("sf_fields").insert({
+                    "object_id": obj_id,
+                    "sf_structure": struct,
+                    "field_name": fname,
+                    "field_description": f"Custom field {target_key}",
+                    "data_type": "STRING",
+                    "is_mandatory": False
+                }).execute()
+                if ins_res.data:
+                    fid = ins_res.data[0]["id"]
+                    primary_field_map[target_key] = fid
+                    global_field_map[target_key] = fid
+            except Exception as e:
+                logger.warning(f"Could not auto-create sf_field for '{target_key}': {e}")
+
+        if fid:
+            try:
+                conf_val = int(m.conf) if m.conf is not None else 100
+            except (ValueError, TypeError):
+                conf_val = 100
+
             inserts.append({
                 "project_id": req.projectId,
                 "source_system_id": sys_id,
                 "source_field_name": f"[{i}]{m.src}",
                 "sf_field_id": fid,
-                "transform_rule": m.tr,
-                "confidence": getattr(m, 'conf', 100)
+                "transform_rule": m.tr or "trim",
+                "confidence": conf_val
             })
                 
     if inserts:
