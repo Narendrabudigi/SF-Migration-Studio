@@ -438,18 +438,20 @@ class HarmonizationAgent:
             if not m.src or not m.sap:
                 continue
 
-            src_clean = re.sub(r"^\[\d+\]", "", str(m.src).strip())
+            src_clean = re.sub(r"^\[\d+\]\s*", "", str(m.src).strip())
             src_lower = src_clean.lower()
             src_base = src_clean.split(".")[-1].lower()
+            src_norm = src_lower.replace(" ", "").replace("_", "").replace("-", "")
 
             matched_col = None
 
-            # Pass 1: Exact match check (full string match)
+            # Pass 1: Exact match check (full string match or bracket-stripped)
             for col in df.columns:
                 if col in mapped_src_cols:
                     continue
-                col_clean = str(col).strip()
-                if col_clean.lower() == src_lower:
+                col_clean = re.sub(r"^\[\d+\]\s*", "", str(col).strip())
+                col_lower = col_clean.lower()
+                if col_lower == src_lower or str(col).strip().lower() == src_lower:
                     matched_col = col
                     break
 
@@ -458,21 +460,34 @@ class HarmonizationAgent:
                 for col in df.columns:
                     if col in mapped_src_cols:
                         continue
-                    col_clean = str(col).strip()
+                    col_clean = re.sub(r"^\[\d+\]\s*", "", str(col).strip())
                     col_base = col_clean.split(".")[-1].lower()
                     if src_base == col_base:
                         matched_col = col
                         break
 
-            # Pass 3: Target SAP field name match check (if df columns are already mapped to SAP names)
-            if matched_col is None and m.sap:
-                sap_base = m.sap.split(".")[-1].lower()
+            # Pass 3: Soft normalized match check (ignoring spaces, underscores, hyphens)
+            if matched_col is None:
                 for col in df.columns:
                     if col in mapped_src_cols:
                         continue
-                    col_clean = str(col).strip()
+                    col_clean = re.sub(r"^\[\d+\]\s*", "", str(col).strip())
+                    col_norm = col_clean.lower().replace(" ", "").replace("_", "").replace("-", "")
+                    if src_norm == col_norm:
+                        matched_col = col
+                        break
+
+            # Pass 4: Target SAP field name match check (if df columns are already mapped to SAP names)
+            if matched_col is None and m.sap:
+                sap_base = m.sap.split(".")[-1].lower()
+                sap_norm = sap_base.replace(" ", "").replace("_", "").replace("-", "")
+                for col in df.columns:
+                    if col in mapped_src_cols:
+                        continue
+                    col_clean = re.sub(r"^\[\d+\]\s*", "", str(col).strip())
                     col_base = col_clean.split(".")[-1].lower()
-                    if col_base == sap_base:
+                    col_norm = col_base.replace(" ", "").replace("_", "").replace("-", "")
+                    if col_base == sap_base or col_norm == sap_norm:
                         matched_col = col
                         break
 

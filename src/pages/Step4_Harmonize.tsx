@@ -1152,9 +1152,17 @@ export function Step4Harmonize() {
           {/* Results Table — Multi-Table Display */}
           {result && (() => {
             const outputRows = result.final_table || [];
+            const targetCols = (result.columns && result.columns.length > 0)
+              ? result.columns
+              : (outputRows.length > 0 ? Object.keys(outputRows[0]) : []);
+
             const allTables: TableInfo[] = extractedTables.length > 0
-              ? extractedTables
-              : [{ table_name: 'Harmonized Output', columns: result.columns }];
+              ? extractedTables.map((t: any) => ({
+                  table_name: t.table_name,
+                  columns: targetCols.length > 0 ? targetCols : t.columns
+                }))
+              : [{ table_name: 'Harmonized Output', columns: targetCols }];
+
             const visibleTables = allTables.filter((t: any) => selectedOutputTables.has(t.table_name));
             const allKeyColumns = detectKeyColumns(allTables.flatMap((t: any) => t.columns));
             const filteredRows = filterRowsByKey(outputRows, outputKeyFilter, allKeyColumns);
@@ -1176,7 +1184,7 @@ export function Step4Harmonize() {
                   </div>
                 ) : (
                   visibleTables.map((t: any) => {
-                    const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping);
+                    const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
                     const currentPage = tablePages[t.table_name] || 1;
                     const paginatedRows = tableRows.slice((currentPage - 1) * 15, currentPage * 15);
 

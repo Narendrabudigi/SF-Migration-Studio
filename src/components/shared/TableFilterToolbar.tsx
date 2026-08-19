@@ -108,7 +108,8 @@ export function filterRowsByKey(
 export function getTableDisplayData(
   table: TableInfo,
   rows: Record<string, any>[],
-  mappings: any[] = []
+  mappings: any[] = [],
+  preferTargetFields: boolean = false
 ): { columns: string[]; rows: Record<string, any>[] } {
   if (!rows || rows.length === 0) {
     return { columns: table.columns, rows: [] };
@@ -120,14 +121,14 @@ export function getTableDisplayData(
   rowKeys.forEach(k => rowKeysLower.set(k.toLowerCase(), k));
 
   // Build mapping lookup:
-  // src (clean/base/full) -> sap (clean/base/full)
-  // sap (clean/base/full) -> src (clean/base/full)
+  // src (clean/base/full/norm) -> sap (clean/base/full)
+  // sap (clean/base/full/norm) -> src (clean/base/full)
   const srcToSapMap = new Map<string, string[]>();
   const sapToSrcMap = new Map<string, string[]>();
 
   (mappings || []).forEach(m => {
-    const srcStr = typeof m === 'object' ? String(m.src || '') : '';
-    const sapStr = typeof m === 'object' ? String(m.sap || '') : '';
+    const srcStr = typeof m === 'object' ? String(m.src || m.source_field_name || '') : '';
+    const sapStr = typeof m === 'object' ? String(m.sap || m.field_name || '') : '';
     const srcClean = srcStr.replace(/^\[\d+\]\s*/, '').trim();
     const srcBase = srcClean.split('.').pop() || '';
     const sapClean = sapStr.replace(/^\[\d+\]\s*/, '').trim();
@@ -136,7 +137,10 @@ export function getTableDisplayData(
     const sapCandidates = [sapBase, sapClean, sapStr].filter(Boolean);
     const srcCandidates = [srcBase, srcClean, srcStr].filter(Boolean);
 
-    [srcClean.toLowerCase(), srcBase.toLowerCase(), srcStr.toLowerCase()].forEach(k => {
+    const normSrcClean = srcClean.toLowerCase().replace(/[\s_\-]/g, '');
+    const normSrcBase = srcBase.toLowerCase().replace(/[\s_\-]/g, '');
+
+    [srcClean.toLowerCase(), srcBase.toLowerCase(), srcStr.toLowerCase(), normSrcClean, normSrcBase].forEach(k => {
       if (k) srcToSapMap.set(k, sapCandidates);
     });
 
@@ -154,8 +158,26 @@ export function getTableDisplayData(
     const colLower = col.toLowerCase();
     const colCleanLower = colClean.toLowerCase();
     const colBaseLower = colBase.toLowerCase();
+    const normColClean = colCleanLower.replace(/[\s_\-]/g, '');
 
-    // 1. Direct match in rowKeys
+    // 1. If preferTargetFields is true, check srcToSapMap FIRST to resolve mapped Target field
+    if (preferTargetFields) {
+      const sapCandidates = srcToSapMap.get(colLower) || srcToSapMap.get(colCleanLower) || srcToSapMap.get(colBaseLower) || srcToSapMap.get(normColClean) || [];
+      for (const sapCand of sapCandidates) {
+        if (sampleRow[sapCand] !== undefined) {
+          columnBindings.push({ displayCol: sapCand, actualKey: sapCand });
+          return;
+        }
+        const sapCandLower = sapCand.toLowerCase();
+        if (rowKeysLower.has(sapCandLower)) {
+          const actual = rowKeysLower.get(sapCandLower)!;
+          columnBindings.push({ displayCol: actual, actualKey: actual });
+          return;
+        }
+      }
+    }
+
+    // 2. Direct match in rowKeys
     if (sampleRow[col] !== undefined) {
       columnBindings.push({ displayCol: col, actualKey: col });
       return;
@@ -179,8 +201,8 @@ export function getTableDisplayData(
       return;
     }
 
-    // 2. Check if col is a src field, and row has the mapped sap field (e.g. CUSTOMER_NUMBER -> KUNNR)
-    const sapCandidates = srcToSapMap.get(colLower) || srcToSapMap.get(colCleanLower) || srcToSapMap.get(colBaseLower) || [];
+    // 3. Check if col is a src field, and row has mapped sap field
+    const sapCandidates = srcToSapMap.get(colLower) || srcToSapMap.get(colCleanLower) || srcToSapMap.get(colBaseLower) || srcToSapMap.get(normColClean) || [];
     for (const sapCand of sapCandidates) {
       if (sampleRow[sapCand] !== undefined) {
         columnBindings.push({ displayCol: sapCand, actualKey: sapCand });
@@ -194,7 +216,18 @@ export function getTableDisplayData(
       }
     }
 
-    // 3. Check if col is a sap field, and row has the mapped src field (e.g. KUNNR -> CUSTOMER_NUMBER)
+    // 4. Soft fuzzy match against rowKeys in sampleRow (ignoring spaces, underscores, hyphens)
+    for (const rKey of rowKeys) {
+      const rKeyNorm = rKey.toLowerCase().replace(/[\s_\-]/g, '');
+      if (rKeyNorm === normColClean || (normColClean.length >= 4 && rKeyNorm.includes(normColClean)) || (rKeyNorm.length >= 4 && normColClean.includes(rKeyNorm))) {
+        if (sampleRow[rKey] !== undefined) {
+          columnBindings.push({ displayCol: rKey, actualKey: rKey });
+          return;
+        }
+      }
+    }
+
+    // 5. Check if col is a sap field, and row has mapped src field
     const srcCandidates = sapToSrcMap.get(colLower) || sapToSrcMap.get(colCleanLower) || sapToSrcMap.get(colBaseLower) || [];
     for (const srcCand of srcCandidates) {
       if (sampleRow[srcCand] !== undefined) {
