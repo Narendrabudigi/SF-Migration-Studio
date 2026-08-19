@@ -248,6 +248,9 @@ class ValidationAgent:
         Safely evaluate a compiled Python rule condition against a row dictionary.
         Returns True if rule condition is violated (i.e. validation fails).
         """
+        if not code or str(code).strip() in ("", "False", "None"):
+            return False
+            
         try:
             allowed_globals = {
                 "__builtins__": None,
@@ -259,13 +262,26 @@ class ValidationAgent:
                 "re": re,
                 "abs": abs,
                 "isinstance": isinstance,
+                "any": any,
+                "all": all,
+                "set": set,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "min": min,
+                "max": max,
+                "sum": sum,
+                "sorted": sorted,
+                "map": map,
+                "filter": filter,
             }
             smart_row = row if isinstance(row, SmartRow) else SmartRow(row)
             allowed_locals = {"row": smart_row}
-            return bool(eval(code, allowed_globals, allowed_locals))
+            res = eval(code, allowed_globals, allowed_locals)
+            return bool(res)
         except Exception as e:
             import logging
-            logging.getLogger(__name__).warning(f"Dynamic rule evaluation error for code: {code} -> {e}")
+            logging.getLogger(__name__).warning(f"Dynamic rule evaluation error for code [{code}]: {e}")
             return False
 
     def validate_row(

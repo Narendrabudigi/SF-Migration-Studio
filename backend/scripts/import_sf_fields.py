@@ -18,24 +18,79 @@ def import_sf_fields():
     data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
     
     files_to_process = [
-        {"filename": "SuccessFactors_Biographical_Info_Mapping_Template.xlsx", "object_name": "Biographical Info", "desc": "SuccessFactors Biographical Info (PerPerson)"},
-        {"filename": "SuccessFactors_Employment_Details_Mapping_Template.xlsx", "object_name": "Employment Details", "desc": "SuccessFactors Employment Details (EmpEmployment)"},
-        {"filename": "SuccessFactors_Personal_Info_Mapping_Template.xlsx", "object_name": "Personal Info", "desc": "SuccessFactors Personal Info (PerPersonal)"},
-        {"filename": "SuccessFactors_Job_Info_Mapping_Template.xlsx", "object_name": "Job Info", "desc": "SuccessFactors Job Info (EmpJob)"},
-        {"filename": "SuccessFactors_Compensation_Info_Mapping_Template.xlsx", "object_name": "Compensation Info", "desc": "SuccessFactors Compensation Info (EmpCompensation)"},
-        {"filename": "SuccessFactors_Pay_Component_Recurring_Mapping_Template.xlsx", "object_name": "Pay Component Recurring", "desc": "SuccessFactors Pay Component Recurring"},
-        {"filename": "SuccessFactors_Pay_Component_Non_Recurring_Mapping_Template.xlsx", "object_name": "Pay Component Non Recurring", "desc": "SuccessFactors Pay Component Non Recurring"}
+        {
+            "candidates": [
+                "SuccessFactors_Biographical_Info_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Biographical_Info_Mapping_Template.xlsx"
+            ],
+            "object_name": "Biographical Info",
+            "desc": "SuccessFactors Biographical Info (PerPerson)"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Employment_Details_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Employment_Details_Mapping_Template.xlsx"
+            ],
+            "object_name": "Employment Details",
+            "desc": "SuccessFactors Employment Details (EmpEmployment)"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Personal_Info_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Personal_Info_Mapping_Template.xlsx"
+            ],
+            "object_name": "Personal Info",
+            "desc": "SuccessFactors Personal Info (PerPersonal)"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Job_Info_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Job_Info_Mapping_Template.xlsx"
+            ],
+            "object_name": "Job Info",
+            "desc": "SuccessFactors Job Info (EmpJob)"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Compensation_Info_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Compensation_Info_Mapping_Template.xlsx"
+            ],
+            "object_name": "Compensation Info",
+            "desc": "SuccessFactors Compensation Info (EmpCompensation)"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Pay_Component_Recurring_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Pay_Component_Recurring_Mapping_Template.xlsx"
+            ],
+            "object_name": "Pay Component Recurring",
+            "desc": "SuccessFactors Pay Component Recurring"
+        },
+        {
+            "candidates": [
+                "SuccessFactors_Pay_Component_Non_Recurring_100_Target_Field_Candidates.xlsx",
+                "SuccessFactors_Pay_Component_Non_Recurring_Mapping_Template.xlsx"
+            ],
+            "object_name": "Pay Component Non Recurring",
+            "desc": "SuccessFactors Pay Component Non Recurring"
+        }
     ]
     
     for file_info in files_to_process:
-        filepath = os.path.join(data_dir, file_info["filename"])
-        
-        if not os.path.exists(filepath):
-            print(f"Skipping {file_info['filename']} - File not found.")
+        found_file = None
+        for filename in file_info["candidates"]:
+            candidate_path = os.path.join(data_dir, filename)
+            if os.path.exists(candidate_path):
+                found_file = filename
+                filepath = candidate_path
+                break
+
+        if not found_file:
+            print(f"Skipping {file_info['object_name']} - No candidate Excel file found in {data_dir}.")
             continue
-            
-        print(f"\n--- Processing {file_info['filename']} for sf_object '{file_info['object_name']}' ---")
-        
+
+        print(f"\n--- Processing {found_file} for sf_object '{file_info['object_name']}' ---")
+
         # 1. Get or create sf_object ID
         res_obj = client.table("sf_objects").select("id").ilike("name", file_info["object_name"]).execute()
         if not res_obj.data:

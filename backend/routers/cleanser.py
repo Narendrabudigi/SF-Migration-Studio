@@ -94,6 +94,17 @@ async def cleanser_flow(req: FlowRequest):
         compiled = gen_res.get("rules", [])
         all_dynamic_rules.extend(compiled)
 
+    if all_dynamic_rules and req.project_id:
+        try:
+            client.table("dynamic_rules").delete().eq("project_id", req.project_id).eq("object_id", object_id).execute()
+            client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": all_dynamic_rules
+            }).execute()
+        except Exception as pe:
+            logger.warning(f"Could not persist dynamic_rules in cleanser: {pe}")
+
     with TemporaryDirectory(prefix="sf_cleanser_") as tmp_dir:
         tmp_path = Path(tmp_dir)
         input_csv_path = tmp_path / "harmonization.csv"

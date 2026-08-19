@@ -97,9 +97,7 @@ def normalize_dynamic_rule(
 ) -> dict[str, Any]:
     """
     Convert a Validation runtime dynamic rule into persisted intent metadata.
-
-    Generated Python is deliberately excluded. Future dynamic fix Python should
-    be produced only in memory at execution time, never saved to disk or DB.
+    Preserves python_code so compiled rules remain executable across pipeline stages.
     """
     normalized = {
         "id": _rule_id(rule),
@@ -111,10 +109,11 @@ def normalize_dynamic_rule(
         "source": _clean_text(rule.get("source"), source),
         "priority": int(rule.get("priority", priority)),
         "created_at": _clean_text(rule.get("created_at"), created_at or _now_iso()),
+        "python_code": rule.get("python_code") or rule.get("code") or rule.get("executable_code"),
     }
 
-    for key in ("severity", "error_message"):
-        if key in rule and key not in CODE_FIELDS:
+    for key in ("severity", "error_message", "python_code", "code", "executable_code"):
+        if key in rule:
             normalized[key] = rule[key]
 
     return {key: value for key, value in normalized.items() if value is not None}

@@ -261,6 +261,24 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
             actual_columns = list(primary_df.columns)
             dynamic_rules = _generate_dynamic_rules_internal(all_prompts, req.sap_object, actual_columns)
 
+        # Query stored active dynamic rules from DB if project_id and object specified
+        stored_rules = []
+        try:
+            res_obj = client.table("sf_objects").select("id").ilike("name", req.sap_object).execute()
+            if res_obj.data:
+                object_id = res_obj.data[0]["id"]
+                res_rules = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+                if res_rules.data and isinstance(res_rules.data[0].get("payload"), list):
+                    stored_rules = [r for r in res_rules.data[0]["payload"] if isinstance(r, dict) and r.get("enabled", True) is not False]
+        except Exception:
+            pass
+
+        if stored_rules:
+            if dynamic_rules is None:
+                dynamic_rules = stored_rules
+            else:
+                dynamic_rules.extend(stored_rules)
+
         # 4. Run Agent
         result = agent.run_single_source(
             primary_df, primary_mappings,

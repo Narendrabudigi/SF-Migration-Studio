@@ -14,13 +14,9 @@ import { Step6Cleanse } from '@/pages/Step6_Cleanse';
 import { Step7Transform } from '@/pages/Step7_Transform';
 import { Step8DMCExport } from '@/pages/Step8_DMCExport';
 import { Step9TechDocs } from '@/pages/Step9_TechDocs';
-import { Auth } from '@/pages/Auth';
 import { InsertMapping } from '@/pages/InsertMapping';
 
-function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('access_token');
-  if (!token) return <Navigate to="/auth" replace />;
-
+function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-full flex overflow-hidden" style={{ background: 'var(--bg)' }}>
       <StepNavigation />
@@ -42,26 +38,21 @@ function AppContent() {
   }, [state.theme]);
 
   return (
-    <Routes>
-      <Route path="/auth" element={<Auth />} />
-      <Route path="*" element={
-        <ProtectedLayout>
-          <Routes>
-            <Route path="/" element={<Step1SourceData />} />
-            <Route path="/mapping" element={<Step2AIMapping />} />
-            <Route path="/extract" element={<Step3Extract />} />
-            <Route path="/harmonize" element={<Step4Harmonize />} />
-            <Route path="/validate" element={<Step5Validate />} />
-            <Route path="/cleanse" element={<Step6Cleanse />} />
-            <Route path="/transform" element={<Step7Transform />} />
-            <Route path="/export" element={<Step8DMCExport />} />
-            <Route path="/docs" element={<Step9TechDocs />} />
-            <Route path="/insert" element={<InsertMapping />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </ProtectedLayout>
-      } />
-    </Routes>
+    <AppLayout>
+      <Routes>
+        <Route path="/" element={<Step1SourceData />} />
+        <Route path="/mapping" element={<Step2AIMapping />} />
+        <Route path="/extract" element={<Step3Extract />} />
+        <Route path="/harmonize" element={<Step4Harmonize />} />
+        <Route path="/validate" element={<Step5Validate />} />
+        <Route path="/cleanse" element={<Step6Cleanse />} />
+        <Route path="/transform" element={<Step7Transform />} />
+        <Route path="/export" element={<Step8DMCExport />} />
+        <Route path="/docs" element={<Step9TechDocs />} />
+        <Route path="/insert" element={<InsertMapping />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppLayout>
   );
 }
 

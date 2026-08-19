@@ -10,7 +10,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 class ExtractAgent:
-    def perform_extraction(self, base_url, client, username, password, target_object, mappings):
+    def perform_extraction(self, base_url, client, username, password, target_object, mappings, dynamic_rules: list = None):
         # 1. Build dynamic $select OData query
         source_fields = set()
         for m in mappings:
@@ -55,7 +55,10 @@ class ExtractAgent:
         data = res.json()
         results = data.get("d", {}).get("results", [])
 
-        # 3. Apply Transformations
+        # 3. Apply Transformations and Dynamic Rule Evaluation
+        from agents.validation_agent import ValidationAgent
+        val_agent = ValidationAgent()
+        
         harmonized_results = []
         for row in results:
             harmonized_row = {}
@@ -90,7 +93,17 @@ class ExtractAgent:
                     val = raw_val
                 
                 harmonized_row[src_full] = val
-                
+            
+            # Evaluate active dynamic rules during extraction if provided
+            if dynamic_rules:
+                for drule in dynamic_rules:
+                    dcode = drule.get("python_code")
+                    if dcode:
+                        is_viol = val_agent._eval_dynamic_rule(dcode, harmonized_row)
+                        if is_viol:
+                            dfield = drule.get("field") or "GENERAL"
+                            harmonized_row[f"_rule_violation_{drule.get('id', 'DYNAMIC')}"] = f"Violation on {dfield}: {drule.get('error_message', 'Invalid value')}"
+
             harmonized_results.append(harmonized_row)
 
         return harmonized_results

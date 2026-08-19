@@ -292,11 +292,9 @@ export function Step2AIMapping() {
       const data = await generateMapping(state.src, objName, state.headers);
       const mapping = data.mappings || [];
 
-      // If Step 1 was skipped, infer the source headers directly from the AI's generated mapping
-      if (state.headers.length === 0) {
-        const inferredHeaders = Array.from(new Set(mapping.map((m: any) => m.src).filter(Boolean)));
-        dispatch({ type: 'SET_FIELD', field: 'headers', value: inferredHeaders });
-      }
+      // Ensure all mapped source fields are synced into state.headers so they show in the UI panel
+      const newHeaders = Array.from(new Set([...state.headers, ...mapping.map((m: any) => m.src).filter(Boolean)]));
+      dispatch({ type: 'SET_FIELD', field: 'headers', value: newHeaders });
 
       setTimeout(() => tick(4, 'Transforms assigned'), 2200);
       setTimeout(() => {

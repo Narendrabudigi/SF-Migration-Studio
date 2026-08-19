@@ -12,6 +12,19 @@
       "severity": "ERROR",
       "source": "validation_dynamic_rule",
       "target_object": "CUSTOMER"
+    },
+    {
+      "created_at": "2026-08-18T10:40:49.072937+00:00",
+      "description": "Gender must be a single character.",
+      "error_message": "Gender must be a single character.",
+      "field": "gender",
+      "id": "BIOGRAPHICAL_INFO_1",
+      "label": "Gender Single Character",
+      "priority": 100,
+      "project_id": "4c5bdb70-a98f-4b6a-bf1e-a04560baeb5e",
+      "severity": "ERROR",
+      "source": "validation_dynamic_rule",
+      "target_object": "Biographical Info"
     }
   ],
   "version": "1.0"

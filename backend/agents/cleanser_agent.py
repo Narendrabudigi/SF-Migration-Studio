@@ -2232,7 +2232,7 @@ def apply_validation_fixes(
             if ov.get("rule_type") == "standard_validation"
         )
         if is_overridden:
-            summary.warnings.append(f"Skipped standard validation rule {rule_code} for field {field_name} (handled by active dynamic rule).")
+            summary.warnings.append(f"Skipped standard validation rule {rule_code} for field {field_name} (overridden by dynamic rule).")
             continue
 
         if row_number < 1 or row_number > len(df.index):

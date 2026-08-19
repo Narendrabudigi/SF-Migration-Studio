@@ -332,91 +332,89 @@ def save_validation(req: SaveValidationRequest):
         raise HTTPException(status_code=500, detail=f"Failed to save validation: {str(e)}")
 
 
-    class SaveDynamicRulesRequest(BaseModel):
-        project_id: str
-        target_object: str
-        rules: Optional[List[Dict[str, Any]]] = None
+class SaveDynamicRulesRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: Optional[List[Dict[str, Any]]] = None
 
 
-    @router.post("/validate/rules/save")
-    def save_dynamic_rules(req: SaveDynamicRulesRequest):
+@router.post("/validate/rules/save")
+def save_dynamic_rules(req: SaveDynamicRulesRequest):
+    try:
+        client = supabase_service.get_client()
+        # Resolve target_object name to object_id
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+        if not res_obj.data:
+            res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+        if not res_obj.data:
+            raise HTTPException(status_code=400, detail=f"SuccessFactors object '{req.target_object}' not found.")
+        object_id = res_obj.data[0]["id"]
+
+        # Remove previous dynamic rules for this project/object
+        del_res = client.table("dynamic_rules") \
+            .delete() \
+            .eq("project_id", req.project_id) \
+            .eq("object_id", object_id) \
+            .execute()
+
+        insert_resp = None
+        # Insert new rules if provided
+        if req.rules:
+            insert_resp = client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": req.rules
+            }).execute()
+
+        # ALSO persist to local JSON store and attempt to upload to Supabase Storage (if configured)
+        storage_result = None
         try:
-            client = supabase_service.get_client()
-            # Resolve target_object name to object_id
-            res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
-            if not res_obj.data:
-                res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
-            if not res_obj.data:
-                raise HTTPException(status_code=400, detail=f"SuccessFactors object '{req.target_object}' not found.")
-            object_id = res_obj.data[0]["id"]
+            from services.cleanser_dynamic_rules import upsert_rules, DEFAULT_STORE_PATH
 
-            # Remove previous dynamic rules for this project/object
-            del_res = client.table("dynamic_rules") \
-                .delete() \
-                .eq("project_id", req.project_id) \
-                .eq("object_id", object_id) \
-                .execute()
+            # Upsert into local file store (backend/output/cleanser_dynamic_rules.json by default)
+            upserted = upsert_rules(req.rules or [], project_id=req.project_id, target_object=req.target_object)
 
-            insert_resp = None
-            # Insert new rules if provided
-            insert_resp = None
-            if req.rules:
-                insert_resp = client.table("dynamic_rules").insert({
-                    "project_id": req.project_id,
-                    "object_id": object_id,
-                    "payload": req.rules
-                }).execute()
-
-            # ALSO persist to local JSON store and attempt to upload to Supabase Storage (if configured)
-            storage_result = None
+            # Attempt upload to Supabase Storage bucket named 'dynamic_rules' (best-effort)
             try:
-                from services.cleanser_dynamic_rules import upsert_rules, DEFAULT_STORE_PATH
-
-                # Upsert into local file store (backend/output/cleanser_dynamic_rules.json by default)
-                upserted = upsert_rules(req.rules or [], project_id=req.project_id, target_object=req.target_object)
-
-                # Attempt upload to Supabase Storage bucket named 'dynamic_rules' (best-effort)
-                try:
-                    # Read file contents
-                    path = DEFAULT_STORE_PATH
-                    with path.open('rb') as fh:
-                        content = fh.read()
-                    # Use storage API if available
-                    if hasattr(client, 'storage'):
-                        bucket = 'dynamic_rules'
-                        remote_path = f"{req.project_id}_{req.target_object}_dynamic_rules.json"
+                path = DEFAULT_STORE_PATH
+                with path.open('rb') as fh:
+                    content = fh.read()
+                # Use storage API if available
+                if hasattr(client, 'storage'):
+                    bucket = 'dynamic_rules'
+                    remote_path = f"{req.project_id}_{req.target_object}_dynamic_rules.json"
+                    try:
+                        # upload might accept bytes or file-like object depending on client
+                        storage_resp = client.storage.from_(bucket).upload(remote_path, content, {'upsert': True})
+                        storage_result = getattr(storage_resp, 'data', storage_resp)
+                    except Exception as e:
+                        # some supabase client versions expect different args; try fallback upload via files API
                         try:
-                            # upload might accept bytes or file-like object depending on client
-                            storage_resp = client.storage.from_(bucket).upload(remote_path, content, {'upsert': True})
+                            storage_resp = client.storage.from_(bucket).upload(remote_path, fh)
                             storage_result = getattr(storage_resp, 'data', storage_resp)
-                        except Exception as e:
-                            # some supabase client versions expect different args; try fallback upload via files API
-                            try:
-                                storage_resp = client.storage.from_(bucket).upload(remote_path, fh)
-                                storage_result = getattr(storage_resp, 'data', storage_resp)
-                            except Exception:
-                                storage_result = {"error": str(e)}
-                    else:
-                        storage_result = {"warning": "supabase client has no storage attribute"}
-                except Exception as e:
-                    storage_result = {"error": f"local store write or upload failed: {str(e)}"}
+                        except Exception:
+                            storage_result = {"error": str(e)}
+                else:
+                    storage_result = {"warning": "supabase client has no storage attribute"}
             except Exception as e:
-                storage_result = {"error": f"persist-to-local failed: {str(e)}"}
-
-            # Provide diagnostic info to the client so frontend can show success/failure
-            resp_payload = {"status": "success", "message": "Dynamic rules saved to database."}
-            try:
-                resp_payload["deleted"] = del_res.data if hasattr(del_res, 'data') else None
-            except Exception:
-                resp_payload["deleted"] = None
-            try:
-                resp_payload["inserted"] = insert_resp.data if insert_resp and hasattr(insert_resp, 'data') else None
-            except Exception:
-                resp_payload["inserted"] = None
-            resp_payload["local_store"] = True
-            resp_payload["storage_upload"] = storage_result
-
-            return resp_payload
+                storage_result = {"error": f"local store write or upload failed: {str(e)}"}
         except Exception as e:
-            logger.exception("Failed to save dynamic rules")
-            raise HTTPException(status_code=500, detail=f"Failed to save dynamic rules: {str(e)}")
+            storage_result = {"error": f"persist-to-local failed: {str(e)}"}
+
+        # Provide diagnostic info to the client so frontend can show success/failure
+        resp_payload = {"status": "success", "message": "Dynamic rules saved to database."}
+        try:
+            resp_payload["deleted"] = del_res.data if hasattr(del_res, 'data') else None
+        except Exception:
+            resp_payload["deleted"] = None
+        try:
+            resp_payload["inserted"] = insert_resp.data if insert_resp and hasattr(insert_resp, 'data') else None
+        except Exception:
+            resp_payload["inserted"] = None
+        resp_payload["local_store"] = True
+        resp_payload["storage_upload"] = storage_result
+
+        return resp_payload
+    except Exception as e:
+        logger.exception("Failed to save dynamic rules")
+        raise HTTPException(status_code=500, detail=f"Failed to save dynamic rules: {str(e)}")
