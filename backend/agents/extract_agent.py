@@ -2,12 +2,43 @@ import json
 import logging
 import requests
 import pandas as pd
-from services.llm_orchestrator import llm_orchestrator
+import re
 import urllib3
+from services.llm_orchestrator import llm_orchestrator
+from services.supabase_client import supabase_service
+from agents.validation_agent import ValidationAgent
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
+
+def norm_str(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+def get_val_from_row(row: dict, src_key: str) -> str:
+    if not row or not src_key:
+        return ""
+    if src_key in row and row[src_key] is not None and str(row[src_key]).strip() != "":
+        return str(row[src_key])
+    clean_src = re.sub(r"^\[\d+\]\s*", "", src_key).strip()
+    if clean_src in row and row[clean_src] is not None and str(row[clean_src]).strip() != "":
+        return str(row[clean_src])
+    base_src = clean_src.split(".")[-1].strip()
+    if base_src in row and row[base_src] is not None and str(row[base_src]).strip() != "":
+        return str(row[base_src])
+    norm_target = norm_str(clean_src)
+    norm_base = norm_str(base_src)
+    for r_k, r_v in row.items():
+        if r_v is None or str(r_v).strip() == "":
+            continue
+        r_clean = re.sub(r"^\[\d+\]\s*", "", str(r_k)).strip()
+        r_norm = norm_str(r_clean)
+        r_base_norm = norm_str(r_clean.split(".")[-1])
+        if r_norm in (norm_target, norm_base) or r_base_norm in (norm_target, norm_base):
+            return str(r_v)
+    return ""
 
 class ExtractAgent:
     def perform_extraction(self, base_url, client, username, password, target_object, mappings, dynamic_rules: list = None):
@@ -56,9 +87,8 @@ class ExtractAgent:
         results = data.get("d", {}).get("results", [])
 
         # 3. Apply Transformations and Dynamic Rule Evaluation
-        from agents.validation_agent import ValidationAgent
         val_agent = ValidationAgent()
-        
+
         harmonized_results = []
         for row in results:
             harmonized_row = {}
@@ -67,19 +97,10 @@ class ExtractAgent:
                 if not src_full:
                     continue
                 
-                parts = src_full.split('.')
-                src_key = parts[-1] if len(parts) > 1 else src_full
-                
                 sap_key = m.get('sap')
                 transform = m.get('tr', 'none')
                 
-                raw_val = row.get(src_key, "")
-                if isinstance(raw_val, dict):
-                    raw_val = ""
-                elif raw_val is None:
-                    raw_val = ""
-                else:
-                    raw_val = str(raw_val)
+                raw_val = get_val_from_row(row, src_full)
 
                 if transform == 'trim':
                     val = raw_val.strip()
@@ -470,7 +491,6 @@ You MUST return the output as a valid JSON object matching this exact schema:
 
         # Helper to get all sheets a column belongs to
         def get_col_sheets(col_name: str) -> list:
-            import re
             clean_col = re.sub(r"^\[\d+\]", "", col_name)
             
             # Find in mappings
@@ -548,7 +568,6 @@ You MUST return the output as a valid JSON object matching this exact schema:
 
         # Helper to determine if column is a key column
         def is_column_key(col_name: str) -> bool:
-            import re
             clean_col = re.sub(r"^\[\d+\]", "", col_name).upper()
             if any(k in clean_col for k in [
                 "PERSON_ID_EXTERNAL", "PERSONIDEXTERNAL", "USER_ID", "USERID",
@@ -589,13 +608,10 @@ You MUST return the output as a valid JSON object matching this exact schema:
         # 3. Sort key columns first for each table, and filter out tables containing only key fields
         result_tables = []
         for sheet, cols in cols_by_table.items():
+            if not cols:
+                continue
             key_cols = [c for c in cols if is_column_key(c)]
             non_key_cols = [c for c in cols if c not in key_cols]
-            
-            # Skip tables that do not have any non-key columns mapped
-            if not non_key_cols:
-                continue
-                
             final_cols = key_cols + non_key_cols
             
             result_tables.append({

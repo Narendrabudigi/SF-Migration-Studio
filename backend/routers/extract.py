@@ -7,6 +7,7 @@ import pandas as pd
 import io
 import json
 import logging
+import re
 # Suppress insecure request warnings for sandbox self-signed certs
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -234,6 +235,34 @@ class ExecuteFileRequest(BaseModel):
     mappings: list
     raw_data: list
 
+def norm_str(s: str) -> str:
+    if not s:
+        return ""
+    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+def extract_value_from_row(row: dict, src_key: str) -> str:
+    if not row or not src_key:
+        return ""
+    if src_key in row and row[src_key] is not None and str(row[src_key]).strip() != "":
+        return str(row[src_key])
+    clean_src = re.sub(r"^\[\d+\]\s*", "", src_key).strip()
+    if clean_src in row and row[clean_src] is not None and str(row[clean_src]).strip() != "":
+        return str(row[clean_src])
+    base_src = clean_src.split(".")[-1].strip()
+    if base_src in row and row[base_src] is not None and str(row[base_src]).strip() != "":
+        return str(row[base_src])
+    norm_target = norm_str(clean_src)
+    norm_base = norm_str(base_src)
+    for r_k, r_v in row.items():
+        if r_v is None or str(r_v).strip() == "":
+            continue
+        r_clean = re.sub(r"^\[\d+\]\s*", "", str(r_k)).strip()
+        r_norm = norm_str(r_clean)
+        r_base_norm = norm_str(r_clean.split(".")[-1])
+        if r_norm in (norm_target, norm_base) or r_base_norm in (norm_target, norm_base):
+            return str(r_v)
+    return ""
+
 @router.post("/execute_file")
 def execute_file_extraction(req: ExecuteFileRequest):
     try:
@@ -253,7 +282,6 @@ def execute_file_extraction(req: ExecuteFileRequest):
             if len(first_row_vals.intersection(mapping_src_fields)) >= 2:
                 raw_data = raw_data[1:]
 
-        # Manually apply transformations (similar to extract_agent.perform_extraction)
         harmonized_results = []
         for row in raw_data:
             harmonized_row = {}
@@ -265,15 +293,7 @@ def execute_file_extraction(req: ExecuteFileRequest):
                 sap_key = m.get('sap')
                 transform = m.get('tr', 'none')
                 
-                raw_val = row.get(src_full, "")
-                if not raw_val and "." in src_full:
-                    base_name = src_full.split(".")[-1]
-                    raw_val = row.get(base_name, "")
-
-                if isinstance(raw_val, dict) or raw_val is None:
-                    raw_val = ""
-                else:
-                    raw_val = str(raw_val)
+                raw_val = extract_value_from_row(row, src_full)
 
                 if transform == 'trim':
                     val = raw_val.strip()

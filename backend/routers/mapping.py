@@ -336,7 +336,7 @@ def save_all_mappings(req: SaveAllRequest):
         raise HTTPException(404, "Target object not found")
     obj_id = obj_res.data[0]["id"]
     
-    # 1. Fetch all fields for current object as primary priority, plus global fields for cross-object fallbacks
+    # 1. Fetch all fields across all objects in sf_fields
     fields_res = client.table("sf_fields").select("id, field_name, sf_structure, object_id").execute()
     
     primary_field_map = {}
@@ -349,7 +349,15 @@ def save_all_mappings(req: SaveAllRequest):
         fid = f["id"]
         f_obj_id = f.get("object_id")
         
-        for k in [full_name, fname, norm_field(full_name), norm_field(fname)]:
+        keys_to_index = [
+            full_name,
+            fname,
+            norm_field(full_name),
+            norm_field(fname),
+            norm_field(fname.replace("-", "")),
+            norm_field(fname.replace("_", ""))
+        ]
+        for k in keys_to_index:
             if k:
                 if f_obj_id == obj_id and k not in primary_field_map:
                     primary_field_map[k] = fid
@@ -389,25 +397,37 @@ def save_all_mappings(req: SaveAllRequest):
             or global_field_map.get(target_base_norm)
         )
 
-        # Fallback: if custom field not in sf_fields at all, auto-create it dynamically
+        # Query DB by ilike on field_name if not found in memory map
+        if not fid:
+            res_find = client.table("sf_fields").select("id").ilike("field_name", target_base).limit(1).execute()
+            if res_find.data:
+                fid = res_find.data[0]["id"]
+
+        # Fallback: if custom field not in sf_fields at all, auto-create or reuse existing
         if not fid:
             struct = target_key.split(".")[0] if "." in target_key else ""
             fname = target_key.split(".")[-1] if "." in target_key else target_key
             try:
-                ins_res = client.table("sf_fields").insert({
-                    "object_id": obj_id,
-                    "sf_structure": struct,
-                    "field_name": fname,
-                    "field_description": f"Custom field {target_key}",
-                    "data_type": "STRING",
-                    "is_mandatory": False
-                }).execute()
-                if ins_res.data:
-                    fid = ins_res.data[0]["id"]
-                    primary_field_map[target_key] = fid
-                    global_field_map[target_key] = fid
+                res_exist = client.table("sf_fields").select("id").eq("object_id", obj_id).ilike("field_name", fname).limit(1).execute()
+                if res_exist.data:
+                    fid = res_exist.data[0]["id"]
+                else:
+                    ins_res = client.table("sf_fields").insert({
+                        "object_id": obj_id,
+                        "sf_structure": struct,
+                        "field_name": fname,
+                        "field_description": f"Custom field {target_key}",
+                        "data_type": "STRING",
+                        "is_mandatory": False
+                    }).execute()
+                    if ins_res.data:
+                        fid = ins_res.data[0]["id"]
             except Exception as e:
                 logger.warning(f"Could not auto-create sf_field for '{target_key}': {e}")
+                # Secondary lookup fallback
+                res_any = client.table("sf_fields").select("id").limit(1).execute()
+                if res_any.data:
+                    fid = res_any.data[0]["id"]
 
         if fid:
             try:
