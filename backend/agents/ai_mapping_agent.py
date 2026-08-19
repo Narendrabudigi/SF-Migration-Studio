@@ -39,7 +39,7 @@ Output MUST be a JSON array of objects with the following keys for all successfu
             # Source Fields list empty -> Loop over Target Fields
             system_prompt = f"""You are an expert HR & ERP Data Migration Architect with deep knowledge of {source_system} and SuccessFactors.
 You need to accurately map fields from {source_system} to SuccessFactors target object {target_object}.
-You are given a STRICT list of MANDATORY target fields in SuccessFactors formatted as {{"sap_field": "STRUCTURE.FIELD_NAME", "description": "Human readable description"}}. 
+You are given a STRICT list of MANDATORY target fields in SuccessFactors formatted as {{"sf_field": "STRUCTURE.FIELD_NAME", "description": "Human readable description"}}. 
 CRITICAL REQUIREMENT: You MUST provide EXACTLY ONE mapping for EVERY SINGLE field in the target list. Do NOT omit any fields.
 
 Output MUST be a JSON array of objects with the following keys:
