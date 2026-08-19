@@ -5,27 +5,15 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Fetch API Keys from Environment
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
-# Fallback Configuration
-PRIMARY_PROVIDER = os.environ.get("PRIMARY_PROVIDER")
-PRIMARY_MODEL = os.environ.get("PRIMARY_MODEL")
-SECONDARY_PROVIDER = os.environ.get("SECONDARY_PROVIDER")
-SECONDARY_MODEL = os.environ.get("SECONDARY_MODEL")
-THIRD_PROVIDER = os.environ.get("THIRD_PROVIDER")
-THIRD_MODEL = os.environ.get("THIRD_MODEL")
-FOURTH_PROVIDER = os.environ.get("FOURTH_PROVIDER")
-FOURTH_MODEL = os.environ.get("FOURTH_MODEL")
-
+def get_env_var(key: str, default: str = "") -> str:
+    return os.environ.get(key, default)
 
 def _call_gemini(model: str, system_prompt: str, user_prompt: str) -> str:
-    if not GEMINI_API_KEY:
+    gemini_key = get_env_var("GEMINI_API_KEY")
+    if not gemini_key:
         raise ValueError("GEMINI_API_KEY is missing.")
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
     payload = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
         "contents": [{"parts": [{"text": user_prompt}]}],
@@ -33,7 +21,20 @@ def _call_gemini(model: str, system_prompt: str, user_prompt: str) -> str:
     }
     
     response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=120)
-    response.raise_for_status()
+    if response.status_code != 200:
+        err_msg = response.text
+        try:
+            err_json = response.json()
+            err_msg = err_json.get("error", {}).get("message", response.text)
+        except Exception:
+            pass
+        
+        # Auto-fallback if the requested Gemini model is deprecated/not found
+        if response.status_code in (404, 400) and model != "gemini-2.5-flash":
+            logger.warning(f"Gemini model '{model}' failed (HTTP {response.status_code}: {err_msg}). Auto-falling back to 'gemini-2.5-flash'...")
+            return _call_gemini("gemini-2.5-flash", system_prompt, user_prompt)
+            
+        raise ValueError(f"Gemini API Error (HTTP {response.status_code}): {err_msg}")
     
     data = response.json()
     try:
@@ -61,7 +62,20 @@ def _call_openai_compatible(url: str, api_key: str, model: str, system_prompt: s
     }
     
     response = requests.post(url, headers=headers, json=payload, timeout=120)
-    response.raise_for_status()
+    
+    # Retry without json_object response_format if model does not support it
+    if response.status_code == 400 and "response_format" in response.text:
+        payload.pop("response_format", None)
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+
+    if response.status_code != 200:
+        err_msg = response.text
+        try:
+            err_json = response.json()
+            err_msg = err_json.get("error", {}).get("message", response.text)
+        except Exception:
+            pass
+        raise ValueError(f"API Error (HTTP {response.status_code}): {err_msg}")
     
     data = response.json()
     try:
@@ -75,21 +89,26 @@ def _route_provider(provider: str, model: str, system_prompt: str, user_prompt: 
     if "gemini" in provider_lower:
         return _call_gemini(model, system_prompt, user_prompt)
     elif "groq" in provider_lower:
-        return _call_openai_compatible("https://api.groq.com/openai/v1/chat/completions", GROQ_API_KEY, model, system_prompt, user_prompt)
+        return _call_openai_compatible("https://api.groq.com/openai/v1/chat/completions", get_env_var("GROQ_API_KEY"), model, system_prompt, user_prompt)
     elif "openrouter" in provider_lower:
-        return _call_openai_compatible("https://openrouter.ai/api/v1/chat/completions", OPENROUTER_API_KEY, model, system_prompt, user_prompt)
+        return _call_openai_compatible("https://openrouter.ai/api/v1/chat/completions", get_env_var("OPENROUTER_API_KEY"), model, system_prompt, user_prompt)
     else:
         raise ValueError(f"Unknown provider configured: {provider}")
 
 
 class LLMOrchestrator:
-    def execute_json_prompt(self, system_prompt: str, user_prompt: str):
-        chain = [
-            {"tier": "PRIMARY", "provider": PRIMARY_PROVIDER, "model": PRIMARY_MODEL},
-            {"tier": "SECONDARY", "provider": SECONDARY_PROVIDER, "model": SECONDARY_MODEL},
-            {"tier": "THIRD", "provider": THIRD_PROVIDER, "model": THIRD_MODEL},
-            {"tier": "FOURTH", "provider": FOURTH_PROVIDER, "model": FOURTH_MODEL},
+    def _get_chain(self):
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        return [
+            {"tier": "PRIMARY", "provider": get_env_var("PRIMARY_PROVIDER"), "model": get_env_var("PRIMARY_MODEL")},
+            {"tier": "SECONDARY", "provider": get_env_var("SECONDARY_PROVIDER"), "model": get_env_var("SECONDARY_MODEL")},
+            {"tier": "THIRD", "provider": get_env_var("THIRD_PROVIDER"), "model": get_env_var("THIRD_MODEL")},
+            {"tier": "FOURTH", "provider": get_env_var("FOURTH_PROVIDER"), "model": get_env_var("FOURTH_MODEL")},
         ]
+
+    def execute_json_prompt(self, system_prompt: str, user_prompt: str):
+        chain = self._get_chain()
 
         for step in chain:
             provider = step["provider"]
@@ -122,12 +141,7 @@ class LLMOrchestrator:
         return []
 
     def generate_generic(self, system_prompt: str, user_prompt: str) -> str:
-        chain = [
-            {"tier": "PRIMARY", "provider": PRIMARY_PROVIDER, "model": PRIMARY_MODEL},
-            {"tier": "SECONDARY", "provider": SECONDARY_PROVIDER, "model": SECONDARY_MODEL},
-            {"tier": "THIRD", "provider": THIRD_PROVIDER, "model": THIRD_MODEL},
-            {"tier": "FOURTH", "provider": FOURTH_PROVIDER, "model": FOURTH_MODEL},
-        ]
+        chain = self._get_chain()
         for step in chain:
             provider = step["provider"]
             model = step["model"]
