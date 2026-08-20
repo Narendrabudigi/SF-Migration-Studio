@@ -1060,6 +1060,8 @@ class HarmonizationAgent:
             return df
 
         for rule in dynamic_rules:
+            if not isinstance(rule, dict) or rule.get("enabled") is False:
+                continue
             rule_id = rule.get("id", "DYNAMIC")
             label = rule.get("label", rule_id)
             target_field = str(rule.get("target_field", "")).strip()

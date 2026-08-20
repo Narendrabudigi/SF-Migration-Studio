@@ -25,18 +25,6 @@
       "severity": "ERROR",
       "source": "validation_dynamic_rule",
       "target_object": "Biographical Info"
-    },
-    {
-      "created_at": "2026-08-19T12:00:48.318993+00:00",
-      "description": "Converts last name to upper case",
-      "field": "GENERAL",
-      "id": "DYNAMIC_HARM_7a100803",
-      "label": "Upper Case Last Name",
-      "priority": 100,
-      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
-      "python_code": "def transform(value, row):\n    return value.upper()",
-      "source": "harmonization_dynamic_rule",
-      "target_object": "Biographical Info"
     }
   ],
   "version": "1.0"

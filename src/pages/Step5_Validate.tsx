@@ -77,25 +77,14 @@ export function Step5Validate() {
   const [appliedStandardRules, setAppliedStandardRules] = useState<string[] | null>(null);
   const [selectedRulesReceived, setSelectedRulesReceived] = useState<string[] | null>(null);
 
-  // Sync state.dynamicRules into local savedDynamicRules when store changes
-  useEffect(() => {
-    if (state.dynamicRules && Array.isArray(state.dynamicRules)) {
-      setSavedDynamicRules(state.dynamicRules);
-      setSelectedDynamicRules(prev => {
-        const updated = { ...prev };
-        state.dynamicRules.forEach((r: any) => {
-          if (r?.id && !(r.id in updated)) {
-            updated[r.id] = true;
-          }
-        });
-        return updated;
-      });
-    }
-  }, [state.dynamicRules]);
-
   // Load saved validation report and dynamic rules from Supabase on mount
   useEffect(() => {
-    if (!state.projectId) return;
+    if (!state.projectId) {
+      setSavedDynamicRules([]);
+      setSelectedDynamicRules({});
+      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+      return;
+    }
 
     const loadSaved = async () => {
       try {
@@ -103,13 +92,15 @@ export function Step5Validate() {
         const res = await fetch(`${VALIDATE_API}/api/validate/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
         if (res.ok) {
           const data = await res.json();
+          const loadedRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
+          
+          setSavedDynamicRules(loadedRules);
+          dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
+          setSelectedDynamicRules(
+            Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
+          );
+
           if (data.status === 'success') {
-            if (data.dynamic_rules && Array.isArray(data.dynamic_rules) && data.dynamic_rules.length > 0) {
-              if (!state.dynamicRules || state.dynamicRules.length === 0) {
-                dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: data.dynamic_rules });
-                setSavedDynamicRules(data.dynamic_rules);
-              }
-            }
             if (data.report && Array.isArray(data.report) && data.report.length > 0) {
               if (!state.validationReport || state.validationReport.length === 0) {
                 dispatch({ type: 'SET_FIELD', field: 'validationReport', value: data.report });
@@ -407,8 +398,26 @@ export function Step5Validate() {
     }
   };
 
+  const targetCols = React.useMemo(() => {
+    if (state.mapping && state.mapping.length > 0) {
+      return Array.from(new Set(state.mapping.map((m: any) => m.sap?.split('.').pop() || m.sap).filter(Boolean)));
+    }
+    return [];
+  }, [state.mapping]);
+
   const toggleSelectDynamicRule = (rid: string) => {
-    setSelectedDynamicRules((d) => ({ ...d, [rid]: !d[rid] }));
+    setSelectedDynamicRules((d) => {
+      const nextState = !(d[rid] !== false);
+      const updatedDict = { ...d, [rid]: nextState };
+
+      setSavedDynamicRules((prevRules) => {
+        const updatedRules = prevRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
+        dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: updatedRules });
+        return updatedRules;
+      });
+
+      return updatedDict;
+    });
   };
 
   const saveRulesToDB = async () => {
@@ -429,7 +438,7 @@ export function Step5Validate() {
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/validate/generate-rules`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompts: allPrompts, target_object: state.obj })
+          body: JSON.stringify({ prompts: allPrompts, target_object: state.obj, actual_columns: targetCols })
         });
         if (!res.ok) throw new Error('Failed to compile prompts');
         const json = await res.json();
@@ -439,7 +448,10 @@ export function Step5Validate() {
       const payloadRules = [
         ...savedDynamicRules,
         ...compiled
-      ];
+      ].map((r: any) => ({
+        ...r,
+        enabled: selectedDynamicRules[r.id] !== false
+      }));
 
       const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/validate/rules/save`, {
         method: 'POST',

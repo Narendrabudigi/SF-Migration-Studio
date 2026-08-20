@@ -684,26 +684,14 @@ export function Step4Harmonize() {
     });
   };
 
-  // Sync state.dynamicRules into local savedDynamicRules when store changes
-  useEffect(() => {
-    if (state.dynamicRules && Array.isArray(state.dynamicRules)) {
-      const deduped = dedupeRules(state.dynamicRules);
-      setSavedDynamicRules(deduped);
-      setSelectedDynamicRules(prev => {
-        const updated = { ...prev };
-        deduped.forEach((r: any) => {
-          if (r?.id && !(r.id in updated)) {
-            updated[r.id] = true;
-          }
-        });
-        return updated;
-      });
-    }
-  }, [state.dynamicRules]);
-
   // Load saved harmonized data & dynamic rules on mount if available in DB
   useEffect(() => {
-    if (!state.projectId) return;
+    if (!state.projectId) {
+      setSavedDynamicRules([]);
+      setSelectedDynamicRules({});
+      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+      return;
+    }
 
     const loadSavedData = async () => {
       try {
@@ -711,6 +699,15 @@ export function Step4Harmonize() {
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
         if (res.ok) {
           const data = await res.json();
+          const rawDynRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
+          const loadedRules = dedupeRules(rawDynRules);
+          
+          setSavedDynamicRules(loadedRules);
+          dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
+          setSelectedDynamicRules(
+            Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
+          );
+
           if (data.status === 'success') {
             if (data.data && data.data.length > 0 && !result) {
               setResult({
@@ -719,7 +716,7 @@ export function Step4Harmonize() {
                 tables: data.tables || [],
                 stats: { total_input: data.data.length, total_output: data.data.length },
                 fix_log: [],
-                dynamic_rules: data.dynamic_rules || [],
+                dynamic_rules: loadedRules,
                 custom_prompts: data.custom_prompts || [],
               });
             }
@@ -727,19 +724,6 @@ export function Step4Harmonize() {
               setCustomPrompts(data.custom_prompts);
               dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: data.custom_prompts });
             }
-            const rawDynRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
-            const loadedRules = dedupeRules(rawDynRules);
-            setSavedDynamicRules(loadedRules);
-            dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
-            setSelectedDynamicRules(prev => {
-              const updated = { ...prev };
-              loadedRules.forEach((r: any) => {
-                if (r?.id && !(r.id in updated)) {
-                  updated[r.id] = true;
-                }
-              });
-              return updated;
-            });
             if (data.tables && data.tables.length > 0) {
               dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
             }
@@ -855,10 +839,26 @@ export function Step4Harmonize() {
     }
   };
 
+  const targetCols = React.useMemo(() => {
+    if (result?.columns && result.columns.length > 0) return result.columns;
+    if (state.mapping && state.mapping.length > 0) {
+      return Array.from(new Set(state.mapping.map((m: any) => m.sap?.split('.').pop() || m.sap).filter(Boolean)));
+    }
+    return [];
+  }, [result?.columns, state.mapping]);
+
   const toggleSelectDynamicRule = (rid: string) => {
     setSelectedDynamicRules((d) => {
-      const current = d[rid] !== false; // default is true
-      return { ...d, [rid]: !current };
+      const nextState = !(d[rid] !== false);
+      const updatedDict = { ...d, [rid]: nextState };
+      
+      setSavedDynamicRules((prevRules) => {
+        const updatedRules = prevRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
+        dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: updatedRules });
+        return updatedRules;
+      });
+
+      return updatedDict;
     });
   };
 
@@ -877,7 +877,7 @@ export function Step4Harmonize() {
           body: JSON.stringify({
             prompts: customPrompts,
             target_object: state.obj || sapObject,
-            actual_columns: result?.columns || (state.extracted.length > 0 ? Object.keys(state.extracted[0]) : [])
+            actual_columns: targetCols
           })
         });
         if (!res.ok) throw new Error('Failed to compile prompts');
@@ -887,7 +887,10 @@ export function Step4Harmonize() {
 
       const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
       const newlyCompiled = dedupeRules(compiled).filter((r: any) => !existingIds.has(r.id));
-      const payloadRules = [...savedDynamicRules, ...newlyCompiled];
+      const payloadRules = [...savedDynamicRules, ...newlyCompiled].map((r: any) => ({
+        ...r,
+        enabled: selectedDynamicRules[r.id] !== false
+      }));
 
       const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
         method: 'POST',
