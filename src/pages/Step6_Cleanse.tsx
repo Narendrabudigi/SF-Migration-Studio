@@ -50,10 +50,12 @@ interface DynamicRuleItem {
 
 interface ValidationRuleItem {
   rule_code: string;
+  label?: string;
   field: string;
   message: string;
   count: number;
   enabled: boolean;
+  is_dynamic?: boolean;
 }
 
 interface AuditLogEntry {
@@ -188,7 +190,13 @@ export function Step6Cleanse() {
 
   // Rule States
   const [standardRules, setStandardRules] = useState<StandardRuleState[]>(DEFAULT_STANDARD_RULES);
-  const [cleanserDynamicRules, setCleanserDynamicRules] = useState<DynamicRuleItem[]>(DEFAULT_CLEANSER_DYNAMIC_RULES);
+  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.cleanserDynamicRules || []);
+  const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
+    Object.fromEntries((state.cleanserDynamicRules || []).map((r: any) => [r.id, true]))
+  );
+  const [customPrompts, setCustomPrompts] = useState<string[]>([]);
+  const [editedStandardRulePrompts, setEditedStandardRulePrompts] = useState<Record<string, string>>({});
+  const [standardRuleOverrides, setStandardRuleOverrides] = useState<Record<string, string>>({});
   const [validationRules, setValidationRules] = useState<ValidationRuleItem[]>([]);
   const [loadingValRules, setLoadingValRules] = useState(false);
   const [valRulesLoaded, setValRulesLoaded] = useState(false);
@@ -203,8 +211,8 @@ export function Step6Cleanse() {
 
   // Dynamic Rule edit state
   const [newDynamicPrompt, setNewDynamicPrompt] = useState('');
-  const [editingDynamicId, setEditingDynamicId] = useState<string | null>(null);
-  const [editDynamicPromptText, setEditDynamicPromptText] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState('');
 
   // Audit Log UI state (Audit Log collapsed by default)
   const [openSummaryAccordion, setOpenSummaryAccordion] = useState(true);
@@ -234,6 +242,55 @@ export function Step6Cleanse() {
   const cleanedRows = state.cleaned || [];
   const has = cleanedRows.length > 0;
 
+  // Sync state.cleanserDynamicRules into local savedDynamicRules when store changes
+  useEffect(() => {
+    if (state.cleanserDynamicRules && Array.isArray(state.cleanserDynamicRules)) {
+      setSavedDynamicRules(state.cleanserDynamicRules);
+      setSelectedDynamicRules(prev => {
+        const updated = { ...prev };
+        state.cleanserDynamicRules.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+    }
+  }, [state.cleanserDynamicRules]);
+
+  // Load saved cleanser dynamic rules & cleansed data from backend/Supabase on mount
+  useEffect(() => {
+    if (!state.projectId) return;
+
+    const loadSaved = async () => {
+      try {
+        const objName = state.obj || 'Biographical Info';
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'success') {
+            const rules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
+            setSavedDynamicRules(rules);
+            dispatch({ type: 'SET_FIELD', field: 'cleanserDynamicRules', value: rules });
+            setSelectedDynamicRules(prev => {
+              const updated = { ...prev };
+              rules.forEach((r: any) => {
+                if (r?.id && !(r.id in updated)) {
+                  updated[r.id] = true;
+                }
+              });
+              return updated;
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load saved cleanser dynamic rules:', err);
+      }
+    };
+
+    loadSaved();
+  }, [state.projectId, state.obj, dispatch]);
+
   // Auto-fetch Step 5 validation rules on mount (guarded against infinite re-render loops)
   useEffect(() => {
     if (state.projectId && state.obj && !valRulesLoaded && !loadingValRules && !autoFetchedRef.current) {
@@ -247,11 +304,15 @@ export function Step6Cleanse() {
     setLoadingValRules(true);
     try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-      const res = await fetch(`${backendUrl}/api/sap/cleanser/validation-rules?project_id=${state.projectId}&target_object=${state.obj}`);
+      const res = await fetch(`${backendUrl}/api/sap/cleanser/validation-rules?project_id=${state.projectId}&target_object=${encodeURIComponent(state.obj)}`);
       if (!res.ok) throw new Error('Validation rules request returned error status');
       const data = await res.json();
       if (data && Array.isArray(data.rules)) {
-        setValidationRules(data.rules.map((r: any) => ({ ...r, enabled: true })));
+        const allValRules = data.rules.map((r: any) => ({
+          ...r,
+          enabled: r.enabled !== false,
+        }));
+        setValidationRules(allValRules);
         setValRulesLoaded(true);
       }
     } catch (err: any) {
@@ -274,18 +335,9 @@ export function Step6Cleanse() {
   const saveEditStandardRule = (code: string) => {
     if (!editForm.name.trim()) return;
     const promptText = `${editForm.name.trim()}: ${editForm.description.trim()}`.trim();
-    const dynamicId = `OVERRIDE_${code}`;
 
-    // 1. Add/Update as a Dynamic AI Prompt Rule
-    setCleanserDynamicRules(prev => {
-      const exists = prev.some(r => r.id === dynamicId);
-      if (exists) {
-        return prev.map(r => r.id === dynamicId ? { ...r, prompt: promptText, enabled: true } : r);
-      }
-      return [...prev, { id: dynamicId, prompt: promptText, enabled: true }];
-    });
-
-    // 2. Mark original Standard Rule as disabled & overridden
+    setEditedStandardRulePrompts(prev => ({ ...prev, [code]: promptText }));
+    setStandardRuleOverrides(prev => ({ ...prev, [code]: `OVERRIDE_${code}` }));
     setStandardRules(prev => prev.map(r => r.code === code ? {
       ...r,
       name: editForm.name.trim(),
@@ -295,12 +347,20 @@ export function Step6Cleanse() {
     } : r));
 
     setEditingRuleCode(null);
-    toast(`Rule "${editForm.name}" converted to Dynamic AI Rule (Standard rule overridden)`, 'ok');
+    toast(`Rule "${editForm.name}" set to override standard rule (will compile on cleanse/save)`, 'ok');
   };
 
   const restoreStandardRule = (code: string) => {
-    const dynamicId = `OVERRIDE_${code}`;
-    setCleanserDynamicRules(prev => prev.filter(r => r.id !== dynamicId));
+    setEditedStandardRulePrompts(prev => {
+      const updated = { ...prev };
+      delete updated[code];
+      return updated;
+    });
+    setStandardRuleOverrides(prev => {
+      const updated = { ...prev };
+      delete updated[code];
+      return updated;
+    });
     setStandardRules(prev => prev.map(r => r.code === code ? { ...r, enabled: true, overridden: false } : r));
     toast('Restored standard rule execution', 'ok');
   };
@@ -309,38 +369,167 @@ export function Step6Cleanse() {
     setValidationRules(prev => prev.map(r => r.rule_code === ruleCode ? { ...r, enabled: !r.enabled } : r));
   };
 
-  const addCleanserDynamicRule = () => {
+  const handleAddPrompt = () => {
     if (!newDynamicPrompt.trim()) return;
-    const newRule: DynamicRuleItem = {
-      id: `DYN_${Date.now()}`,
-      prompt: newDynamicPrompt.trim(),
-      enabled: true,
-    };
-    setCleanserDynamicRules(prev => [...prev, newRule]);
+    setCustomPrompts(prev => [...prev, newDynamicPrompt.trim()]);
     setNewDynamicPrompt('');
   };
 
-  const toggleCleanserDynamicRule = (id: string) => {
-    setCleanserDynamicRules(prev => prev.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
-  };
-
-  const deleteCleanserDynamicRule = (id: string) => {
-    if (id.startsWith('OVERRIDE_')) {
-      const origCode = id.replace('OVERRIDE_', '');
-      setStandardRules(prev => prev.map(r => r.code === origCode ? { ...r, enabled: true, overridden: false } : r));
+  const handleRemovePrompt = (index: number) => {
+    setCustomPrompts(prev => prev.filter((_, i) => i !== index));
+    if (editingIndex === index) {
+      setEditingIndex(null);
+      setEditingText('');
     }
-    setCleanserDynamicRules(prev => prev.filter(r => r.id !== id));
   };
 
-  const startEditDynamicRule = (rule: DynamicRuleItem) => {
-    setEditingDynamicId(rule.id);
-    setEditDynamicPromptText(rule.prompt);
+  const handleStartEditPrompt = (index: number) => {
+    setEditingIndex(index);
+    setEditingText(customPrompts[index]);
   };
 
-  const saveEditDynamicRule = (id: string) => {
-    if (!editDynamicPromptText.trim()) return;
-    setCleanserDynamicRules(prev => prev.map(r => r.id === id ? { ...r, prompt: editDynamicPromptText.trim() } : r));
-    setEditingDynamicId(null);
+  const handleSaveEditPrompt = (index: number) => {
+    if (!editingText.trim()) return;
+    setCustomPrompts(prev => {
+      const updated = [...prev];
+      updated[index] = editingText.trim();
+      return updated;
+    });
+    setEditingIndex(null);
+    setEditingText('');
+  };
+
+  const toggleSelectDynamicRule = (rid: string) => {
+    setSelectedDynamicRules((d) => ({ ...d, [rid]: !d[rid] }));
+  };
+
+  const deleteDynamicRule = async (rid: string) => {
+    const remaining = savedDynamicRules.filter((r: any) => r.id !== rid);
+    setSavedDynamicRules(remaining);
+    dispatch({ type: 'SET_FIELD', field: 'cleanserDynamicRules', value: remaining });
+    setSelectedDynamicRules((d) => {
+      const updated = { ...d };
+      delete updated[rid];
+      return updated;
+    });
+
+    const overriddenStandardCode = Object.keys(standardRuleOverrides).find(
+      (k) => standardRuleOverrides[k] === rid
+    );
+    if (overriddenStandardCode) {
+      setStandardRules(prev => prev.map(r => r.code === overriddenStandardCode ? { ...r, enabled: true, overridden: false } : r));
+      setStandardRuleOverrides(prev => {
+        const updated = { ...prev };
+        delete updated[overriddenStandardCode];
+        return updated;
+      });
+    }
+
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: remaining
+          })
+        });
+        toast('Rule deleted from database', 'ok');
+      } catch (err) {
+        console.error('Failed to sync rule deletion with database:', err);
+      }
+    }
+  };
+
+  const handleClearAllDynamicRules = async () => {
+    setSavedDynamicRules([]);
+    dispatch({ type: 'SET_FIELD', field: 'cleanserDynamicRules', value: [] });
+    setSelectedDynamicRules({});
+    setCustomPrompts([]);
+    setEditedStandardRulePrompts({});
+    setStandardRuleOverrides({});
+    setStandardRules(prev => prev.map(r => ({ ...r, overridden: false })));
+
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: []
+          })
+        });
+        toast('All dynamic rules removed from database', 'ok');
+      } catch (err) {
+        console.error('Failed to clear rules in database:', err);
+      }
+    }
+  };
+
+  const saveRulesToDB = async () => {
+    if (!state.projectId) {
+      toast('No project selected to save rules', 'err');
+      return;
+    }
+    showLoad('Saving rules...', 'Compiling and saving dynamic rules to database');
+    try {
+      const allPrompts = [
+        ...customPrompts,
+        ...Object.values(editedStandardRulePrompts)
+      ];
+
+      let compiled: any[] = [];
+      if (allPrompts.length > 0) {
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/validate/generate-rules`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompts: allPrompts, target_object: state.obj || 'Biographical Info' })
+        });
+        if (!res.ok) throw new Error('Failed to compile prompts');
+        const json = await res.json();
+        compiled = json.rules || [];
+      }
+
+      const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+      const newlyAddedRules = compiled.filter((r: any) => !existingIds.has(r.id));
+      const payloadRules = [...savedDynamicRules, ...newlyAddedRules];
+
+      const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/rules/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: state.projectId,
+          target_object: state.obj || 'Biographical Info',
+          rules: payloadRules
+        })
+      });
+
+      if (!res2.ok) throw new Error('Failed to persist rules to database');
+
+      setSavedDynamicRules(payloadRules);
+      dispatch({ type: 'SET_FIELD', field: 'cleanserDynamicRules', value: payloadRules });
+      setSelectedDynamicRules(prev => {
+        const updated = { ...prev };
+        newlyAddedRules.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+
+      setCustomPrompts([]);
+      setEditedStandardRulePrompts({});
+      hideLoad();
+      toast('Dynamic rules compiled and saved to database successfully!', 'ok');
+    } catch (err: any) {
+      hideLoad();
+      toast(err.message || 'Failed to save rules', 'err');
+    }
   };
 
   const toggleGroup = (key: string) => setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
@@ -429,26 +618,52 @@ export function Step6Cleanse() {
     [0, 1, 2, 3, 4, 5, 6, 7].forEach((i) => setTimeout(() => tick(i), 280 + i * 260));
 
     try {
-      let res;
+      let res: Response;
+      // 1. Get enabled Step 5 dynamic validation rules from Tab 2
+      const activeValidationDynRules = validationRules
+        .filter((r) => r.enabled && (r.is_dynamic || String(r.rule_code).startsWith('DYNAMIC_') || String(r.rule_code).startsWith('DYN_') || String(r.rule_code).startsWith('OVERRIDE_')))
+        .map((r) => ({
+          id: r.rule_code,
+          rule_code: r.rule_code,
+          label: r.label || r.rule_code,
+          field: r.field,
+          field_name: r.field,
+          description: r.message,
+          message: r.message,
+          prompt: r.message,
+          python_code: (r as any).python_code || (r as any).code || '',
+          source: 'validation_dynamic_rule',
+          phase: 'validate'
+        }));
+
+      // 2. Get enabled Step 6 dynamic cleansing rules from Tab 3
+      const selectedCleanseDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
+      const combinedDynamicRulesToSend = [...activeValidationDynRules, ...selectedCleanseDynRules];
+
+      const allPrompts = [
+        ...customPrompts,
+        ...Object.values(editedStandardRulePrompts)
+      ];
+      const excludedValRules = validationRules.filter(r => !r.enabled).map(r => r.rule_code);
+
       if (source === 'harmonized') {
         if (!state.projectId || !state.obj) {
           throw new Error("Project or Object not selected.");
         }
-        const activeCustomPrompts = cleanserDynamicRules.filter(r => r.enabled).map(r => r.prompt);
-        const excludedValRules = validationRules.filter(r => !r.enabled).map(r => r.rule_code);
         res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/flow`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             project_id: state.projectId,
             target_object: state.obj,
-            custom_prompts: activeCustomPrompts,
+            custom_prompts: allPrompts,
+            dynamic_rules: combinedDynamicRulesToSend,
             excluded_validation_rules: excludedValRules,
             standard_rules_config: standardRules.map(r => ({
               code: r.code,
               name: r.name,
               description: r.description,
-              enabled: r.enabled
+              enabled: r.enabled && !standardRuleOverrides[r.code]
             }))
           })
         });
@@ -458,9 +673,27 @@ export function Step6Cleanse() {
         }
         const formData = new FormData();
         formData.append('harmonization_csv', standaloneCsv);
+        formData.append('target_object', state.obj || 'Biographical Info');
         if (standaloneValidationCsv) {
           formData.append('validation_report_csv', standaloneValidationCsv);
         }
+        if (allPrompts.length > 0) {
+          formData.append('custom_prompts_json', JSON.stringify(allPrompts));
+        }
+        if (combinedDynamicRulesToSend.length > 0) {
+          formData.append('dynamic_rules_json', JSON.stringify(combinedDynamicRulesToSend));
+        }
+        if (excludedValRules.length > 0) {
+          formData.append('excluded_validation_rules_json', JSON.stringify(excludedValRules));
+        }
+        formData.append('standard_rules_config_json', JSON.stringify(
+          standardRules.map(r => ({
+            code: r.code,
+            name: r.name,
+            description: r.description,
+            enabled: r.enabled && !standardRuleOverrides[r.code]
+          }))
+        ));
 
         res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/cleanser/upload-csv`, {
           method: 'POST',
@@ -471,6 +704,30 @@ export function Step6Cleanse() {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.detail || 'Cleanser failed');
 
+      const returnedDynRules = data.dynamic_rules || [];
+      const newlyCompiledCleanserRules = returnedDynRules.filter((r: any) =>
+        r && (r.source === 'cleanser_dynamic_rule' || r.phase === 'cleanser' || String(r.id).startsWith('DYNAMIC_CLS_'))
+      );
+      const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+      const newlyAddedRules = newlyCompiledCleanserRules.filter((r: any) => !existingIds.has(r.id));
+      const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
+
+      setSavedDynamicRules(combinedDynamicRules);
+      setSelectedDynamicRules((d) => {
+        const updated = { ...d };
+        newlyAddedRules.forEach((r: any) => {
+          if (r?.id && !(r.id in updated)) {
+            updated[r.id] = true;
+          }
+        });
+        return updated;
+      });
+
+      if (allPrompts.length > 0) {
+        setCustomPrompts([]);
+        setEditedStandardRulePrompts({});
+      }
+
       const fixesCount = (data.summary?.dynamic_fixes?.count || 0) + (data.summary?.validation_fixes?.count || 0) + (data.summary?.cleanser_fixes?.count || 0);
 
       dispatch({
@@ -479,6 +736,7 @@ export function Step6Cleanse() {
           cleaned: data.cleaned,
           cleansingSummary: data.summary || null,
           isCleansedSaved: false,
+          cleanserDynamicRules: combinedDynamicRules,
           stats: { ...(state.stats || {}), fixes: fixesCount },
         },
       });
@@ -522,21 +780,42 @@ export function Step6Cleanse() {
   };
 
   // Rule counters
-  const stdActiveCount = standardRules.filter(r => r.enabled).length;
+  const stdActiveCount = standardRules.filter(r => r.enabled && !standardRuleOverrides[r.code]).length;
   const valActiveCount = validationRules.filter(r => r.enabled).length;
-  const dynActiveCount = cleanserDynamicRules.filter(r => r.enabled).length;
 
   const filteredStandardRules = standardRules.filter(r =>
     !ruleSearchQuery || r.name.toLowerCase().includes(ruleSearchQuery.toLowerCase()) || r.description.toLowerCase().includes(ruleSearchQuery.toLowerCase())
   );
 
-  const filteredValidationRules = validationRules.filter(r =>
-    !ruleSearchQuery || r.rule_code.toLowerCase().includes(ruleSearchQuery.toLowerCase()) || r.field.toLowerCase().includes(ruleSearchQuery.toLowerCase()) || r.message.toLowerCase().includes(ruleSearchQuery.toLowerCase())
-  );
+  const filteredValidationRules = validationRules.filter(r => {
+    if (!ruleSearchQuery) return true;
+    const q = ruleSearchQuery.toLowerCase();
+    return (
+      r.rule_code.toLowerCase().includes(q) ||
+      (r.label && r.label.toLowerCase().includes(q)) ||
+      r.field.toLowerCase().includes(q) ||
+      r.message.toLowerCase().includes(q)
+    );
+  });
 
-  const filteredDynamicRules = cleanserDynamicRules.filter(r =>
-    !ruleSearchQuery || r.prompt.toLowerCase().includes(ruleSearchQuery.toLowerCase())
-  );
+  const filteredDynamicRules = savedDynamicRules.filter((r: any) => {
+    if (!r) return false;
+    // Strictly isolate Tab 3: never display Step 5 validation rules or Step 4 harmonize rules
+    const isVal = r.source === 'validation_dynamic_rule' || r.phase === 'validate' || String(r.id || '').startsWith('DYNAMIC_VAL_') || String(r.rule_code || '').startsWith('DYNAMIC_VAL_');
+    const isHarm = r.source === 'harmonization_dynamic_rule' || r.phase === 'harmonize' || String(r.id || '').startsWith('DYNAMIC_HARM_') || String(r.rule_code || '').startsWith('DYNAMIC_HARM_');
+    if (isVal || isHarm) return false;
+
+    if (!ruleSearchQuery) return true;
+    const q = ruleSearchQuery.toLowerCase();
+    return (
+      (r.label && String(r.label).toLowerCase().includes(q)) ||
+      (r.id && String(r.id).toLowerCase().includes(q)) ||
+      (r.description && String(r.description).toLowerCase().includes(q)) ||
+      (r.prompt && String(r.prompt).toLowerCase().includes(q))
+    );
+  });
+
+  const dynActiveCount = filteredDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false).length + customPrompts.length + Object.keys(editedStandardRulePrompts).length;
 
   const warningList = summary ? (Array.isArray(summary.warnings) ? summary.warnings : summary.warnings?.items || []) : [];
 
@@ -593,6 +872,16 @@ export function Step6Cleanse() {
                   {valRulesLoaded ? 'Reload' : 'Load Rules'}
                 </button>
               )}
+              {activeRuleTab === 'dynamic' && (
+                <button
+                  onClick={saveRulesToDB}
+                  className="px-2.5 py-1 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
+                  title="Save and compile dynamic rules to database"
+                >
+                  <Save className="w-3 h-3" />
+                  Save Rules
+                </button>
+              )}
             </CardHeader>
 
             {/* Rule Engine Tabs (Grid layout to fit sidebar perfectly) */}
@@ -615,7 +904,7 @@ export function Step6Cleanse() {
 
               <button
                 onClick={() => setActiveRuleTab('validation')}
-                title={`Validation Rules (${valActiveCount}/${validationRules.length} active)`}
+                title={`Validation Rules (${valActiveCount}/${filteredValidationRules.length} active)`}
                 className={`py-1.5 px-1 rounded-md text-[10.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                   activeRuleTab === 'validation'
                     ? 'bg-[var(--bg-primary)] text-teal-600 dark:text-teal-400 shadow-sm border border-[var(--border)]'
@@ -631,7 +920,7 @@ export function Step6Cleanse() {
 
               <button
                 onClick={() => setActiveRuleTab('dynamic')}
-                title={`Dynamic AI Rules (${dynActiveCount}/${cleanserDynamicRules.length} active)`}
+                title={`Dynamic AI Rules (${dynActiveCount} active)`}
                 className={`py-1.5 px-1 rounded-md text-[10.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                   activeRuleTab === 'dynamic'
                     ? 'bg-[var(--bg-primary)] text-violet-600 dark:text-violet-400 shadow-sm border border-[var(--border)]'
@@ -664,11 +953,12 @@ export function Step6Cleanse() {
                 <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                   {filteredStandardRules.map((rule) => {
                     const isEditing = editingRuleCode === rule.code;
+                    const isOverridden = !!standardRuleOverrides[rule.code];
                     return (
                       <div
                         key={rule.code}
                         className={`p-2.5 rounded-xl border transition-all ${
-                          rule.overridden
+                          isOverridden
                             ? 'border-amber-200 dark:border-amber-900/40 bg-amber-50/20 dark:bg-amber-950/10 opacity-75'
                             : rule.enabled
                             ? 'border-[var(--border)] bg-[var(--bg-tertiary)]/50'
@@ -712,17 +1002,17 @@ export function Step6Cleanse() {
                           <div className="flex items-start gap-2">
                             <input
                               type="checkbox"
-                              checked={rule.enabled && !rule.overridden}
+                              checked={rule.enabled && !isOverridden}
                               onChange={() => toggleStandardRule(rule.code)}
-                              disabled={rule.overridden}
+                              disabled={isOverridden}
                               className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--border)] text-violet-600 focus:ring-violet-500 cursor-pointer accent-violet-600 disabled:cursor-not-allowed"
-                              title={rule.overridden ? "Rule is overridden by Dynamic AI Prompt" : "Toggle rule execution"}
+                              title={isOverridden ? "Rule is overridden by Dynamic AI Prompt" : "Toggle rule execution"}
                             />
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span className={`text-[11px] font-bold truncate ${
-                                    rule.overridden
+                                    isOverridden
                                       ? 'text-amber-700 dark:text-amber-300 line-through'
                                       : rule.enabled
                                       ? 'text-emerald-600 dark:text-emerald-400'
@@ -730,14 +1020,14 @@ export function Step6Cleanse() {
                                   }`}>
                                     {rule.name}
                                   </span>
-                                  {rule.overridden && (
+                                  {isOverridden && (
                                     <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 text-[8px] font-bold uppercase tracking-wider shrink-0">
                                       Overridden
                                     </span>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-0.5 shrink-0">
-                                  {rule.overridden && (
+                                  {isOverridden && (
                                     <button
                                       onClick={() => restoreStandardRule(rule.code)}
                                       title="Restore original standard rule execution"
@@ -803,12 +1093,18 @@ export function Step6Cleanse() {
                           />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
-                              <span className={`text-[11px] font-bold ${rule.enabled ? 'text-teal-700 dark:text-teal-300' : 'text-[var(--text-tertiary)] line-through'}`}>
-                                {rule.rule_code}
+                              <span className={`text-[11px] font-bold truncate ${rule.enabled ? 'text-teal-700 dark:text-teal-300' : 'text-[var(--text-tertiary)] line-through'}`}>
+                                {rule.label || rule.rule_code}
                               </span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300">
-                                {rule.count} failing
-                              </span>
+                              {rule.count > 0 ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300 shrink-0 ml-1">
+                                  {rule.count} failing
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-400 border border-teal-200/50 dark:border-teal-800/50 shrink-0 ml-1">
+                                  active rule
+                                </span>
+                              )}
                             </div>
                             <div className="text-[10px] text-[var(--text-secondary)] font-mono mt-0.5">
                               Field: <strong className="text-[var(--text-primary)]">{rule.field}</strong>
@@ -830,98 +1126,180 @@ export function Step6Cleanse() {
                       type="text"
                       value={newDynamicPrompt}
                       onChange={(e) => setNewDynamicPrompt(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') addCleanserDynamicRule(); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleAddPrompt(); }}
                       placeholder="Enter custom AI cleansing prompt..."
                       className="flex-1 text-[10.5px] px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-violet-500"
                     />
                     <button
-                      onClick={addCleanserDynamicRule}
+                      onClick={handleAddPrompt}
                       className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-[10.5px] font-bold flex items-center gap-1 cursor-pointer transition-colors shrink-0"
                     >
                       <Plus className="w-3 h-3" /> Add
                     </button>
                   </div>
 
-                  <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
-                    {filteredDynamicRules.map((rule) => {
-                      const isEditing = editingDynamicId === rule.id;
-                      return (
-                        <div
-                          key={rule.id}
-                          className={`p-2.5 rounded-xl border transition-all ${
-                            rule.enabled
-                              ? 'border-violet-200 dark:border-violet-900/50 bg-violet-50/20 dark:bg-violet-950/10'
-                              : 'border-[var(--border)] bg-[var(--bg-tertiary)]/15 opacity-60'
-                          }`}
-                        >
-                          {isEditing ? (
-                            <div className="space-y-1.5">
-                              <input
-                                type="text"
-                                value={editDynamicPromptText}
-                                onChange={(e) => setEditDynamicPromptText(e.target.value)}
-                                className="w-full text-[10.5px] px-2 py-1 rounded border border-violet-400 bg-[var(--bg-primary)] text-[var(--text-primary)]"
-                              />
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  onClick={() => saveEditDynamicRule(rule.id)}
-                                  className="p-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer"
-                                >
-                                  <Check className="w-3 h-3" /> Save
-                                </button>
-                                <button
-                                  onClick={() => setEditingDynamicId(null)}
-                                  className="p-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--border)] text-[10px] flex items-center gap-0.5 cursor-pointer"
-                                >
-                                  <X className="w-3 h-3" /> Cancel
-                                </button>
+                  {/* Overridden Standard Rules Section */}
+                  {Object.keys(editedStandardRulePrompts).length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider px-1">
+                        <span>📝 Overridden Standard ({Object.keys(editedStandardRulePrompts).length})</span>
+                        <span className="text-[8px] font-bold bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 px-1.5 py-0.2 rounded-full">Will Compile</span>
+                      </div>
+                      {Object.entries(editedStandardRulePrompts).map(([stdCode, prompt]) => (
+                        <div key={stdCode} className="flex items-start justify-between p-2 rounded-lg border border-amber-200 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20 gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-amber-700 dark:text-amber-300 font-bold text-[10px]">{stdCode}</div>
+                            <div className="text-[var(--text-secondary)] text-[9.5px] mt-0.5 line-clamp-2">{prompt}</div>
+                          </div>
+                          <button
+                            onClick={() => restoreStandardRule(stdCode)}
+                            className="text-[var(--text-tertiary)] hover:text-red-500 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                            title="Revert and re-enable standard rule"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Pending Uncompiled Prompts Section */}
+                  {customPrompts.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider px-1">
+                        <span>💡 Pending Prompts ({customPrompts.length})</span>
+                        <span className="text-[8px] font-bold bg-violet-100 dark:bg-violet-900/40 text-violet-800 dark:text-violet-200 px-1.5 py-0.2 rounded-full">Uncompiled</span>
+                      </div>
+                      {customPrompts.map((prompt, idx) => {
+                        const isEditing = editingIndex === idx;
+                        return (
+                          <div key={idx} className="p-2 rounded-lg border border-violet-200 dark:border-violet-900/40 bg-violet-50/30 dark:bg-violet-950/10">
+                            {isEditing ? (
+                              <div className="space-y-1.5">
+                                <input
+                                  type="text"
+                                  value={editingText}
+                                  onChange={(e) => setEditingText(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditPrompt(idx); }}
+                                  className="w-full text-[10.5px] px-2 py-1 rounded border border-violet-400 bg-[var(--bg-primary)] text-[var(--text-primary)]"
+                                />
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => handleSaveEditPrompt(idx)}
+                                    className="p-1 px-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 text-[10px] font-bold flex items-center gap-0.5 cursor-pointer"
+                                  >
+                                    <Check className="w-3 h-3" /> Save
+                                  </button>
+                                  <button
+                                    onClick={() => { setEditingIndex(null); setEditingText(''); }}
+                                    className="p-1 rounded bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--border)] text-[10px] flex items-center gap-0.5 cursor-pointer"
+                                  >
+                                    <X className="w-3 h-3" /> Cancel
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-start gap-2">
-                              <input
-                                type="checkbox"
-                                checked={rule.enabled}
-                                onChange={() => toggleCleanserDynamicRule(rule.id)}
-                                className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--border)] text-violet-600 focus:ring-violet-500 cursor-pointer accent-violet-600"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-1">
-                                  <div className="flex-1 min-w-0">
-                                    {rule.id.startsWith('OVERRIDE_') && (
-                                      <div className="mb-0.5">
-                                        <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 text-[8px] font-bold uppercase tracking-wider">
-                                          ⚡ Overridden Standard
-                                        </span>
+                            ) : (
+                              <div className="flex items-start justify-between gap-1">
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[10px] text-[var(--text-primary)] font-medium leading-snug">{prompt}</div>
+                                </div>
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                  <button
+                                    onClick={() => handleStartEditPrompt(idx)}
+                                    title="Edit Prompt"
+                                    className="p-1 rounded text-[var(--text-tertiary)] hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 cursor-pointer transition-colors"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemovePrompt(idx)}
+                                    title="Remove Prompt"
+                                    className="p-1 rounded text-[var(--text-tertiary)] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer transition-colors"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Saved Dynamic Rules Section */}
+                  <div className="space-y-1.5">
+                    {savedDynamicRules.length > 0 && (
+                      <div className="flex items-center justify-between text-[10px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider px-1">
+                        <span>⚡ Saved Dynamic Rules ({savedDynamicRules.length})</span>
+                        <button
+                          onClick={handleClearAllDynamicRules}
+                          className="text-[9.5px] text-red-500 hover:text-red-600 font-semibold cursor-pointer"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                      {filteredDynamicRules.length === 0 && customPrompts.length === 0 && Object.keys(editedStandardRulePrompts).length === 0 ? (
+                        <div className="text-center py-6 text-[11px] text-[var(--text-tertiary)]">
+                          No dynamic cleansing rules defined yet. Add a custom prompt above.
+                        </div>
+                      ) : (
+                        filteredDynamicRules.map((rule: any) => {
+                          const isChecked = selectedDynamicRules[rule.id] !== false;
+                          return (
+                            <div
+                              key={rule.id}
+                              className={`p-2.5 rounded-xl border transition-all ${
+                                isChecked
+                                  ? 'border-violet-200 dark:border-violet-900/50 bg-violet-50/20 dark:bg-violet-950/10'
+                                  : 'border-[var(--border)] bg-[var(--bg-tertiary)]/15 opacity-60'
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => toggleSelectDynamicRule(rule.id)}
+                                  className="mt-0.5 h-3.5 w-3.5 rounded border-[var(--border)] text-violet-600 focus:ring-violet-500 cursor-pointer accent-violet-600"
+                                  title="Toggle dynamic rule execution"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between gap-1">
+                                    <div className="flex-1 min-w-0">
+                                      {rule.id.startsWith('OVERRIDE_') && (
+                                        <div className="mb-0.5">
+                                          <span className="px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 text-[8px] font-bold uppercase tracking-wider">
+                                            ⚡ Overridden Standard
+                                          </span>
+                                        </div>
+                                      )}
+                                      <div className={`text-[10.5px] font-bold truncate ${isChecked ? 'text-violet-700 dark:text-violet-300' : 'text-[var(--text-tertiary)] line-through'}`}>
+                                        {rule.label || rule.id}
                                       </div>
-                                    )}
-                                    <span className={`text-[10.5px] leading-snug ${rule.enabled ? 'text-[var(--text-primary)] font-medium' : 'text-[var(--text-tertiary)] line-through'}`}>
-                                      {rule.prompt}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-0.5 shrink-0">
-                                    <button
-                                      onClick={() => startEditDynamicRule(rule)}
-                                      title="Edit Prompt"
-                                      className="p-1 rounded text-[var(--text-tertiary)] hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 cursor-pointer transition-colors"
-                                    >
-                                      <Pencil className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => deleteCleanserDynamicRule(rule.id)}
-                                      title="Delete Rule"
-                                      className="p-1 rounded text-[var(--text-tertiary)] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer transition-colors"
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </button>
+                                      <div className="text-[10px] text-[var(--text-secondary)] mt-0.5 leading-snug">
+                                        {rule.description || rule.error_message || rule.prompt || 'Custom dynamic business rule'}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                      <button
+                                        onClick={() => deleteDynamicRule(rule.id)}
+                                        title="Delete Rule from database"
+                                        className="p-1 rounded text-[var(--text-tertiary)] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 cursor-pointer transition-colors"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

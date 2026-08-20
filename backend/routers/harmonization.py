@@ -751,12 +751,22 @@ def save_harmonized_data(req: SaveHarmonizedRequest):
             .eq("object_id", obj_id) \
             .execute()
         
+        tagged_dynamic_rules = [
+            {
+                **r,
+                "source": "harmonization_dynamic_rule",
+                "phase": "harmonize",
+                "id": r.get("id") if (r.get("id") and str(r.get("id")).startswith("DYNAMIC_HARM_")) else f"DYNAMIC_HARM_{r.get('id', uuid.uuid4().hex[:8])}"
+            } if isinstance(r, dict) else r
+            for r in (req.dynamic_rules or [])
+        ]
+
         stored_payload = {
             "rows": req.payload,
             "tables": req.tables or [],
             "custom_prompts": req.custom_prompts or [],
-            "dynamic_rules": req.dynamic_rules or [],
-        } if (req.tables or req.custom_prompts or req.dynamic_rules) else req.payload
+            "dynamic_rules": tagged_dynamic_rules,
+        } if (req.tables or req.custom_prompts or req.dynamic_rules is not None) else req.payload
 
         client.table("harmonized_data").insert({
             "project_id": req.project_id,
@@ -764,20 +774,23 @@ def save_harmonized_data(req: SaveHarmonizedRequest):
             "payload": stored_payload
         }).execute()
 
-        # Also persist dynamic_rules to the dynamic_rules table in Supabase!
+        # Update dynamic_rules table preserving other phase rules (validate/cleanser)
         if req.dynamic_rules is not None:
             try:
-                client.table("dynamic_rules") \
-                    .delete() \
-                    .eq("project_id", req.project_id) \
-                    .eq("object_id", obj_id) \
-                    .execute()
+                res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", obj_id).order("created_at", desc=True).limit(1).execute()
+                existing_rules = res_dr.data[0]["payload"] if (res_dr.data and isinstance(res_dr.data[0].get("payload"), list)) else []
+                other_rules = [
+                    r for r in existing_rules
+                    if isinstance(r, dict) and r.get("source") != "harmonization_dynamic_rule" and r.get("phase") != "harmonize" and not str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+                ]
+                combined_rules = other_rules + tagged_dynamic_rules
 
-                if req.dynamic_rules:
+                client.table("dynamic_rules").delete().eq("project_id", req.project_id).eq("object_id", obj_id).execute()
+                if combined_rules:
                     client.table("dynamic_rules").insert({
                         "project_id": req.project_id,
                         "object_id": obj_id,
-                        "payload": req.dynamic_rules
+                        "payload": combined_rules
                     }).execute()
             except Exception as de:
                 logger.warning(f"Could not persist dynamic_rules in database: {de}")
@@ -786,6 +799,73 @@ def save_harmonized_data(req: SaveHarmonizedRequest):
     except Exception as e:
         logger.exception("Save harmonized data failed")
         raise HTTPException(500, f"Failed to save data: {str(e)}")
+
+
+class SaveHarmonizeRulesRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: Optional[List[Dict[str, Any]]] = None
+
+
+@router.post("/harmonize/rules/save")
+def save_harmonize_dynamic_rules(req: SaveHarmonizeRulesRequest):
+    try:
+        client = supabase_service.get_client()
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+        if not res_obj.data:
+            res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+        if not res_obj.data:
+            raise HTTPException(400, detail=f"SuccessFactors object '{req.target_object}' not found.")
+        object_id = res_obj.data[0]["id"]
+
+        tagged_rules = [
+            {
+                **r,
+                "source": "harmonization_dynamic_rule",
+                "phase": "harmonize",
+                "id": r.get("id") if (r.get("id") and str(r.get("id")).startswith("DYNAMIC_HARM_")) else f"DYNAMIC_HARM_{r.get('id', uuid.uuid4().hex[:8])}"
+            } if isinstance(r, dict) else r
+            for r in (req.rules or [])
+        ]
+
+        # Update harmonized_data table payload if present so reload fetches the latest rules
+        res_harm = client.table("harmonized_data").select("id, payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+        if res_harm.data:
+            row_id = res_harm.data[0]["id"]
+            raw_payload = res_harm.data[0].get("payload") or {}
+            if isinstance(raw_payload, dict):
+                raw_payload["dynamic_rules"] = tagged_rules
+                client.table("harmonized_data").update({"payload": raw_payload}).eq("id", row_id).execute()
+            elif isinstance(raw_payload, list):
+                new_payload = {"rows": raw_payload, "dynamic_rules": tagged_rules}
+                client.table("harmonized_data").update({"payload": new_payload}).eq("id", row_id).execute()
+
+        # Update dynamic_rules table preserving other phase rules (validate/cleanser)
+        res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+        existing_rules = res_dr.data[0]["payload"] if (res_dr.data and isinstance(res_dr.data[0].get("payload"), list)) else []
+        other_rules = [
+            r for r in existing_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("validation_dynamic_rule", "cleanser_dynamic_rule")
+                or r.get("phase") in ("validate", "cleanser")
+                or str(r.get("id", "")).startswith("DYNAMIC_VAL_")
+                or str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+            )
+        ]
+        combined_rules = other_rules + tagged_rules
+
+        client.table("dynamic_rules").delete().eq("project_id", req.project_id).eq("object_id", object_id).execute()
+        if combined_rules:
+            client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": combined_rules
+            }).execute()
+
+        return {"status": "success", "message": "Harmonization dynamic rules saved successfully."}
+    except Exception as e:
+        logger.error(f"Failed to save dynamic rules in harmonize: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save dynamic rules: {str(e)}")
 
 
 @router.get("/harmonize/load/{project_id}")
@@ -806,17 +886,17 @@ def load_harmonized_data(project_id: str, target_object: Optional[str] = None):
         rows = []
         tables = []
         custom_prompts = []
-        dynamic_rules = []
+        dynamic_rules = None
         if isinstance(raw_payload, dict):
             rows = raw_payload.get("rows", [])
             tables = raw_payload.get("tables", [])
             custom_prompts = raw_payload.get("custom_prompts", [])
-            dynamic_rules = raw_payload.get("dynamic_rules", [])
+            dynamic_rules = raw_payload.get("dynamic_rules")
         elif isinstance(raw_payload, list):
             rows = raw_payload
 
-        # Also fallback to dynamic_rules table if not in payload
-        if not dynamic_rules:
+        # Only fallback to dynamic_rules table if not explicitly present in harmonized_data payload
+        if dynamic_rules is None:
             try:
                 obj_id = res.data[0].get("object_id")
                 if obj_id:
@@ -826,12 +906,25 @@ def load_harmonized_data(project_id: str, target_object: Optional[str] = None):
             except Exception:
                 pass
 
+        if not dynamic_rules:
+            dynamic_rules = []
+
+        # Filter strictly for harmonization dynamic rules
+        harmonize_rules = [
+            r for r in dynamic_rules
+            if isinstance(r, dict) and (
+                r.get("source") == "harmonization_dynamic_rule"
+                or r.get("phase") == "harmonize"
+                or str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+            )
+        ]
+
         return {
             "status": "success",
             "data": rows,
             "tables": tables,
             "custom_prompts": custom_prompts,
-            "dynamic_rules": dynamic_rules,
+            "dynamic_rules": harmonize_rules,
             "object_name": res.data[0].get("sf_objects", {}).get("name", target_object) if res.data[0].get("sf_objects") else target_object
         }
     except Exception as e:

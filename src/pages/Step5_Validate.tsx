@@ -45,8 +45,8 @@ export function Step5Validate() {
   const [openActiveRulesAccordion, setOpenActiveRulesAccordion] = useState(false);
   const [openResultsAccordion, setOpenResultsAccordion] = useState(false);
 
-  // Dynamic Rules State
-  const [customPrompts, setCustomPrompts] = useState<string[]>(state.customPrompts || []);
+  // Dynamic Rules State (Isolated to Validate)
+  const [customPrompts, setCustomPrompts] = useState<string[]>(state.validationCustomPrompts || state.customPrompts || []);
   const [editedStandardRulePrompts, setEditedStandardRulePrompts] = useState<Record<string, string>>({}); // standardRuleId -> prompt text
   const [newPromptInput, setNewPromptInput] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -68,9 +68,9 @@ export function Step5Validate() {
   const [standardEditingId, setStandardEditingId] = useState<string | null>(null);
   const [standardEditLabel, setStandardEditLabel] = useState('');
   const [standardEditDesc, setStandardEditDesc] = useState('');
-  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.dynamicRules || []);
+  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.validationDynamicRules || []);
   const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
-    Object.fromEntries((state.dynamicRules || []).map((r) => [r.id, true]))
+    Object.fromEntries((state.validationDynamicRules || []).map((r) => [r.id, true]))
   );
   // Track which standard rule is overridden by which dynamic rule (standardRuleId -> dynamicRuleId)
   const [standardRuleOverrides, setStandardRuleOverrides] = useState<Record<string, string>>({});
@@ -82,7 +82,7 @@ export function Step5Validate() {
     if (!state.projectId) {
       setSavedDynamicRules([]);
       setSelectedDynamicRules({});
-      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+      dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: [] });
       return;
     }
 
@@ -95,7 +95,7 @@ export function Step5Validate() {
           const loadedRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
           
           setSavedDynamicRules(loadedRules);
-          dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
+          dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: loadedRules });
           setSelectedDynamicRules(
             Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
           );
@@ -121,14 +121,14 @@ export function Step5Validate() {
     if (!newPromptInput.trim()) return;
     const updated = [...customPrompts, newPromptInput.trim()];
     setCustomPrompts(updated);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
+    dispatch({ type: 'SET_FIELD', field: 'validationCustomPrompts', value: updated });
     setNewPromptInput('');
   };
 
   const handleRemovePrompt = (index: number) => {
     const updated = customPrompts.filter((_, i) => i !== index);
     setCustomPrompts(updated);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
+    dispatch({ type: 'SET_FIELD', field: 'validationCustomPrompts', value: updated });
     if (editingIndex === index) {
       setEditingIndex(null);
       setEditingText('');
@@ -145,7 +145,7 @@ export function Step5Validate() {
     const updated = [...customPrompts];
     updated[index] = editingText.trim();
     setCustomPrompts(updated);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
+    dispatch({ type: 'SET_FIELD', field: 'validationCustomPrompts', value: updated });
     setEditingIndex(null);
     setEditingText('');
   };
@@ -267,6 +267,7 @@ export function Step5Validate() {
         updates: {
           validated: data.validated,
           validationReport: data.report,
+          validationDynamicRules: combinedDynamicRules,
           dynamicRules: combinedDynamicRules,
           stats: { ...state.stats, errors: data.stats.errors, warns: data.stats.warns, passed: data.stats.passed },
         },
@@ -286,7 +287,7 @@ export function Step5Validate() {
       // Clear compiled custom prompts and edited standard prompts so they don't linger or duplicate
       if (allPrompts.length > 0) {
         setCustomPrompts([]);
-        dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+        dispatch({ type: 'SET_FIELD', field: 'validationCustomPrompts', value: [] });
         setEditedStandardRulePrompts({});
       }
 
@@ -335,6 +336,7 @@ export function Step5Validate() {
   const deleteDynamicRule = async (rid: string) => {
     const remaining = savedDynamicRules.filter((r) => r.id !== rid);
     setSavedDynamicRules(remaining);
+    dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: remaining });
     dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: remaining });
     setSelectedDynamicRules((d) => {
       const updated = { ...d };
@@ -376,6 +378,7 @@ export function Step5Validate() {
 
   const handleClearAllDynamicRules = async () => {
     setSavedDynamicRules([]);
+    dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: [] });
     dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
     setSelectedDynamicRules({});
     if (state.projectId) {
@@ -406,18 +409,11 @@ export function Step5Validate() {
   }, [state.mapping]);
 
   const toggleSelectDynamicRule = (rid: string) => {
-    setSelectedDynamicRules((d) => {
-      const nextState = !(d[rid] !== false);
-      const updatedDict = { ...d, [rid]: nextState };
-
-      setSavedDynamicRules((prevRules) => {
-        const updatedRules = prevRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
-        dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: updatedRules });
-        return updatedRules;
-      });
-
-      return updatedDict;
-    });
+    const nextState = !(selectedDynamicRules[rid] !== false);
+    setSelectedDynamicRules((prev) => ({ ...prev, [rid]: nextState }));
+    const updatedRules = savedDynamicRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
+    setSavedDynamicRules(updatedRules);
+    dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: updatedRules });
   };
 
   const saveRulesToDB = async () => {
@@ -469,10 +465,11 @@ export function Step5Validate() {
       }
       // update local saved rules state and migration store
       setSavedDynamicRules(payloadRules || []);
+      dispatch({ type: 'SET_FIELD', field: 'validationDynamicRules', value: payloadRules || [] });
       dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: payloadRules || [] });
       // clear pending prompts
       setCustomPrompts([]);
-      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+      dispatch({ type: 'SET_FIELD', field: 'validationCustomPrompts', value: [] });
       setEditedStandardRulePrompts({});
       hideLoad();
       toast('Rules saved to database successfully!', 'ok');
@@ -520,7 +517,7 @@ export function Step5Validate() {
           project_id: state.projectId,
           target_object: state.obj,
           payload: errorReport,
-          dynamic_rules: state.dynamicRules || []
+          dynamic_rules: state.validationDynamicRules || state.dynamicRules || []
         })
       });
       

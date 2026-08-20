@@ -25,6 +25,20 @@
       "severity": "ERROR",
       "source": "validation_dynamic_rule",
       "target_object": "Biographical Info"
+    },
+    {
+      "created_at": "2026-08-20T10:22:59.061446+00:00",
+      "description": "Ok to rehire should be of yes or no only, change others into it",
+      "error_message": "Ok to rehire must be either 'yes' or 'no'",
+      "field": "okToRehire",
+      "id": "BIO_1",
+      "label": "Ok to Rehire Validation",
+      "priority": 100,
+      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
+      "python_code": "str(row.get('okToRehire', '')).strip().lower() not in ['yes', 'no']",
+      "severity": "ERROR",
+      "source": "cleanser_dynamic_rule",
+      "target_object": "Biographical Info"
     }
   ],
   "version": "1.0"

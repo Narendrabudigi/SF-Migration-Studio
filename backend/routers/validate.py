@@ -333,19 +333,42 @@ def save_validation(req: SaveValidationRequest):
             "payload": req.payload
         }).execute()
 
-        # Save dynamic rules to database if provided
+        # Save dynamic rules to database if provided, preserving other phase rules
         if req.dynamic_rules is not None:
+            tagged_val_rules = [
+                {
+                    **r,
+                    "source": "validation_dynamic_rule",
+                    "phase": "validate",
+                    "id": r.get("id") or f"DYNAMIC_VAL_{uuid.uuid4().hex[:8]}"
+                } if isinstance(r, dict) else r
+                for r in (req.dynamic_rules or [])
+            ]
+
+            res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+            existing_rules = res_dr.data[0]["payload"] if (res_dr.data and isinstance(res_dr.data[0].get("payload"), list)) else []
+            other_rules = [
+                r for r in existing_rules
+                if isinstance(r, dict) and (
+                    r.get("source") in ("harmonization_dynamic_rule", "cleanser_dynamic_rule")
+                    or r.get("phase") in ("harmonize", "cleanser")
+                    or str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+                    or str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+                )
+            ]
+            combined_rules = other_rules + tagged_val_rules
+
             client.table("dynamic_rules") \
                 .delete() \
                 .eq("project_id", req.project_id) \
                 .eq("object_id", object_id) \
                 .execute()
 
-            if req.dynamic_rules:
+            if combined_rules:
                 client.table("dynamic_rules").insert({
                     "project_id": req.project_id,
                     "object_id": object_id,
-                    "payload": req.dynamic_rules
+                    "payload": combined_rules
                 }).execute()
         
         return {"status": "success", "message": "Validation and dynamic rules saved to database."}
@@ -372,7 +395,31 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
             raise HTTPException(400, detail=f"SuccessFactors object '{req.target_object}' not found.")
         object_id = res_obj.data[0]["id"]
 
-        # Remove previous dynamic rules for this project/object
+        # Tag validation rules
+        tagged_rules = [
+            {
+                **r,
+                "source": "validation_dynamic_rule",
+                "phase": "validate",
+                "id": r.get("id") or f"DYNAMIC_VAL_{uuid.uuid4().hex[:8]}"
+            } if isinstance(r, dict) else r
+            for r in (req.rules or [])
+        ]
+
+        # Preserve other phase rules (harmonize / cleanser) in dynamic_rules table
+        res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+        existing_rules = res_dr.data[0]["payload"] if (res_dr.data and isinstance(res_dr.data[0].get("payload"), list)) else []
+        other_rules = [
+            r for r in existing_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("harmonization_dynamic_rule", "cleanser_dynamic_rule")
+                or r.get("phase") in ("harmonize", "cleanser")
+                or str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+                or str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+            )
+        ]
+        combined_rules = other_rules + tagged_rules
+
         del_res = client.table("dynamic_rules") \
             .delete() \
             .eq("project_id", req.project_id) \
@@ -380,12 +427,11 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
             .execute()
 
         insert_resp = None
-        # Insert new rules if provided
-        if req.rules:
+        if combined_rules:
             insert_resp = client.table("dynamic_rules").insert({
                 "project_id": req.project_id,
                 "object_id": object_id,
-                "payload": req.rules
+                "payload": combined_rules
             }).execute()
 
         # ALSO persist to local JSON store
@@ -394,7 +440,7 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
             from services.cleanser_dynamic_rules import replace_rules_for_object, DEFAULT_STORE_PATH
 
             # Replace in local file store (backend/output/cleanser_dynamic_rules.json by default)
-            upserted = replace_rules_for_object(req.rules or [], project_id=req.project_id, target_object=req.target_object)
+            upserted = replace_rules_for_object(tagged_rules, project_id=req.project_id, target_object=req.target_object)
 
             # Attempt upload to Supabase Storage bucket named 'dynamic_rules' (best-effort)
             try:
@@ -421,7 +467,7 @@ def save_dynamic_rules(req: SaveDynamicRulesRequest):
             storage_result = {"error": f"persist-to-local failed: {str(e)}"}
 
         # Provide diagnostic info to the client so frontend can show success/failure
-        resp_payload = {"status": "success", "message": "Dynamic rules saved to database."}
+        resp_payload = {"status": "success", "message": "Validation dynamic rules saved to database."}
         try:
             resp_payload["deleted"] = del_res.data if hasattr(del_res, 'data') else None
         except Exception:
@@ -467,10 +513,25 @@ def load_saved_validation(project_id: str, target_object: Optional[str] = None):
         except Exception:
             pass
 
+        # Filter strictly for validation dynamic rules (exclude harmonize/cleanser rules)
+        val_rules = [
+            r for r in dynamic_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("validation_dynamic_rule", "validate")
+                or r.get("phase") == "validate"
+                or (
+                    r.get("source") not in ("harmonization_dynamic_rule", "cleanser_dynamic_rule")
+                    and r.get("phase") not in ("harmonize", "cleanser")
+                    and not str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+                    and not str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+                )
+            )
+        ]
+
         return {
             "status": "success",
             "report": report_payload,
-            "dynamic_rules": dynamic_rules,
+            "dynamic_rules": val_rules,
         }
     except Exception as e:
         logger.error(f"Failed to load validation: {str(e)}")

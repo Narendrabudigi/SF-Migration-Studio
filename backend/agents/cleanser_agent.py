@@ -1192,6 +1192,36 @@ def apply_fill_empty_fields(df: pd.DataFrame, summary: CleaningSummary, rule_cod
                 _set_value(df, idx, field_name, "", summary, "cleanser", rule_code)
 
 
+def fix_gender_code(
+    df: pd.DataFrame,
+    issue: dict[str, Any],
+    summary: CleaningSummary,
+    rule_code: str,
+) -> None:
+    field_name = issue.get("field") or issue.get("field_name") or "GENDER"
+    idx = _row_index(issue.get("row") or 1)
+    if idx < 0 or idx >= len(df.index):
+        return
+    for col in _resolve_target_columns(df, field_name, [issue], "GENDER"):
+        if col in df.columns:
+            old_val = _stringify(df.at[idx, col])
+            v_clean = old_val.strip().lower()
+            if v_clean in {"f", "female", "woman", "w", "girl"}:
+                new_val = "F"
+            elif v_clean in {"m", "male", "man", "boy"}:
+                new_val = "M"
+            elif v_clean.startswith("f"):
+                new_val = "F"
+            elif v_clean.startswith("m"):
+                new_val = "M"
+            elif "not specified" in v_clean or "unknown" in v_clean or "u" in v_clean:
+                new_val = "M"
+            else:
+                new_val = "M"
+            if old_val != new_val:
+                _set_value(df, idx, col, new_val, summary, "validation", rule_code)
+
+
 # =============================================================================
 # Rule Registries
 # =============================================================================
@@ -1208,6 +1238,8 @@ VALIDATION_FIXERS: dict[str, ValidationFixer] = {
     "VAL_DATE_YYYYMMDD_FORMAT": fix_date_yyyymmdd_format,
     "VAL_FIELD_LENGTH": fix_field_length,
     "VAL_PAYMENT_TERMS_FORMAT": fix_payment_terms_format,
+    "VAL_GENDER_CODE": fix_gender_code,
+    "VAL_GENDER_FORMAT": fix_gender_code,
 }
 
 # Production Validation rule codes are the source of truth. The VAL_* keys are
@@ -1222,6 +1254,10 @@ VALIDATION_FIXERS.update({
     "DATE_FORMAT": fix_date_yyyymmdd_format,
     "FIELD_LENGTH": fix_field_length,
     "PAYMENT_TERMS": fix_payment_terms_format,
+    "GENDER_CODE": fix_gender_code,
+    "GENDER_FORMAT": fix_gender_code,
+    "Gender Format": fix_gender_code,
+    "GENDER": fix_gender_code,
 })
 
 CLEANSER_RULES: list[tuple[str, CleanserRule]] = [
@@ -1277,7 +1313,7 @@ def _issue_field(issue: dict[str, Any]) -> str:
 def _is_dynamic_issue(issue: dict[str, Any]) -> bool:
     rule_code = _issue_rule_code(issue)
     rule_type = _clean_key(issue.get("rule_type") or issue.get("Rule Type"))
-    return rule_code.startswith("DYNAMIC_") or "DYNAMIC" in rule_type
+    return rule_code.startswith("DYNAMIC_") or rule_code.startswith("DYN_") or "DYNAMIC" in rule_type or bool(issue.get("is_dynamic"))
 
 
 def _dynamic_rule_field(rule: dict[str, Any]) -> str:
@@ -1285,7 +1321,7 @@ def _dynamic_rule_field(rule: dict[str, Any]) -> str:
 
 
 def _dynamic_rule_id(rule: dict[str, Any]) -> str:
-    return _clean_key(rule.get("id") or rule.get("rule_code"))
+    return _clean_key(rule.get("id") or rule.get("rule_code") or rule.get("label") or rule.get("name"))
 
 
 def _issue_group_key(issue: dict[str, Any]) -> tuple[str, str, str]:
@@ -1310,6 +1346,53 @@ def _cleanser_rule_conflicts(dynamic_fields: set[str], rule_code: str) -> bool:
     return bool(dynamic_fields and target_fields and dynamic_fields.intersection(target_fields))
 
 
+def _eval_python_condition(code: str, row: dict[str, Any]) -> bool:
+    if not code or str(code).strip() in ("", "False", "None"):
+        return False
+    try:
+        allowed_globals = {
+            "__builtins__": None,
+            "str": str,
+            "len": len,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "re": re,
+            "abs": abs,
+            "isinstance": isinstance,
+            "any": any,
+            "all": all,
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "sorted": sorted,
+            "map": map,
+            "filter": filter,
+        }
+        lower_row = {str(k).lower(): v for k, v in row.items()}
+        class RowWrapper(dict):
+            def get(self, k, default=""):
+                if k in self:
+                    return dict.get(self, k, default)
+                kl = str(k).lower()
+                if kl in lower_row:
+                    return lower_row[kl]
+                for orig_k, val in self.items():
+                    if str(orig_k).replace("-", "_").lower() == kl.replace("-", "_") or str(orig_k).replace("_", "-").lower() == kl.replace("_", "-"):
+                        return val
+                return default
+            def __getitem__(self, k):
+                return self.get(k)
+        res = eval(code, allowed_globals, {"row": RowWrapper(row)})
+        return bool(res)
+    except Exception:
+        return False
+
+
 def build_cleanser_execution_plan(
     validation_report: dict[str, Any] | None,
     *,
@@ -1318,6 +1401,7 @@ def build_cleanser_execution_plan(
     dynamic_rules: list[dict[str, Any]] | None = None,
     dynamic_rule_store_path: str | Path | None = None,
     cleanser_rules: list[tuple[str, CleanserRule]] | None = None,
+    df: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """
     Build a deterministic rule-resolution plan without modifying data.
@@ -1327,19 +1411,6 @@ def build_cleanser_execution_plan(
     function intentionally does not execute dynamic fixers, call an LLM, or
     change standard rule implementations.
     """
-    issues = [
-        dict(issue)
-        for issue in (validation_report or {}).get("issues", [])
-        if isinstance(issue, dict)
-    ]
-    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-    for issue in issues:
-        grouped.setdefault(_issue_group_key(issue), []).append(issue)
-
-    issue_groups = [_issue_group_to_dict(key, value) for key, value in sorted(grouped.items())]
-    dynamic_issue_groups = [group for group in issue_groups if group["scope"] == "dynamic"]
-    standard_issue_groups = [group for group in issue_groups if group["scope"] == "standard_validation"]
-
     stored_dynamic_rules = dynamic_rules
     if stored_dynamic_rules is None:
         stored_dynamic_rules = get_relevant_rules_for_cleanser(
@@ -1347,6 +1418,82 @@ def build_cleanser_execution_plan(
             target_object=target_object,
             store_path=dynamic_rule_store_path,
         )
+
+    allowed_dynamic_ids = set()
+    if stored_dynamic_rules is not None:
+        for r in stored_dynamic_rules:
+            if isinstance(r, dict):
+                for k in ("id", "rule_code", "label", "name"):
+                    val = r.get(k)
+                    if val:
+                        allowed_dynamic_ids.add(_clean_key(val))
+                        allowed_dynamic_ids.add(str(val))
+                        allowed_dynamic_ids.add(str(val).strip().lower())
+    else:
+        allowed_dynamic_ids = None
+
+    raw_issues = [
+        dict(issue)
+        for issue in (validation_report or {}).get("issues", [])
+        if isinstance(issue, dict)
+    ]
+    issues = []
+    for issue in raw_issues:
+        if _is_dynamic_issue(issue):
+            # Only keep dynamic issues for currently active dynamic rules!
+            if allowed_dynamic_ids is not None:
+                code = _issue_rule_code(issue)
+                raw_code = str(issue.get("rule_code") or issue.get("rule") or issue.get("Rule Code") or "")
+                if code not in allowed_dynamic_ids and raw_code not in allowed_dynamic_ids and raw_code.strip().lower() not in allowed_dynamic_ids:
+                    continue  # Stale dynamic issue from a deleted or deselected dynamic rule
+        issues.append(issue)
+
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for issue in issues:
+        grouped.setdefault(_issue_group_key(issue), []).append(issue)
+
+    issue_groups = [_issue_group_to_dict(key, value) for key, value in sorted(grouped.items())]
+
+    # If df is provided and there are stored dynamic rules without issue groups, evaluate them against df
+    if df is not None and not df.empty and stored_dynamic_rules:
+        for rule in stored_dynamic_rules:
+            rule_id = _dynamic_rule_id(rule)
+            field_name = _dynamic_rule_field(rule)
+            has_group = any(
+                (rule_id and g.get("rule_code") == rule_id)
+                for g in issue_groups
+            )
+            code = rule.get("python_code") or rule.get("code")
+            if not has_group and code:
+                eval_issues = []
+                for row_idx, row_dict in enumerate(df.to_dict(orient="records")):
+                    if _eval_python_condition(code, row_dict):
+                        raw_val = row_dict.get(field_name, "")
+                        if not raw_val and field_name:
+                            for k, v in row_dict.items():
+                                if str(k).lower() == field_name.lower() or _field_key(str(k)) == _field_key(field_name):
+                                    raw_val = v
+                                    break
+                        eval_issues.append({
+                            "rule_code": rule_id,
+                            "rule": rule_id,
+                            "rule_type": "dynamic",
+                            "field": field_name or "GENERAL",
+                            "field_name": field_name or "GENERAL",
+                            "row": row_idx + 1,
+                            "row_number": row_idx + 1,
+                            "row_index": row_idx,
+                            "invalid_value": raw_val,
+                            "message": rule.get("description") or rule.get("error_message") or rule.get("label") or "Dynamic rule violation",
+                            "reason": rule.get("description") or rule.get("error_message") or rule.get("label") or "Dynamic rule violation",
+                            "scope": "dynamic"
+                        })
+                if eval_issues:
+                    group_dict = _issue_group_to_dict(("dynamic", rule_id, field_name or "GENERAL"), eval_issues)
+                    issue_groups.append(group_dict)
+
+    dynamic_issue_groups = [group for group in issue_groups if group["scope"] == "dynamic"]
+    standard_issue_groups = [group for group in issue_groups if group["scope"] == "standard_validation"]
 
     dynamic_fields = {
         field
@@ -1862,7 +2009,7 @@ SAFE_DYNAMIC_BUILTINS = {
 }
 
 
-def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict[str, Any]] | None = None) -> list[str]:
+def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict[str, Any]] | None = None, description: str = "") -> list[str]:
     cols = list(df.columns)
     if not cols:
         return []
@@ -1873,9 +2020,10 @@ def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict
 
     # 2. Case-insensitive / clean key match
     clean_target = _field_key(field_name) if field_name else ""
-    matched = [c for c in cols if _field_key(c) == clean_target]
-    if matched:
-        return matched
+    if clean_target:
+        matched = [c for c in cols if _field_key(c) == clean_target]
+        if matched:
+            return matched
 
     # 3. If field_name is MULTIPLE or GENERAL, inspect issue list for specific fields
     if field_name in ("MULTIPLE", "GENERAL", "") and issues:
@@ -1888,7 +2036,14 @@ def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict
         if resolved:
             return list(resolved)
 
-    # 4. Partial substring matching (e.g. "Employee External ID" vs "person_id_external" or "employee_id")
+    # 4. Check if any dataframe column is mentioned in the description / prompt
+    if description:
+        desc_clean = _clean_key(description)
+        matched_from_desc = [c for c in cols if _field_key(c) in desc_clean or c.lower() in description.lower()]
+        if matched_from_desc:
+            return matched_from_desc
+
+    # 5. Partial substring matching (e.g. "Employee External ID" vs "person_id_external" or "employee_id")
     target_lower = (field_name or "").lower()
     if "id" in target_lower or "external" in target_lower:
         id_cols = [c for c in cols if "id" in c.lower() or "external" in c.lower() or "kunnr" in c.lower() or "lifnr" in c.lower()]
@@ -1908,22 +2063,26 @@ def _apply_deterministic_dynamic_fallback(
 ) -> int:
     """
     Deterministic fallback engine for dynamic validation rules when LLM generation
-    is unavailable or fails. Matches common rule intents (numeric, uppercase, trim, date)
-    and applies clean fixes directly.
+    is unavailable or fails. Matches common rule intents (yes/no, boolean, uppercase,
+    lowercase, titlecase, numeric, trim, date) and applies clean fixes directly.
     """
     desc_clean = _clean_key(description)
     total_fixes = 0
 
-    resolved_cols = _resolve_target_columns(df, field_name, issues)
+    resolved_cols = _resolve_target_columns(df, field_name, issues, description)
 
     # Rule intent heuristics
-    is_numeric_rule = any(kw in desc_clean for kw in ["NUMERIC", "DIGIT", "NUMBER", "INTEGER", "ONLY NUMBERS"])
-    is_uppercase_rule = any(kw in desc_clean for kw in ["UPPERCASE", "CAPITAL", "UPPER"])
+    is_yes_no_rule = any(kw in desc_clean for kw in ["YES OR NO", "YES/NO", "YES", "NO", "BOOLEAN", "TRUE OR FALSE", "TRUE/FALSE", "Y OR N", "Y/N"])
+    is_gender_rule = any(kw in desc_clean for kw in ["GENDER", "M OR F", "M/F", "MALE OR FEMALE", "MALE/FEMALE", "TRANSFORMS FEMALE TO F", "M OR F ONLY", "IN M OR F", "GENDER FORMAT"]) or any(kw in _clean_key(rule_code) for kw in ["GENDER"]) or any(kw in _clean_key(field_name) for kw in ["GENDER"])
+    is_uppercase_rule = any(kw in desc_clean for kw in ["UPPERCASE", "CAPITAL", "UPPER LETTERS", "IN UPPER"])
+    is_lowercase_rule = any(kw in desc_clean for kw in ["LOWERCASE", "SMALL LETTERS", "IN LOWER"])
+    is_titlecase_rule = any(kw in desc_clean for kw in ["TITLECASE", "PROPER CASE", "CAPITALIZE", "CAPITALISE"])
     is_trim_rule = any(kw in desc_clean for kw in ["SPACE", "WHITESPACE", "TRIM", "PADDING"])
     is_date_rule = any(kw in desc_clean for kw in ["DATE", "YYYYMMDD", "FORMAT"])
+    is_numeric_rule = any(kw in desc_clean for kw in ["NUMERIC", "DIGIT", "INTEGER", "PAD NUMERIC", "ONLY NUMBERS"])
 
-    if not (is_numeric_rule or is_uppercase_rule or is_trim_rule or is_date_rule):
-        if "ID" in desc_clean or "CODE" in desc_clean or rule_code.startswith("DYNAMIC_"):
+    if not (is_yes_no_rule or is_gender_rule or is_uppercase_rule or is_lowercase_rule or is_titlecase_rule or is_trim_rule or is_date_rule or is_numeric_rule):
+        if "ID" in desc_clean or "CODE" in desc_clean:
             is_numeric_rule = True
         else:
             return 0
@@ -1941,7 +2100,7 @@ def _apply_deterministic_dynamic_fallback(
             continue
 
         issue_field = issue.get("field") or issue.get("field_name")
-        target_cols = _resolve_target_columns(df, issue_field, None) if issue_field and issue_field not in ("MULTIPLE", "GENERAL") else resolved_cols
+        target_cols = _resolve_target_columns(df, issue_field, None, description) if issue_field and issue_field not in ("MULTIPLE", "GENERAL") else resolved_cols
 
         if not target_cols:
             continue
@@ -1952,14 +2111,44 @@ def _apply_deterministic_dynamic_fallback(
             old_val = _stringify(df.at[row_idx, col])
             new_val = old_val
 
-            if is_numeric_rule:
+            if is_gender_rule:
+                v_clean = old_val.strip().lower()
+                if v_clean in {"f", "female", "woman", "w", "girl"}:
+                    new_val = "F"
+                elif v_clean in {"m", "male", "man", "boy"}:
+                    new_val = "M"
+                elif v_clean.startswith("f"):
+                    new_val = "F"
+                elif v_clean.startswith("m"):
+                    new_val = "M"
+                elif "not specified" in v_clean or "unknown" in v_clean or "u" in v_clean:
+                    new_val = "M" if "m or f" in desc_clean.lower() else "U"
+                else:
+                    new_val = "M" if "m" in desc_clean.lower() else "F"
+            elif is_yes_no_rule:
+                v_clean = old_val.strip().lower()
+                if v_clean in {"y", "yes", "true", "t", "1", "yes.", "y."}:
+                    new_val = "Yes"
+                elif v_clean in {"n", "no", "false", "f", "0", "no.", "n."}:
+                    new_val = "No"
+                elif v_clean.startswith("y"):
+                    new_val = "Yes"
+                elif v_clean.startswith("n"):
+                    new_val = "No"
+                else:
+                    new_val = "Yes" if "yes" in desc_clean.lower() else "No"
+            elif is_uppercase_rule:
+                new_val = old_val.upper()
+            elif is_lowercase_rule:
+                new_val = old_val.lower()
+            elif is_titlecase_rule:
+                new_val = old_val.title()
+            elif is_trim_rule:
+                new_val = old_val.strip()
+            elif is_numeric_rule:
                 cleaned_digits = re.sub(r"\D", "", old_val)
                 if cleaned_digits:
                     new_val = cleaned_digits
-            elif is_uppercase_rule:
-                new_val = old_val.upper()
-            elif is_trim_rule:
-                new_val = old_val.strip()
             elif is_date_rule:
                 norm_d = _normalize_date(old_val)
                 if norm_d:
@@ -2241,9 +2430,21 @@ def apply_validation_fixes(
         if not _has_field(df, field_name):
             summary.warnings.append(f"Skipped issue for missing field {field_name}: {issue}")
             continue
-        fixer = VALIDATION_FIXERS.get(rule_code)
+        fixer = VALIDATION_FIXERS.get(rule_code) or VALIDATION_FIXERS.get(_clean_key(rule_code))
         if fixer is None:
-            summary.warnings.append(f"No validation fixer registered for {rule_code}; skipped row {row_number}.")
+            reason = str(issue.get("reason") or issue.get("message") or rule_code)
+            fallback_applied = _apply_deterministic_dynamic_fallback(
+                df,
+                rule_code=rule_code,
+                field_name=field_name,
+                description=reason,
+                issues=[issue],
+                summary=summary,
+            )
+            if fallback_applied > 0:
+                summary.add_rule(rule_code)
+            else:
+                summary.warnings.append(f"No validation fixer registered for {rule_code}; skipped row {row_number}.")
             continue
         summary.add_rule(rule_code)
         fixer(df, issue, summary, rule_code)
@@ -2339,6 +2540,7 @@ def run_cleanser(
         target_object=target_object,
         dynamic_rules=dynamic_rules,
         dynamic_rule_store_path=dynamic_rule_store_path,
+        df=df,
     )
     summary.dynamic_fixer_generation = generate_dynamic_fixers_from_plan(summary.execution_plan)
 

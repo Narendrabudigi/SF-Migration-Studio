@@ -662,14 +662,14 @@ export function Step4Harmonize() {
   const [ruleConfig, setRuleConfig] = useState<Record<string, RuleItemConfig>>({ ...DEFAULT_RULE_CONFIG });
   const [expandedRuleKey, setExpandedRuleKey] = useState<string | null>(null);
 
-  // Dynamic AI Rules
-  const [customPrompts, setCustomPrompts] = useState<string[]>(state.customPrompts || []);
+  // Dynamic AI Rules (Isolated to Harmonize)
+  const [customPrompts, setCustomPrompts] = useState<string[]>(state.harmonizeCustomPrompts || []);
   const [newPromptInput, setNewPromptInput] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingText, setEditingText] = useState('');
-  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.dynamicRules || []);
+  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.harmonizeDynamicRules || []);
   const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
-    Object.fromEntries((state.dynamicRules || []).map((r: any) => [r.id, true]))
+    Object.fromEntries((state.harmonizeDynamicRules || []).map((r: any) => [r.id, true]))
   );
 
   const dedupeRules = (rules: any[]) => {
@@ -689,7 +689,7 @@ export function Step4Harmonize() {
     if (!state.projectId) {
       setSavedDynamicRules([]);
       setSelectedDynamicRules({});
-      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+      dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: [] });
       return;
     }
 
@@ -703,7 +703,7 @@ export function Step4Harmonize() {
           const loadedRules = dedupeRules(rawDynRules);
           
           setSavedDynamicRules(loadedRules);
-          dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: loadedRules });
+          dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: loadedRules });
           setSelectedDynamicRules(
             Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
           );
@@ -722,7 +722,7 @@ export function Step4Harmonize() {
             }
             if (data.custom_prompts && Array.isArray(data.custom_prompts)) {
               setCustomPrompts(data.custom_prompts);
-              dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: data.custom_prompts });
+              dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: data.custom_prompts });
             }
             if (data.tables && data.tables.length > 0) {
               dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
@@ -744,14 +744,14 @@ export function Step4Harmonize() {
     if (!newPromptInput.trim()) return;
     const next = [...customPrompts, newPromptInput.trim()];
     setCustomPrompts(next);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: next });
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
     setNewPromptInput('');
   };
 
   const handleRemovePrompt = (index: number) => {
     const next = customPrompts.filter((_, i) => i !== index);
     setCustomPrompts(next);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: next });
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
     if (editingIndex === index) {
       setEditingIndex(null);
       setEditingText('');
@@ -765,10 +765,10 @@ export function Step4Harmonize() {
 
   const handleSaveEdit = (index: number) => {
     if (!editingText.trim()) return;
-    const updated = [...customPrompts];
-    updated[index] = editingText.trim();
-    setCustomPrompts(updated);
-    dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: updated });
+    const next = [...customPrompts];
+    next[index] = editingText.trim();
+    setCustomPrompts(next);
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
     setEditingIndex(null);
     setEditingText('');
   };
@@ -781,7 +781,7 @@ export function Step4Harmonize() {
   const deleteDynamicRule = async (rid: string) => {
     const remaining = savedDynamicRules.filter((r) => r.id !== rid && r.label !== rid);
     setSavedDynamicRules(remaining);
-    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: remaining });
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: remaining });
     if (result) {
       setResult({ ...result, dynamic_rules: remaining });
     }
@@ -814,7 +814,7 @@ export function Step4Harmonize() {
 
   const handleClearAllDynamicRules = async () => {
     setSavedDynamicRules([]);
-    dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: [] });
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: [] });
     setSelectedDynamicRules({});
     if (result) {
       setResult({ ...result, dynamic_rules: [] });
@@ -848,18 +848,11 @@ export function Step4Harmonize() {
   }, [result?.columns, state.mapping]);
 
   const toggleSelectDynamicRule = (rid: string) => {
-    setSelectedDynamicRules((d) => {
-      const nextState = !(d[rid] !== false);
-      const updatedDict = { ...d, [rid]: nextState };
-      
-      setSavedDynamicRules((prevRules) => {
-        const updatedRules = prevRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
-        dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: updatedRules });
-        return updatedRules;
-      });
-
-      return updatedDict;
-    });
+    const nextState = !(selectedDynamicRules[rid] !== false);
+    setSelectedDynamicRules((prev) => ({ ...prev, [rid]: nextState }));
+    const updatedRules = savedDynamicRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
+    setSavedDynamicRules(updatedRules);
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: updatedRules });
   };
 
   const saveRulesToDB = async () => {
@@ -904,7 +897,7 @@ export function Step4Harmonize() {
       if (!res2.ok) throw new Error('Failed to save rules to database');
 
       setSavedDynamicRules(payloadRules);
-      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: payloadRules });
+      dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: payloadRules });
       setSelectedDynamicRules((d) => {
         const updated = { ...d };
         newlyCompiled.forEach((r: any) => {
@@ -918,7 +911,7 @@ export function Step4Harmonize() {
         setResult({ ...result, dynamic_rules: payloadRules });
       }
       setCustomPrompts([]);
-      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+      dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
       hideLoad();
       toast('Harmonization rules saved to database successfully!', 'ok');
     } catch (err: any) {
@@ -980,7 +973,7 @@ export function Step4Harmonize() {
         ? resultTables
         : (extractedTables.length > 0 ? extractedTables : (state.extractedTables || []));
 
-      const currentDynRules = savedDynamicRules.length > 0 ? savedDynamicRules : ((result as any)?.dynamic_rules || state.dynamicRules || []);
+      const currentDynRules = savedDynamicRules.length > 0 ? savedDynamicRules : ((result as any)?.dynamic_rules || state.harmonizeDynamicRules || []);
 
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/save`, {
         method: 'POST',
@@ -1000,8 +993,8 @@ export function Step4Harmonize() {
       hideLoad();
       dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: currentTables });
       dispatch({ type: 'SET_FIELD', field: 'harmonized', value: result.final_table });
-      dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: currentDynRules });
-      dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: customPrompts });
+      dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: currentDynRules });
+      dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: customPrompts });
       dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: true });
       toast('Harmonized data saved to database successfully!', 'ok');
     } catch (err: any) {
@@ -1166,7 +1159,7 @@ export function Step4Harmonize() {
             const newlyAddedRules = dedupeRules(returnedDynRules).filter((r: any) => !existingIds.has(r.id));
             const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
             setSavedDynamicRules(combinedDynamicRules);
-            dispatch({ type: 'SET_FIELD', field: 'dynamicRules', value: combinedDynamicRules });
+            dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: combinedDynamicRules });
             setSelectedDynamicRules((d) => {
               const updated = { ...d };
               newlyAddedRules.forEach((r: any) => {
@@ -1178,7 +1171,7 @@ export function Step4Harmonize() {
             });
             if (customPrompts.length > 0) {
               setCustomPrompts([]);
-              dispatch({ type: 'SET_FIELD', field: 'customPrompts', value: [] });
+              dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
             }
             toast(
               `Harmonized: ${data.stats.total_output} rows from ${data.stats.total_input} input rows`,

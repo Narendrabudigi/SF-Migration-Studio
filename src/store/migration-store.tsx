@@ -67,6 +67,12 @@ export interface MigrationState {
   validationReport: any[];
   dynamicRules: any[];
   customPrompts: string[];
+  harmonizeDynamicRules: any[];
+  harmonizeCustomPrompts: string[];
+  validationDynamicRules: any[];
+  validationCustomPrompts: string[];
+  cleanserDynamicRules: any[];
+  cleanserCustomPrompts: string[];
   isCleansedSaved: boolean;
   cleansingSummary: any;
   transformSummary: any;
@@ -116,6 +122,12 @@ const defaultState: MigrationState = {
   validationReport: [],
   dynamicRules: [],
   customPrompts: [],
+  harmonizeDynamicRules: [],
+  harmonizeCustomPrompts: [],
+  validationDynamicRules: [],
+  validationCustomPrompts: [],
+  cleanserDynamicRules: [],
+  cleanserCustomPrompts: [],
   isCleansedSaved: false,
   cleansingSummary: null,
   transformSummary: null,
