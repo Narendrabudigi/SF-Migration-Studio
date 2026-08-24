@@ -9,7 +9,16 @@ import {
   Card, CardHeader, CardBody, Button, InfoBox, Badge, DataTable,
   PageLayout, PageGrid, GridCol, PageHeader, Divider, SidebarItem, Select, ConfirmModal
 } from '@/components/shared';
-import { Zap, ArrowRight, Link2, Database, LayoutTemplate, FileSpreadsheet, Layers, Cloud, HardDrive, Users, Building2, Package, Cable, Settings2, Download, FolderGit2, Plus, Edit3, Save, Trash2 } from 'lucide-react';
+import { Zap, ArrowRight, Link2, Database, LayoutTemplate, FileSpreadsheet, Layers, Cloud, HardDrive, Users, Building2, Package, Cable, Settings2, Download, FolderGit2, Plus, Edit3, Save, Trash2, CheckCircle2 } from 'lucide-react';
+
+interface StagedFile {
+  file: File;
+  filename: string;
+  headers: string[];
+  sample_rows: any[];
+  row_count: number;
+  columns_count: number;
+}
 
 const objIcons = {
   users: <Users className="w-4 h-4 text-blue-500" />,
@@ -89,33 +98,95 @@ export function Step1SourceData() {
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  const [baseFileName, setBaseFileName] = useState<string>('');
+  const [baseKey, setBaseKey] = useState<string>('');
+  const [joinKeys, setJoinKeys] = useState<Record<string, string>>({}); // { [filename]: joinKey }
+
+  const findBestKeyMatch = (headers: string[], targetKeyName: string = ''): string => {
+    if (!headers || headers.length === 0) return '';
+    if (targetKeyName) {
+      const exact = headers.find(h => h.toLowerCase() === targetKeyName.toLowerCase());
+      if (exact) return exact;
+      const cleanTarget = targetKeyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const cleanMatch = headers.find(h => h.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanTarget);
+      if (cleanMatch) return cleanMatch;
+    }
+    const priorityKeywords = ['person_id_external', 'userid', 'user_id', 'employee_id', 'empid', 'id', 'code', 'number', 'num'];
+    for (const kw of priorityKeywords) {
+      const match = headers.find(h => h.toLowerCase().includes(kw));
+      if (match) return match;
+    }
+    return headers[0];
+  };
+
+  const handleFilesSelected = async (fileList: FileList | File[] | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const filesArray = Array.from(fileList);
 
     setIsUploading(true);
-    showLoad('Uploading File...', `Parsing ${file.name}`, ['Reading columns...']);
+    showLoad('Inspecting Files...', `Analyzing ${filesArray.length} file(s) schema`, ['Detecting header rows...']);
 
     const formData = new FormData();
-    formData.append('file', file);
+    filesArray.forEach(f => formData.append('files', f));
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload`, {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload-preview`, {
         method: 'POST',
         body: formData
       });
 
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Failed to upload file');
+        const errData = await res.json().catch(() => ({ detail: 'Preview failed' }));
+        throw new Error(errData.detail || 'Failed to preview files');
       }
 
-      const data = await res.json();
-      dispatch({ type: 'SET_FIELD', field: 'headers', value: data.headers });
-      dispatch({ type: 'SET_FIELD', field: 'uploadedData', value: data.data });
-      toast(`Successfully loaded ${data.headers.length} columns and ${data.data.length} rows!`, 'ok');
+      const resData = await res.json();
+      const previewedList: StagedFile[] = (resData.files || []).map((pf: any, idx: number) => ({
+        file: filesArray[idx] || filesArray.find(f => f.name === pf.filename) || filesArray[0],
+        filename: pf.filename,
+        headers: pf.headers || [],
+        sample_rows: pf.sample_rows || [],
+        row_count: pf.row_count || 0,
+        columns_count: pf.columns_count || (pf.headers ? pf.headers.length : 0),
+      }));
+
+      // Combine with existing staged files (replace matching filenames, append new ones)
+      const existingMap = new Map(stagedFiles.map(f => [f.filename, f]));
+      previewedList.forEach(pf => existingMap.set(pf.filename, pf));
+      const combinedList = Array.from(existingMap.values());
+
+      setStagedFiles(combinedList);
+
+      if (combinedList.length > 0) {
+        const currentBase = baseFileName && combinedList.some(f => f.filename === baseFileName)
+          ? baseFileName
+          : combinedList[0].filename;
+        setBaseFileName(currentBase);
+
+        const baseFileObj = combinedList.find(f => f.filename === currentBase);
+        const currentBaseKey = baseKey && baseFileObj?.headers.includes(baseKey)
+          ? baseKey
+          : findBestKeyMatch(baseFileObj?.headers || []);
+        setBaseKey(currentBaseKey);
+
+        const updatedJoinKeys: Record<string, string> = { ...joinKeys };
+        combinedList.filter(f => f.filename !== currentBase).forEach(sec => {
+          if (!updatedJoinKeys[sec.filename] || !sec.headers.includes(updatedJoinKeys[sec.filename])) {
+            updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, currentBaseKey);
+          }
+        });
+        setJoinKeys(updatedJoinKeys);
+
+        // If only 1 file is staged, auto load directly
+        if (combinedList.length === 1) {
+          await executeMergeDirect(combinedList, currentBase, currentBaseKey, {});
+        } else {
+          toast(`Staged ${combinedList.length} files. Configure your Primary & Join Keys below to merge!`, 'info');
+        }
+      }
     } catch (err: any) {
-      toast(err.message, 'err');
+      toast(err.message || 'Error processing files', 'err');
     } finally {
       setIsUploading(false);
       hideLoad();
@@ -123,38 +194,98 @@ export function Step1SourceData() {
     }
   };
 
-  const handleLoadOracle = async () => {
+  const handleBaseFileChange = (newBaseName: string) => {
+    setBaseFileName(newBaseName);
+    const baseObj = stagedFiles.find(f => f.filename === newBaseName);
+    if (baseObj) {
+      const newBaseKey = findBestKeyMatch(baseObj.headers);
+      setBaseKey(newBaseKey);
+      const updatedJoinKeys: Record<string, string> = {};
+      stagedFiles.filter(f => f.filename !== newBaseName).forEach(sec => {
+        updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, newBaseKey);
+      });
+      setJoinKeys(updatedJoinKeys);
+    }
+  };
+
+  const handleBaseKeyChange = (newKey: string) => {
+    setBaseKey(newKey);
+    const updatedJoinKeys: Record<string, string> = { ...joinKeys };
+    stagedFiles.filter(f => f.filename !== baseFileName).forEach(sec => {
+      updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, newKey);
+    });
+    setJoinKeys(updatedJoinKeys);
+  };
+
+  const executeMergeDirect = async (
+    filesList: StagedFile[],
+    baseName: string,
+    currentBaseKey: string,
+    currentJoinKeys: Record<string, string>
+  ) => {
+    if (filesList.length === 0) return;
+
     setIsUploading(true);
-    showLoad('Loading Oracle Extract...', 'Parsing Oracle.xlsx', ['Reading columns...']);
+    showLoad('Merging Datasets...', `Performing relational Left Join on ${filesList.length} files`, ['Combining fields & deduplicating keys...']);
+
+    const formData = new FormData();
+    filesList.forEach(sf => formData.append('files', sf.file));
+
+    const joinConfigs = filesList
+      .filter(sf => sf.filename !== baseName)
+      .map(sf => ({
+        file_name: sf.filename,
+        base_key: currentBaseKey,
+        join_key: currentJoinKeys[sf.filename] || currentBaseKey
+      }));
+
+    formData.append('join_config_json', JSON.stringify(joinConfigs));
+    formData.append('base_file', baseName);
+
     try {
-      const response = await fetch('/Oracle.xlsx');
-      if (!response.ok) throw new Error('Failed to fetch Oracle.xlsx from public folder');
-
-      const blob = await response.blob();
-      const file = new File([blob], 'Oracle.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload`, {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload-merge`, {
         method: 'POST',
         body: formData
       });
 
       if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || 'Failed to upload file');
+        const errData = await res.json().catch(() => ({ detail: 'Merge failed' }));
+        throw new Error(errData.detail || 'Failed to merge datasets');
       }
 
       const data = await res.json();
-      dispatch({ type: 'SET_FIELD', field: 'headers', value: data.headers });
-      dispatch({ type: 'SET_FIELD', field: 'uploadedData', value: data.data });
-      toast(`Successfully loaded ${data.headers.length} columns and ${data.data.length} rows from Oracle.xlsx!`, 'ok');
+      dispatch({
+        type: 'BATCH_UPDATE',
+        updates: {
+          rawData: data.data,
+          headers: data.headers,
+          uploadedData: data.data
+        }
+      });
+      toast(`Successfully merged ${filesList.length} files into ${data.headers.length} columns and ${data.data.length} records!`, 'ok');
     } catch (err: any) {
-      toast(err.message, 'err');
+      toast(err.message || 'Merge failed', 'err');
     } finally {
       setIsUploading(false);
       hideLoad();
+    }
+  };
+
+  const handleMergeClick = () => {
+    executeMergeDirect(stagedFiles, baseFileName, baseKey, joinKeys);
+  };
+
+  const handleRemoveStagedFile = (filename: string) => {
+    const remaining = stagedFiles.filter(f => f.filename !== filename);
+    setStagedFiles(remaining);
+    if (remaining.length > 0) {
+      if (baseFileName === filename) {
+        handleBaseFileChange(remaining[0].filename);
+      }
+    } else {
+      setBaseFileName('');
+      setBaseKey('');
+      setJoinKeys({});
     }
   };
 
@@ -425,22 +556,175 @@ export function Step1SourceData() {
                 )}
 
                 {(state.src === 'EXCEL_CSV') && (
-                  <div className="border-2 border-dashed border-[var(--border)] rounded-lg p-6 flex flex-col items-center justify-center text-center bg-[var(--bg-tertiary)]/50">
-                    <Cloud className="w-8 h-8 text-[var(--text-tertiary)] mb-2" />
-                    <p className="text-[12px] text-[var(--text-secondary)] font-medium">Drag and drop file here</p>
-                    <p className="text-[11px] text-[var(--text-tertiary)] mb-3">or click to browse (.xlsx, .csv)</p>
-                    <input
-                      type="file"
-                      accept=".csv, .xlsx, .xls"
-                      className="hidden"
-                      ref={fileInputRef}
-                      onChange={handleFileUpload}
-                    />
-                    <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} disabled={isUploading}>
-                      {isUploading ? 'Uploading...' : 'Choose File'}
-                    </Button>
+                  <div className="space-y-3">
+                    {/* Multi-file dropzone */}
+                    <div
+                      className="border-2 border-dashed border-[var(--border)] rounded-lg p-5 flex flex-col items-center justify-center text-center bg-[var(--bg-tertiary)]/50 hover:border-primary-400 transition-colors cursor-pointer"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Cloud className="w-7 h-7 text-[var(--text-tertiary)] mb-1.5" />
+                      <p className="text-[12px] text-[var(--text-secondary)] font-medium">Drag & drop files or click to browse</p>
+                      <p className="text-[10.5px] text-[var(--text-tertiary)] mb-2.5">Upload 1 or more files (.xlsx, .xls, .csv) for single or multi-table join</p>
+                      <input
+                        type="file"
+                        accept=".csv, .xlsx, .xls"
+                        multiple
+                        className="hidden"
+                        ref={fileInputRef}
+                        onChange={(e) => handleFilesSelected(e.target.files)}
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={isUploading}
+                      >
+                        {isUploading ? 'Inspecting Files...' : 'Choose File(s)'}
+                      </Button>
+                    </div>
+
+                    {/* Staged Files List */}
+                    {stagedFiles.length > 0 && (
+                      <div className="space-y-2 p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-[var(--text-primary)]">
+                          <span className="flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-primary-500" />
+                            Staged Files ({stagedFiles.length})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              fileInputRef.current?.click();
+                            }}
+                            disabled={isUploading}
+                            className="flex items-center gap-1 text-[10.5px] font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 transition-colors cursor-pointer px-2 py-0.5 rounded bg-primary-50 dark:bg-primary-950/40 border border-primary-200 dark:border-primary-900/40"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add File</span>
+                          </button>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                          {stagedFiles.map((sf) => (
+                            <div key={sf.filename} className="flex items-center justify-between p-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[11px]">
+                              <div className="flex items-center gap-2 truncate">
+                                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                                <span className="font-semibold text-[var(--text-primary)] truncate" title={sf.filename}>{sf.filename}</span>
+                                <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-[var(--bg-primary)] text-[var(--text-tertiary)] border border-[var(--border)]">
+                                  {sf.columns_count} cols · {sf.row_count} rows
+                                </span>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveStagedFile(sf.filename);
+                                }}
+                                className="text-[var(--text-tertiary)] hover:text-red-500 p-1 transition-colors"
+                                title="Remove file"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fileInputRef.current?.click();
+                          }}
+                          disabled={isUploading}
+                          className="w-full py-1.5 px-2.5 border border-dashed border-[var(--border)] rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] hover:text-primary-600 hover:border-primary-400 dark:hover:text-primary-400 transition-colors flex items-center justify-center gap-1.5 bg-[var(--bg-tertiary)]/40 hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-primary-500" />
+                          <span>Add another file (.xlsx, .xls, .csv)</span>
+                        </button>
+
+                        {/* Multi-File Relational Join Configuration */}
+                        {stagedFiles.length > 1 && (
+                          <div className="pt-2.5 mt-2 border-t border-[var(--border)] space-y-2.5">
+                            <div className="text-[10.5px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400 flex items-center gap-1">
+                              <Link2 className="w-3.5 h-3.5" />
+                              Relational Join Configuration (Left Join)
+                            </div>
+
+                            {/* Base Table & Primary Key */}
+                            <div className="grid grid-cols-2 gap-2 p-2 rounded-md bg-[var(--bg-primary)] border border-primary-200 dark:border-primary-900/40">
+                              <div>
+                                <label className="text-[9.5px] font-bold text-[var(--text-tertiary)] uppercase block mb-1">
+                                  Base Table (PK Table)
+                                </label>
+                                <Select
+                                  value={baseFileName}
+                                  onChange={handleBaseFileChange}
+                                  options={stagedFiles.map(f => ({ value: f.filename, label: f.filename }))}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9.5px] font-bold text-[var(--text-tertiary)] uppercase block mb-1">
+                                  Primary Key (Base Key)
+                                </label>
+                                <Select
+                                  value={baseKey}
+                                  onChange={handleBaseKeyChange}
+                                  options={(stagedFiles.find(f => f.filename === baseFileName)?.headers || []).map(h => ({
+                                    value: h,
+                                    label: h
+                                  }))}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Foreign Key for each Secondary Table */}
+                            <div className="space-y-2">
+                              {stagedFiles.filter(f => f.filename !== baseFileName).map(sec => (
+                                <div key={sec.filename} className="p-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] space-y-1">
+                                  <div className="flex items-center justify-between text-[10px] font-semibold text-[var(--text-secondary)]">
+                                    <span>Join Table: <strong className="text-[var(--text-primary)]">{sec.filename}</strong></span>
+                                    {joinKeys[sec.filename] && (
+                                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-mono">⚡ Auto-matched</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">Foreign Key:</span>
+                                    <div className="flex-1">
+                                      <Select
+                                        value={joinKeys[sec.filename] || ''}
+                                        onChange={(val) => setJoinKeys(prev => ({ ...prev, [sec.filename]: val }))}
+                                        options={sec.headers.map(h => ({ value: h, label: h }))}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Merge Execution Button */}
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              icon={<Zap className="w-3.5 h-3.5" />}
+                              className="w-full justify-center mt-1"
+                              disabled={isUploading || !baseKey}
+                              onClick={handleMergeClick}
+                            >
+                              {isUploading ? 'Merging Datasets...' : 'Join & Merge Datasets'}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {state.headers.length > 0 && (
-                      <p className="text-[11px] text-emerald-500 mt-2 font-medium">✓ File uploaded ({state.headers.length} columns loaded)</p>
+                      <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 text-[11px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                        <span>Merged Dataset Ready ({state.headers.length} columns, {state.rawData.length} rows loaded)</span>
+                      </div>
                     )}
                   </div>
                 )}

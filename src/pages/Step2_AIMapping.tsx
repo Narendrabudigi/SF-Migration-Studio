@@ -207,8 +207,11 @@ export function Step2AIMapping() {
     if (state.uploadedData && state.uploadedData.length > 0) {
       return Object.keys(state.uploadedData[0]);
     }
+    if (state.rawData && state.rawData.length > 0) {
+      return Object.keys(state.rawData[0]);
+    }
     return state.headers || [];
-  }, [state.uploadedData, state.headers]);
+  }, [state.uploadedData, state.rawData, state.headers]);
 
   const obj = OBJS[state.obj];
   const validMappings = state.mapping.filter(m => m.sap && m.sap.trim() !== "");

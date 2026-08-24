@@ -201,34 +201,138 @@ def execute_extraction(req: ExecuteExtractionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _parse_file_to_df(filename: str, contents: bytes, nrows: Optional[int] = None) -> pd.DataFrame:
+    if filename.endswith('.csv'):
+        df = pd.read_csv(io.BytesIO(contents), nrows=nrows)
+    elif filename.endswith(('.xls', '.xlsx')):
+        df = pd.read_excel(io.BytesIO(contents), nrows=nrows)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported file format for {filename}. Only CSV and Excel (.xlsx, .xls) are supported.")
+    
+    df = df.fillna("")
+    # Check for 2-header row structure (e.g. Table Names in row 0, Field Names in row 1)
+    if not df.empty and len(df) > 0:
+        first_row_vals = [str(v).strip() for v in df.iloc[0].values]
+        col_bases = [str(col).split('.')[0] for col in df.columns]
+        if (len(col_bases) != len(set(col_bases)) or any("Unnamed" in str(c) for c in df.columns)) and len(set(first_row_vals)) == len(first_row_vals) and all(v != "" for v in first_row_vals):
+            df.columns = first_row_vals
+            df = df.iloc[1:].reset_index(drop=True)
+    return df
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(io.BytesIO(contents))
-        elif file.filename.endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            raise HTTPException(status_code=400, detail="Only CSV and Excel files are supported")
-        
-        # Replace NaN with empty string
-        df = df.fillna("")
-        
-        # Check for 2-header row structure (e.g. Table Names in row 0, Field Names in row 1)
-        if not df.empty and len(df) > 0:
-            first_row_vals = [str(v).strip() for v in df.iloc[0].values]
-            col_bases = [str(col).split('.')[0] for col in df.columns]
-            if len(col_bases) != len(set(col_bases)) and len(set(first_row_vals)) == len(first_row_vals):
-                df.columns = first_row_vals
-                df = df.iloc[1:].reset_index(drop=True)
-
-        headers = list(df.columns)
+        df = _parse_file_to_df(file.filename or "data.csv", contents)
+        headers = [str(c) for c in df.columns]
         data = df.to_dict(orient="records")
-        
         return {"status": "success", "headers": headers, "data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
+@router.post("/upload-preview")
+async def upload_preview(files: List[UploadFile] = File(...)):
+    results = []
+    try:
+        for file in files:
+            contents = await file.read()
+            df = _parse_file_to_df(file.filename or "data.csv", contents)
+            headers = [str(c) for c in df.columns]
+            sample_rows = df.head(5).to_dict(orient="records")
+            results.append({
+                "filename": file.filename,
+                "headers": headers,
+                "sample_rows": sample_rows,
+                "row_count": len(df),
+                "columns_count": len(headers)
+            })
+        return {"status": "success", "files": results}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to preview files: {str(e)}")
+
+@router.post("/upload-merge")
+async def upload_merge(
+    files: List[UploadFile] = File(...),
+    join_config_json: str = Form(...),
+    base_file: Optional[str] = Form(None)
+):
+    try:
+        join_configs = json.loads(join_config_json) if join_config_json else []
+        file_map: Dict[str, pd.DataFrame] = {}
+        for file in files:
+            contents = await file.read()
+            df = _parse_file_to_df(file.filename or "data.csv", contents)
+            file_map[file.filename or ""] = df
+
+        if not file_map:
+            raise HTTPException(status_code=400, detail="No files uploaded to merge")
+
+        # Determine base file
+        base_filename = base_file if (base_file and base_file in file_map) else list(file_map.keys())[0]
+        merged_df = file_map[base_filename].copy()
+
+        # Cast all columns to string to avoid merge dtype mismatches
+        merged_df = merged_df.astype(str)
+
+        # Sequentially join secondary files
+        for cfg in join_configs:
+            sec_name = cfg.get("file_name")
+            base_key = cfg.get("base_key")
+            join_key = cfg.get("join_key")
+
+            if not sec_name or sec_name not in file_map or sec_name == base_filename:
+                continue
+            if not base_key or not join_key:
+                continue
+
+            sec_df = file_map[sec_name].copy()
+            sec_df = sec_df.astype(str)
+
+            # Strip keys for exact matching
+            merged_df[base_key] = merged_df[base_key].str.strip()
+            sec_df[join_key] = sec_df[join_key].str.strip()
+
+            file_tag = re.sub(r'[^a-zA-Z0-9]', '', sec_name.split('.')[0])[:8]
+            
+            merged_df = pd.merge(
+                merged_df,
+                sec_df,
+                left_on=base_key,
+                right_on=join_key,
+                how='left',
+                suffixes=('', f'_{file_tag}')
+            )
+
+            # If join_key was different from base_key, drop the redundant join_key column from merged_df
+            if join_key != base_key and join_key in merged_df.columns:
+                merged_df.drop(columns=[join_key], inplace=True, errors='ignore')
+            
+            # Also drop suffixed join key if created
+            suffixed_join_key = f"{join_key}_{file_tag}"
+            if suffixed_join_key in merged_df.columns:
+                merged_df.drop(columns=[suffixed_join_key], inplace=True, errors='ignore')
+
+        merged_df = merged_df.fillna("")
+        headers = [str(c) for c in merged_df.columns]
+        data = merged_df.to_dict(orient="records")
+
+        return {
+            "status": "success",
+            "headers": headers,
+            "data": data,
+            "total_rows": len(merged_df),
+            "columns_count": len(headers),
+            "base_file": base_filename,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Merge failed")
+        raise HTTPException(status_code=500, detail=f"Failed to merge files: {str(e)}")
 
 class ExecuteFileRequest(BaseModel):
     target_object: str
