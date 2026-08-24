@@ -154,11 +154,27 @@ export function InfoBox({ variant = 'info', children, className }: { variant?: I
 }
 
 /* ── EmptyState ── */
-export function EmptyState({ icon, message }: { icon: ReactNode; message: string }) {
+export interface EmptyStateProps {
+  icon?: ReactNode;
+  title?: string;
+  description?: string;
+  message?: string;
+  action?: ReactNode;
+  className?: string;
+}
+
+export function EmptyState({ icon, title, description, message, action, className }: EmptyStateProps) {
+  const heading = title || message;
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-center">
-      <div className="text-4xl mb-3 opacity-40">{icon}</div>
-      <div className="text-[13px] text-[var(--text-tertiary)]">{message}</div>
+    <div className={cn('flex flex-col items-center justify-center py-12 text-center', className)}>
+      {icon && <div className="text-4xl mb-3 opacity-40 flex items-center justify-center">{icon}</div>}
+      {heading && (
+        <div className={cn('text-[13px]', description ? 'font-semibold text-[var(--text-primary)]' : 'text-[var(--text-tertiary)]')}>
+          {heading}
+        </div>
+      )}
+      {description && <div className="text-[12px] text-[var(--text-tertiary)] max-w-md mt-1">{description}</div>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }

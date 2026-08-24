@@ -464,6 +464,21 @@ export function Step1SourceData() {
 
   const nextDisabled = !state.src || !state.obj || !state.projectId || (state.src === 'SAP_ECC' && (!state.connUrl || !state.connUser || !state.connPass || state.rawData.length === 0));
 
+  const handleLoadOracle = () => {
+    const data = SAMPLE.ORACLE_VENDOR || [];
+    if (data.length > 0) {
+      dispatch({
+        type: 'BATCH_UPDATE',
+        updates: {
+          rawData: data,
+          headers: Object.keys(data[0]),
+          uploadedData: data
+        }
+      });
+      toast(`Loaded ${data.length} sample records for Oracle EBS`, 'ok');
+    }
+  };
+
   return (
     <PageLayout>
       <PageHeader title="Step 1 — Source & Data Connect" subtitle="Upload legacy ECC extracts or connect to source databases">

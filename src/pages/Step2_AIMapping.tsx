@@ -8,8 +8,8 @@ import { TRANSFORMS } from '@/data/lookup-maps';
 import { generateMapping, correctMapping, getSAPSchema } from '@/services/ai-service';
 import { dl, expCSV } from '@/lib/utils';
 import { cn } from '@/lib/utils';
-import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge, StatBox, StatsGrid, PageHeader, Divider, EmptyState, AIResponse, Select } from '@/components/shared';
-import { ArrowRight, Download, Bot, ArrowLeft, RefreshCw, Edit3, Save, X, CheckCircle2 } from 'lucide-react';
+import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge, StatBox, StatsGrid, PageHeader, EmptyState, AIResponse, Select } from '@/components/shared';
+import { ArrowRight, Download, Bot, ArrowLeft, Edit3, Save, X, CheckCircle2 } from 'lucide-react';
 import type { MappingEntry } from '@/store/migration-store';
 
 export function Step2AIMapping() {
@@ -21,9 +21,8 @@ export function Step2AIMapping() {
   const [sourceSearch, setSourceSearch] = useState('');
   const [targetSearch, setTargetSearch] = useState('');
   const [mappingSearch, setMappingSearch] = useState('');
-  const [editingMapSrc, setEditingMapSrc] = useState<{ index: number, value: string } | null>(null);
-  const [stagedMaps, setStagedMaps] = useState<{ src: string, sap: string }[]>([]);
-
+  const [editingMapSrc, setEditingMapSrc] = useState<{ index: number; value: string } | null>(null);
+  const [stagedMaps, setStagedMaps] = useState<{ src: string; sap: string }[]>([]);
 
   const [sapFields, setSapFields] = useState<any[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
@@ -31,64 +30,54 @@ export function Step2AIMapping() {
   React.useEffect(() => {
     async function fetchSchema() {
       setIsLoadingSchema(true);
-      const targetObj = state.obj || 'Biographical Info';
-      let fields: any[] = [];
-
       try {
-        const res = await getSAPSchema(targetObj);
-        if (res && res.fields && res.fields.length > 0) {
-          fields = res.fields.map((f: any) => ({
-            ...f,
-            field_name: f.sf_structure ? `${f.sf_structure}.${f.field_name}` : (f.sap_structure ? `${f.sap_structure}.${f.field_name}` : f.field_name)
-          }));
+        // Map frontend key to backend DB name
+        const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+        const res = await getSAPSchema(objName);
+        const fields = (res && res.fields ? res.fields : []).map((f: any) => ({
+          ...f,
+          field_name: f.sap_structure ? `${f.sap_structure}.${f.field_name}` : f.field_name
+        }));
+        setSapFields(fields);
+
+        // Auto-populate Source Fields based on Source System
+        if (state.src === 'SAP_ECC') {
+          if (!state.connUrl || !state.connUser || !state.connPass) {
+            dispatch({ type: 'SET_FIELD', field: 'headers', value: [] });
+            setIsLoadingSchema(false);
+            return;
+          }
+
+          try {
+            const schemaRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/fetch_schema`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                base_url: state.connUrl,
+                client: state.connClient,
+                username: state.connUser,
+                password: state.connPass,
+                system_type: state.src,
+                target_object: state.obj || 'CUSTOMER'
+              })
+            });
+            if (schemaRes.ok) {
+              const schemaData = await schemaRes.json();
+              dispatch({ type: 'SET_FIELD', field: 'headers', value: schemaData.fields || [] });
+            } else {
+              toast('Failed to fetch source schema from SAP', 'err');
+              dispatch({ type: 'SET_FIELD', field: 'headers', value: [] });
+            }
+          } catch (err) {
+            toast('Failed to reach backend to fetch source schema', 'err');
+            dispatch({ type: 'SET_FIELD', field: 'headers', value: [] });
+          }
         }
       } catch (err) {
-        console.warn('Backend schema fetch failed, using frontend schema:', err);
+        setSapFields([]);
+      } finally {
+        setIsLoadingSchema(false);
       }
-
-      // Fallback to OBJS schema if DB returned no fields
-      if (fields.length === 0 && OBJS[targetObj]) {
-        fields = OBJS[targetObj].fields.map((f) => ({
-          field_name: `${OBJS[targetObj].tcode}.${f.n}`,
-          field_description: f.d,
-          is_mandatory: f.req,
-          sf_structure: OBJS[targetObj].tcode,
-          data_type: f.t,
-          field_length: f.len,
-        }));
-      }
-
-      setSapFields(fields);
-
-      // Auto-populate Source Fields based on Source System
-      if (state.src === 'SAP_ECC') {
-        if (!state.connUrl || !state.connUser || !state.connPass) {
-          setIsLoadingSchema(false);
-          return;
-        }
-
-        try {
-          const schemaRes = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/fetch_schema`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              base_url: state.connUrl,
-              client: state.connClient,
-              username: state.connUser,
-              password: state.connPass,
-              system_type: state.src,
-              target_object: targetObj
-            })
-          });
-          if (schemaRes.ok) {
-            const schemaData = await schemaRes.json();
-            dispatch({ type: 'SET_FIELD', field: 'headers', value: schemaData.fields || [] });
-          }
-        } catch (err) {
-          // ignore
-        }
-      }
-      setIsLoadingSchema(false);
     }
     fetchSchema();
   }, [state.obj, state.src]);
@@ -130,7 +119,7 @@ export function Step2AIMapping() {
     setTimeout(() => tick(0, 'Connected'), 300);
 
     try {
-      const objName = state.obj || 'Biographical Info';
+      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/map/save_all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,7 +152,7 @@ export function Step2AIMapping() {
     setTimeout(() => tick(0, 'Connected'), 300);
 
     try {
-      const objName = state.obj || 'Biographical Info';
+      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/map/history?project_id=${state.projectId}&source_system=${state.src}&target_object=${objName}`);
       if (!res.ok) throw new Error('Failed to fetch history');
 
@@ -185,15 +174,14 @@ export function Step2AIMapping() {
         };
       });
 
-      // Filter loaded mappings so only source fields present in the uploaded Excel data are retained
-      const validLoadedMappings = enrichedMappings.filter((m: any) => {
-        if (!m.src) return false;
-        if (state.headers.length === 0) return true;
-        const cleanSrc = m.src.replace(/^\[\d+\]\s*/, '').trim();
-        return state.headers.some(h => h === m.src || h.replace(/^\[\d+\]\s*/, '').trim() === cleanSrc);
+      // Ensure all loaded source fields are added to headers if they don't exist
+      const newHeaders = new Set(state.headers);
+      enrichedMappings.forEach((m: any) => {
+        if (m.src) newHeaders.add(m.src);
       });
 
-      dispatch({ type: 'SET_FIELD', field: 'mapping', value: validLoadedMappings });
+      dispatch({ type: 'SET_FIELD', field: 'headers', value: Array.from(newHeaders) });
+      dispatch({ type: 'SET_FIELD', field: 'mapping', value: enrichedMappings });
       dispatch({ type: 'SET_FIELD', field: 'isMappingSaved', value: true });
 
       toast(`Loaded ${enrichedMappings.length} mappings from history!`, 'ok');
@@ -203,16 +191,6 @@ export function Step2AIMapping() {
     }
   };
 
-  const effectiveHeaders = React.useMemo(() => {
-    if (state.uploadedData && state.uploadedData.length > 0) {
-      return Object.keys(state.uploadedData[0]);
-    }
-    if (state.rawData && state.rawData.length > 0) {
-      return Object.keys(state.rawData[0]);
-    }
-    return state.headers || [];
-  }, [state.uploadedData, state.rawData, state.headers]);
-
   const obj = OBJS[state.obj];
   const validMappings = state.mapping.filter(m => m.sap && m.sap.trim() !== "");
   const hi = validMappings.filter((m) => m.conf >= 80).length;
@@ -220,7 +198,7 @@ export function Step2AIMapping() {
 
   const mappedSources = state.mapping.map(m => m.src);
   const mappedSaps = state.mapping.map(m => m.sap);
-  const unmappedSourceList = effectiveHeaders.filter(h => !mappedSources.includes(h));
+  const unmappedSourceList = state.headers.filter(h => !mappedSources.includes(h));
   const unmappedSapList = sapFields.filter(f => !mappedSaps.includes(f.field_name));
 
   // Calculate unmapped source fields instead of target fields
@@ -257,21 +235,23 @@ export function Step2AIMapping() {
       'GEWEI': ['GEWEI', 'WEIGHT_UNIT'],
     };
     const res: MappingEntry[] = [];
-    OBJS[state.obj].fields.forEach((f) => {
-      const syns = sem[f.n] || [f.n];
-      let best: string | null = null, bs = 0;
-      effectiveHeaders.forEach((h) => {
-        const hu = h.toUpperCase(), fn = f.n.toUpperCase();
-        let sc = 0;
-        if (hu === fn || syns.map((s) => s.toUpperCase()).includes(hu)) sc = 90;
-        else if (hu.includes(fn) || fn.includes(hu)) sc = 72;
-        if (sc > bs) { bs = sc; best = h; }
+    if (OBJS[state.obj] && OBJS[state.obj].fields) {
+      OBJS[state.obj].fields.forEach((f) => {
+        const syns = sem[f.n] || [f.n];
+        let best: string | null = null, bs = 0;
+        state.headers.forEach((h) => {
+          const hu = h.toUpperCase(), fn = f.n.toUpperCase();
+          let sc = 0;
+          if (hu === fn || syns.map((s) => s.toUpperCase()).includes(hu)) sc = 90;
+          else if (hu.includes(fn) || fn.includes(hu)) sc = 72;
+          if (sc > bs) { bs = sc; best = h; }
+        });
+        if (best && bs >= 40) {
+          const tr = inferTr(best, f.n, f.t);
+          res.push({ src: best, sap: f.n, sapLabel: f.l, conf: bs, tr, note: 'Auto-mapped', req: f.req });
+        }
       });
-      if (best && bs >= 40) {
-        const tr = inferTr(best, f.n, f.t);
-        res.push({ src: best, sap: f.n, sapLabel: f.l, conf: bs, tr, note: 'Auto-mapped', req: f.req });
-      }
-    });
+    }
     return res;
   }
 
@@ -289,21 +269,25 @@ export function Step2AIMapping() {
   async function doAIMap() {
     showLoad('AI Field Mapping…', 'AI analyzing semantic field relationships', [
       `Connecting to Backend API…`,
-      `Fetching SF Target Schema from Database…`,
+      `Fetching SAP Schema from Database…`,
       `Applying Known Source Matches…`,
       `Checking LLM Cache & User Overrides…`,
       `Generating missing mappings via AI…`,
     ]);
     setTimeout(() => tick(0, 'Backend connected'), 400);
-    setTimeout(() => tick(1, 'SF target schema fetched'), 900);
+    setTimeout(() => tick(1, 'SAP schema fetched'), 900);
     setTimeout(() => tick(2, 'Known source matches applied'), 1300);
     setTimeout(() => tick(3, 'Cache & Overrides applied'), 1600);
     try {
-      const objName = state.obj || 'Biographical Info';
-      const data = await generateMapping(state.src, objName, effectiveHeaders);
+      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+      const data = await generateMapping(state.src || 'SAP_ECC', objName, state.headers);
       const mapping = data.mappings || [];
 
-      // Retain exact source fields uploaded from Step 1 without injecting un-uploaded fields
+      // If Step 1 was skipped, infer the source headers directly from the AI's generated mapping
+      if (state.headers.length === 0) {
+        const inferredHeaders = Array.from(new Set(mapping.map((m: any) => m.src).filter(Boolean)));
+        dispatch({ type: 'SET_FIELD', field: 'headers', value: inferredHeaders as string[] });
+      }
 
       setTimeout(() => tick(4, 'Transforms assigned'), 2200);
       setTimeout(() => {
@@ -340,7 +324,7 @@ export function Step2AIMapping() {
     dispatch({ type: 'SET_FIELD', field: 'isMappingSaved', value: false });
 
     try {
-      await correctMapping(state.src, src, sap, tr);
+      await correctMapping(state.src || 'SAP_ECC', src, sap, tr);
       toast('Correction saved to user profile', 'ok');
     } catch (err: any) {
       toast(`Failed to save correction: ${err.message}`, 'err');
@@ -355,7 +339,7 @@ export function Step2AIMapping() {
         <GridCol span={3} className="flex flex-col gap-4 h-[calc(100vh-40px)]">
           {/* Source Fields Card */}
           <Card className="flex flex-col flex-1 min-h-0">
-            <CardHeader title={`Source Fields (${effectiveHeaders.length})`} subtitle={state.src} />
+            <CardHeader title={`Source Fields (${state.headers.length})`} subtitle={state.src} />
             <div className="px-3 pt-2">
               <input
                 type="text"
@@ -366,13 +350,13 @@ export function Step2AIMapping() {
               />
             </div>
             <CardBody className="p-3 space-y-2 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent">
-              {effectiveHeaders.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => (
+              {state.headers.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => (
                 <div key={`${f}-${i}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[10px] font-mono text-[var(--text-secondary)]">
                   <span>{f}</span>
                   {state.mapping.find((m) => m.src === f) && <Badge variant="green" className="text-[8px]">mapped</Badge>}
                 </div>
               ))}
-              {effectiveHeaders.length === 0 && (
+              {state.headers.length === 0 && (
                 <div className="text-[10px] text-[var(--text-tertiary)] text-center py-4">No source fields loaded.</div>
               )}
             </CardBody>
@@ -380,11 +364,11 @@ export function Step2AIMapping() {
 
           {/* Target Fields Card */}
           <Card className="flex flex-col flex-1 min-h-0">
-            <CardHeader title={`SF Target (${sapFields.length})`} subtitle={obj?.label || state.obj || 'Biographical Info'} />
+            <CardHeader title={`SAP Target (${sapFields.length})`} subtitle={obj?.label || state.obj} />
             <div className="px-3 pt-2">
               <input
                 type="text"
-                placeholder="Search SF target fields..."
+                placeholder="Search SAP fields..."
                 value={targetSearch}
                 onChange={(e) => setTargetSearch(e.target.value)}
                 className="w-full rounded-md border border-[var(--border-light)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-[10.5px] text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
@@ -396,14 +380,14 @@ export function Step2AIMapping() {
               ) : sapFields.length === 0 ? (
                 <div className="px-2.5 py-1.5 rounded-lg text-[10px] text-[var(--text-tertiary)]">No fields found for this object in DB.</div>
               ) : (
-                sapFields.filter(f => f.field_name.toLowerCase().includes(targetSearch.toLowerCase()) || (f.field_description && f.field_description.toLowerCase().includes(targetSearch.toLowerCase()))).map((f, i) => (
+                sapFields.filter(f => (f.field_name && f.field_name.toLowerCase().includes(targetSearch.toLowerCase())) || (f.field_description && f.field_description.toLowerCase().includes(targetSearch.toLowerCase()))).map((f, i) => (
                   <div key={`${f.field_name}-${i}`} className="px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border-light)]">
                     <div className="flex items-center justify-between">
                       <span className="font-mono text-[10px] text-teal-600 dark:text-teal-400">{f.field_name}</span>
                       {f.is_mandatory ? <Badge variant="red" className="text-[8px]">REQ</Badge> :
                         state.mapping.find((m) => m.sap === f.field_name) ? <Badge variant="green" className="text-[8px]">✓</Badge> : null}
                     </div>
-                    <div className="text-[9.5px] text-[var(--text-tertiary)]">{f.field_description || f.sf_structure || f.sap_structure}</div>
+                    <div className="text-[9.5px] text-[var(--text-tertiary)]">{f.field_description || f.sap_structure}</div>
                   </div>
                 ))
               )}
@@ -413,7 +397,7 @@ export function Step2AIMapping() {
 
         {/* Middle Column */}
         <GridCol span={9}>
-          <PageHeader title="Step 2 — AI-Powered Field Mapping" subtitle="AI Engine semantically maps source fields to SuccessFactors (SF) target fields with confidence scoring">
+          <PageHeader title="Step 2 — AI-Powered Field Mapping" subtitle="AI Engine semantically maps source fields to SAP S/4HANA fields with confidence scoring">
             <Button variant="secondary" icon={<ArrowLeft className="w-3.5 h-3.5" />} onClick={() => navigate('/')}>Back</Button>
             <div title={state.headers.length === 0 ? "You must load Source Fields in Step 1 before generating an AI Mapping." : ""}>
               <Button variant="cyan" icon={<Bot className="w-3.5 h-3.5" />} onClick={doAIMap} disabled={state.headers.length === 0}>Generate AI Mapping</Button>
@@ -451,7 +435,7 @@ export function Step2AIMapping() {
             <div className="px-3 pt-2">
               <input
                 type="text"
-                placeholder="Search mapped fields (Source or SF)..."
+                placeholder="Search mapped fields (Source or SAP)..."
                 value={mappingSearch}
                 onChange={(e) => setMappingSearch(e.target.value)}
                 className="w-full rounded-md border border-[var(--border-light)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-[10.5px] text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
@@ -462,7 +446,7 @@ export function Step2AIMapping() {
                 <>
                   {/* Header */}
                   <div className="grid grid-cols-[1fr_30px_1fr_70px_140px_28px] gap-2 px-2 pb-2 mb-2 border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-wider text-[var(--text-tertiary)]">
-                    <span>Source</span><span></span><span>SF Field</span><span>Conf</span><span>Transform</span><span></span>
+                    <span>Source</span><span></span><span>SAP Field</span><span>Conf</span><span>Transform</span><span></span>
                   </div>
                   {/* Rows */}
                   <div className="space-y-1.5 max-h-[calc(100vh-250px)] overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent pr-2">
@@ -601,7 +585,7 @@ export function Step2AIMapping() {
                   </div>
                 </>
               ) : (
-                <EmptyState icon={<Bot className="w-10 h-10" />} message={`Click Generate AI Mapping — The AI Engine will semantically match your ${state.headers.length} source fields to SuccessFactors ${obj?.label || state.obj} field definitions`} />
+                <EmptyState icon={<Bot className="w-10 h-10" />} message={`Click Generate AI Mapping — The AI Engine will semantically match your ${state.headers.length} source fields to SAP ${obj?.label || 'Customer Master (XD01)'} field definitions`} />
               )}
             </CardBody>
           </Card>
@@ -613,8 +597,6 @@ export function Step2AIMapping() {
             </Card>
           )}
         </GridCol>
-
-
 
       </PageGrid>
     </PageLayout>
