@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import requests
 import xml.etree.ElementTree as ET
 import pandas as pd
+import os
 import io
 import json
 import logging
@@ -202,14 +203,33 @@ def execute_extraction(req: ExecuteExtractionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 def _parse_file_to_df(filename: str, contents: bytes, nrows: Optional[int] = None) -> pd.DataFrame:
-    if filename.endswith('.csv'):
-        df = pd.read_csv(io.BytesIO(contents), nrows=nrows)
-    elif filename.endswith(('.xls', '.xlsx')):
+    clean_name = os.path.basename(filename)
+    if clean_name.endswith('.csv'):
+        try:
+            df = pd.read_csv(io.BytesIO(contents), nrows=nrows, encoding='utf-8', encoding_errors='replace')
+        except Exception:
+            try:
+                df = pd.read_csv(io.BytesIO(contents), nrows=nrows, encoding='utf-8-sig', encoding_errors='replace')
+            except Exception:
+                df = pd.read_csv(io.BytesIO(contents), nrows=nrows, encoding='latin-1', encoding_errors='replace')
+    elif clean_name.endswith(('.xls', '.xlsx')):
         df = pd.read_excel(io.BytesIO(contents), nrows=nrows)
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file format for {filename}. Only CSV and Excel (.xlsx, .xls) are supported.")
+        try:
+            df = pd.read_csv(io.BytesIO(contents), nrows=nrows, encoding_errors='replace')
+        except Exception:
+            df = pd.read_excel(io.BytesIO(contents), nrows=nrows)
     
     df = df.fillna("")
+    meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
+
+    # Check if df.columns itself contains template metadata header description text
+    cols_str = " ".join([str(c) for c in df.columns]).lower()
+    if any(kw in cols_str for kw in meta_keywords):
+        if not df.empty and len(df) > 0:
+            df.columns = [str(v).strip() for v in df.iloc[0].values]
+            df = df.iloc[1:].reset_index(drop=True)
+
     # Check for 2-header row structure (e.g. Table Names in row 0, Field Names in row 1)
     if not df.empty and len(df) > 0:
         first_row_vals = [str(v).strip() for v in df.iloc[0].values]
@@ -217,6 +237,17 @@ def _parse_file_to_df(filename: str, contents: bytes, nrows: Optional[int] = Non
         if (len(col_bases) != len(set(col_bases)) or any("Unnamed" in str(c) for c in df.columns)) and len(set(first_row_vals)) == len(first_row_vals) and all(v != "" for v in first_row_vals):
             df.columns = first_row_vals
             df = df.iloc[1:].reset_index(drop=True)
+
+    # Filter out metadata header rows from data body
+    if not df.empty and len(df) > 0:
+        drop_indices = []
+        for idx in range(min(5, len(df))):
+            row_str = " ".join([str(v) for v in df.iloc[idx].values if v is not None]).lower()
+            if any(kw in row_str for kw in meta_keywords):
+                drop_indices.append(idx)
+        if drop_indices:
+            df = df.drop(index=drop_indices).reset_index(drop=True)
+
     return df
 
 @router.post("/upload")
@@ -238,11 +269,12 @@ async def upload_preview(files: List[UploadFile] = File(...)):
     try:
         for file in files:
             contents = await file.read()
-            df = _parse_file_to_df(file.filename or "data.csv", contents)
+            clean_fn = os.path.basename(file.filename or "data.csv")
+            df = _parse_file_to_df(clean_fn, contents)
             headers = [str(c) for c in df.columns]
             sample_rows = df.head(5).to_dict(orient="records")
             results.append({
-                "filename": file.filename,
+                "filename": clean_fn,
                 "headers": headers,
                 "sample_rows": sample_rows,
                 "row_count": len(df),
@@ -265,58 +297,173 @@ async def upload_merge(
         file_map: Dict[str, pd.DataFrame] = {}
         for file in files:
             contents = await file.read()
-            df = _parse_file_to_df(file.filename or "data.csv", contents)
-            file_map[file.filename or ""] = df
+            clean_fn = os.path.basename(file.filename or "data.csv")
+            df = _parse_file_to_df(clean_fn, contents)
+            file_map[clean_fn] = df
 
         if not file_map:
             raise HTTPException(status_code=400, detail="No files uploaded to merge")
 
         # Determine base file
-        base_filename = base_file if (base_file and base_file in file_map) else list(file_map.keys())[0]
-        merged_df = file_map[base_filename].copy()
+        clean_base = os.path.basename(base_file or "")
+        base_filename = None
+        for k in file_map.keys():
+            if k == clean_base or os.path.basename(k) == clean_base:
+                base_filename = k
+                break
+        if not base_filename:
+            base_filename = list(file_map.keys())[0]
 
-        # Cast all columns to string to avoid merge dtype mismatches
-        merged_df = merged_df.astype(str)
+        # Topological sort based on join_with
+        cfg_map = {os.path.basename(cfg.get("file_name", "")): cfg for cfg in join_configs if cfg.get("file_name")}
+        parent_map = {os.path.basename(cfg.get("file_name", "")): os.path.basename(cfg.get("join_with") or base_filename) for cfg in join_configs if cfg.get("file_name")}
 
-        # Sequentially join secondary files
-        for cfg in join_configs:
-            sec_name = cfg.get("file_name")
-            base_key = cfg.get("base_key")
-            join_key = cfg.get("join_key")
+        resolved = [base_filename]
+        remaining = [k for k in file_map.keys() if k != base_filename]
 
-            if not sec_name or sec_name not in file_map or sec_name == base_filename:
+        max_iters = len(remaining) + 2
+        for _ in range(max_iters):
+            if not remaining:
+                break
+            added_this_round = []
+            for t in remaining:
+                p = parent_map.get(t, base_filename)
+                if p in resolved:
+                    resolved.append(t)
+                    added_this_round.append(t)
+            for t in added_this_round:
+                if t in remaining:
+                    remaining.remove(t)
+        if remaining:
+            resolved.extend(remaining)
+
+        merged_df = file_map[base_filename].copy().astype(str)
+
+        for sec_name in resolved:
+            if sec_name == base_filename or sec_name not in file_map:
                 continue
-            if not base_key or not join_key:
-                continue
 
-            sec_df = file_map[sec_name].copy()
-            sec_df = sec_df.astype(str)
+            sec_df = file_map[sec_name].copy().astype(str)
+            cfg = cfg_map.get(sec_name, {})
 
-            # Strip keys for exact matching
-            merged_df[base_key] = merged_df[base_key].str.strip()
-            sec_df[join_key] = sec_df[join_key].str.strip()
+            key_conditions = cfg.get("key_conditions", [])
+            if not key_conditions:
+                bk = cfg.get("base_key")
+                jk = cfg.get("join_key")
+                if bk and jk:
+                    key_conditions = [{"left_key": bk, "right_key": jk}]
+
+            def _find_df_col(df: pd.DataFrame, col_name: str):
+                if not col_name:
+                    return None
+                if col_name in df.columns:
+                    return col_name
+                for c in df.columns:
+                    if str(c).strip().lower() == str(col_name).strip().lower():
+                        return c
+                for c in df.columns:
+                    if str(c).strip().lower().replace('_', '').replace(' ', '') == str(col_name).strip().lower().replace('_', '').replace(' ', ''):
+                        return c
+                return None
+
+            valid_conditions = []
+            for c in key_conditions:
+                lk = (c.get("left_key") or "").strip()
+                rk = (c.get("right_key") or "").strip()
+                if not lk or not rk:
+                    continue
+                actual_lk = _find_df_col(merged_df, lk)
+                actual_rk = _find_df_col(sec_df, rk)
+                if actual_lk and actual_rk:
+                    valid_conditions.append({"left_key": actual_lk, "right_key": actual_rk})
 
             file_tag = re.sub(r'[^a-zA-Z0-9]', '', sec_name.split('.')[0])[:8]
-            
-            merged_df = pd.merge(
-                merged_df,
-                sec_df,
-                left_on=base_key,
-                right_on=join_key,
-                how='left',
-                suffixes=('', f'_{file_tag}')
-            )
 
-            # If join_key was different from base_key, drop the redundant join_key column from merged_df
-            if join_key != base_key and join_key in merged_df.columns:
-                merged_df.drop(columns=[join_key], inplace=True, errors='ignore')
-            
-            # Also drop suffixed join key if created
-            suffixed_join_key = f"{join_key}_{file_tag}"
-            if suffixed_join_key in merged_df.columns:
-                merged_df.drop(columns=[suffixed_join_key], inplace=True, errors='ignore')
+            if valid_conditions:
+                left_keys = [c["left_key"] for c in valid_conditions]
+                right_keys = [c["right_key"] for c in valid_conditions]
+
+                # Strip keys and reset index
+                temp_merged = merged_df.reset_index(drop=True)
+                temp_sec = sec_df.reset_index(drop=True)
+
+                for lk in left_keys:
+                    if lk in temp_merged.columns:
+                        temp_merged[lk] = temp_merged[lk].astype(str).str.strip()
+                for rk in right_keys:
+                    if rk in temp_sec.columns:
+                        temp_sec[rk] = temp_sec[rk].astype(str).str.strip()
+
+                # Prevent Cartesian explosion on empty/blank keys
+                blank_vals = {"", "nan", "None", "null", "undefined", "NaN", "none"}
+                for idx, (lk, rk) in enumerate(zip(left_keys, right_keys)):
+                    if lk in temp_merged.columns and rk in temp_sec.columns:
+                        l_blank = temp_merged[lk].isin(blank_vals)
+                        r_blank = temp_sec[rk].isin(blank_vals)
+                        if l_blank.any():
+                            temp_merged.loc[l_blank, lk] = [f"__BLANK_L_{i}_{idx}__" for i in range(l_blank.sum())]
+                        if r_blank.any():
+                            temp_sec.loc[r_blank, rk] = [f"__BLANK_R_{i}_{idx}__" for i in range(r_blank.sum())]
+
+                # CRITICAL: Deduplicate right side on join keys to prevent M×N explosion
+                # Keep only the first occurrence of each key combination in the secondary table
+                temp_sec_deduped = temp_sec.drop_duplicates(subset=right_keys, keep='first')
+                logger.info(f"Merge {sec_name}: left={len(temp_merged)} rows, right={len(temp_sec_deduped)} rows (deduped from {len(temp_sec)}), keys={list(zip(left_keys, right_keys))}")
+
+                merged_df = pd.merge(
+                    temp_merged,
+                    temp_sec_deduped,
+                    left_on=left_keys,
+                    right_on=right_keys,
+                    how='left',
+                    suffixes=('', f'_{file_tag}')
+                )
+
+                logger.info(f"After merge with {sec_name}: {len(merged_df)} rows")
+
+                # Safety cap: if merge produced more than 5x the original rows, something went wrong
+                max_allowed = max(len(temp_merged), 50000)
+                if len(merged_df) > max_allowed:
+                    logger.warning(f"Merge with {sec_name} produced {len(merged_df)} rows (cap={max_allowed}), trimming to original size")
+                    merged_df = merged_df.head(len(temp_merged))
+
+                # Restore blank keys
+                for lk in left_keys:
+                    if lk in merged_df.columns:
+                        merged_df[lk] = merged_df[lk].astype(str).apply(lambda v: "" if str(v).startswith("__BLANK_") else v)
+
+                for lk, rk in zip(left_keys, right_keys):
+                    if rk != lk and rk in merged_df.columns:
+                        merged_df.drop(columns=[rk], inplace=True, errors='ignore')
+                    suffixed_rk = f"{rk}_{file_tag}"
+                    if suffixed_rk in merged_df.columns:
+                        merged_df.drop(columns=[suffixed_rk], inplace=True, errors='ignore')
+            else:
+                sec_reindexed = sec_df.reset_index(drop=True)
+                for col in sec_reindexed.columns:
+                    target_col = col if col not in merged_df.columns else f"{col}_{file_tag}"
+                    s_vals = sec_reindexed[col].tolist()
+                    if len(s_vals) < len(merged_df):
+                        s_vals = s_vals + [""] * (len(merged_df) - len(s_vals))
+                    else:
+                        s_vals = s_vals[:len(merged_df)]
+                    merged_df[target_col] = s_vals
 
         merged_df = merged_df.fillna("")
+
+        # Guarantee unique column names for records orientation
+        seen_cols: Dict[str, int] = {}
+        unique_cols: List[str] = []
+        for c in merged_df.columns:
+            c_str = str(c).strip()
+            if c_str in seen_cols:
+                seen_cols[c_str] += 1
+                unique_cols.append(f"{c_str}_{seen_cols[c_str]}")
+            else:
+                seen_cols[c_str] = 0
+                unique_cols.append(c_str)
+        merged_df.columns = unique_cols
+
         headers = [str(c) for c in merged_df.columns]
         data = merged_df.to_dict(orient="records")
 
@@ -349,7 +496,7 @@ def extract_value_from_row(row: dict, src_key: str) -> str:
         return ""
     if src_key in row and row[src_key] is not None and str(row[src_key]).strip() != "":
         return str(row[src_key])
-    clean_src = re.sub(r"^\[\d+\]\s*", "", src_key).strip()
+    clean_src = re.sub(r"^\[\d+\]\s*", "", str(src_key)).strip()
     if clean_src in row and row[clean_src] is not None and str(row[clean_src]).strip() != "":
         return str(row[clean_src])
     base_src = clean_src.split(".")[-1].strip()
@@ -365,14 +512,37 @@ def extract_value_from_row(row: dict, src_key: str) -> str:
         r_base_norm = norm_str(r_clean.split(".")[-1])
         if r_norm in (norm_target, norm_base) or r_base_norm in (norm_target, norm_base):
             return str(r_v)
+
+    # Fallback substring match
+    if len(norm_base) >= 3:
+        for r_k, r_v in row.items():
+            if r_v is None or str(r_v).strip() == "":
+                continue
+            r_norm = norm_str(str(r_k).split(".")[-1])
+            if r_norm == norm_base or (len(r_norm) >= 3 and (r_norm in norm_base or norm_base in r_norm)):
+                return str(r_v)
+
     return ""
+
+def is_metadata_row(row: dict) -> bool:
+    if not row or not isinstance(row, dict):
+        return False
+    row_text = " ".join([str(v) for v in row.values() if v is not None]).lower()
+    meta_keywords = [
+        "hris element", "business key:", "effective-dated:", 
+        "entity perperson", "technical name", "field id:", "element id"
+    ]
+    return any(kw in row_text for kw in meta_keywords)
 
 @router.post("/execute_file")
 def execute_file_extraction(req: ExecuteFileRequest):
     try:
         agent = ExtractAgent()
         
-        raw_data = req.raw_data
+        # 1. Filter out metadata rows
+        raw_data = [r for r in (req.raw_data or []) if isinstance(r, dict) and not is_metadata_row(r)]
+
+        # 2. Filter row if it duplicates mapping source fields
         mapping_src_fields = set(
             str(m.get('src', '')).split('.')[-1].lower() 
             for m in req.mappings if m.get('src')
@@ -386,6 +556,7 @@ def execute_file_extraction(req: ExecuteFileRequest):
             if len(first_row_vals.intersection(mapping_src_fields)) >= 2:
                 raw_data = raw_data[1:]
 
+        # 3. Project mapped fields strictly under source field names for Step 3 Extract display
         harmonized_results = []
         for row in raw_data:
             harmonized_row = {}
@@ -394,9 +565,7 @@ def execute_file_extraction(req: ExecuteFileRequest):
                 if not src_full:
                     continue
                 
-                sap_key = m.get('sap')
                 transform = m.get('tr', 'none')
-                
                 raw_val = extract_value_from_row(row, src_full)
 
                 if transform == 'trim':
@@ -410,7 +579,9 @@ def execute_file_extraction(req: ExecuteFileRequest):
                 else:
                     val = raw_val
                 
-                harmonized_row[src_full] = val
+                # Display under clean source field name
+                clean_src_key = re.sub(r"^\[\d+\]\s*", "", str(src_full)).strip()
+                harmonized_row[clean_src_key] = val
                 
             harmonized_results.append(harmonized_row)
         

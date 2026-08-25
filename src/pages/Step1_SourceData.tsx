@@ -9,7 +9,7 @@ import {
   Card, CardHeader, CardBody, Button, InfoBox, Badge, DataTable,
   PageLayout, PageGrid, GridCol, PageHeader, Divider, SidebarItem, Select, ConfirmModal
 } from '@/components/shared';
-import { Zap, ArrowRight, Link2, Database, LayoutTemplate, FileSpreadsheet, Layers, Cloud, HardDrive, Users, Building2, Package, Cable, Settings2, Download, FolderGit2, Plus, Edit3, Save, Trash2, CheckCircle2 } from 'lucide-react';
+import { Zap, ArrowRight, Link2, Database, LayoutTemplate, FileSpreadsheet, Layers, Cloud, HardDrive, Users, Building2, Package, Cable, Settings2, Download, FolderGit2, Plus, Edit3, Save, Trash2, CheckCircle2, X } from 'lucide-react';
 
 interface StagedFile {
   file: File;
@@ -18,6 +18,7 @@ interface StagedFile {
   sample_rows: any[];
   row_count: number;
   columns_count: number;
+  size: string;
 }
 
 const objIcons = {
@@ -98,26 +99,122 @@ export function Step1SourceData() {
     }
   };
 
+interface KeyCondition {
+  left_key: string;
+  right_key: string;
+}
+
+interface SecondaryJoinConfig {
+  file_name: string;
+  join_with: string;
+  key_conditions: KeyCondition[];
+}
+
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [baseFileName, setBaseFileName] = useState<string>('');
-  const [baseKey, setBaseKey] = useState<string>('');
-  const [joinKeys, setJoinKeys] = useState<Record<string, string>>({}); // { [filename]: joinKey }
+  const [joinConfigs, setJoinConfigs] = useState<Record<string, SecondaryJoinConfig>>({});
 
-  const findBestKeyMatch = (headers: string[], targetKeyName: string = ''): string => {
-    if (!headers || headers.length === 0) return '';
-    if (targetKeyName) {
-      const exact = headers.find(h => h.toLowerCase() === targetKeyName.toLowerCase());
-      if (exact) return exact;
-      const cleanTarget = targetKeyName.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const cleanMatch = headers.find(h => h.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanTarget);
-      if (cleanMatch) return cleanMatch;
+  const ERP_KEY_SYNONYMS: Record<string, string[]> = {
+    customer: ['kunnr', 'customerid', 'customer_id', 'cust_id', 'custid', 'customer', 'account_num', 'account_number', 'customerno', 'customer_no', 'client_id', 'client_no'],
+    company_code: ['bukrs', 'company_code', 'companycode', 'cocode', 'co_code', 'comp_code', 'legal_entity', 'company', 'comp_id', 'compid'],
+    employee: ['pernr', 'person_id_external', 'person_id', 'userid', 'user_id', 'employee_id', 'empid', 'emp_id', 'staff_id'],
+    material: ['matnr', 'material_id', 'mat_id', 'item_id', 'item_code', 'product_id', 'sku'],
+    vendor: ['lifnr', 'vendor_id', 'supplier_id', 'supp_id', 'vendor_num'],
+    sales_org: ['vkorg', 'sales_org', 'sales_organization', 'salesorg'],
+    order: ['vbeln', 'order_id', 'sales_order', 'order_num'],
+    plant: ['werks', 'plant', 'plant_id', 'facility'],
+    address: ['address_id', 'addressid', 'addr_id', 'addrid'],
+  };
+
+  const findAllMatchingKeyPairs = (parentHeaders: string[], childHeaders: string[]): KeyCondition[] => {
+    if (!parentHeaders.length || !childHeaders.length) {
+      return [{ left_key: parentHeaders[0] || '', right_key: childHeaders[0] || '' }];
     }
-    const priorityKeywords = ['person_id_external', 'userid', 'user_id', 'employee_id', 'empid', 'id', 'code', 'number', 'num'];
-    for (const kw of priorityKeywords) {
-      const match = headers.find(h => h.toLowerCase().includes(kw));
-      if (match) return match;
+
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const matchedPairs: KeyCondition[] = [];
+    const usedParent = new Set<string>();
+    const usedChild = new Set<string>();
+
+    // 1. Exact matches (case-insensitive)
+    for (const ph of parentHeaders) {
+      if (usedParent.has(ph)) continue;
+      const exact = childHeaders.find(ch => !usedChild.has(ch) && ch.toLowerCase() === ph.toLowerCase());
+      if (exact) {
+        matchedPairs.push({ left_key: ph, right_key: exact });
+        usedParent.add(ph);
+        usedChild.add(exact);
+      }
     }
-    return headers[0];
+
+    // 2. Normalized matches (e.g. CustID <-> Cust_ID, CoCode <-> Co_Code)
+    for (const ph of parentHeaders) {
+      if (usedParent.has(ph)) continue;
+      const normP = norm(ph);
+      const normMatch = childHeaders.find(ch => !usedChild.has(ch) && norm(ch) === normP);
+      if (normMatch) {
+        matchedPairs.push({ left_key: ph, right_key: normMatch });
+        usedParent.add(ph);
+        usedChild.add(normMatch);
+      }
+    }
+
+    // 3. ERP synonym groups (e.g. Customer, Company Code, Employee, etc.)
+    for (const group of Object.values(ERP_KEY_SYNONYMS)) {
+      const parentMatches = parentHeaders.filter(ph => {
+        if (usedParent.has(ph)) return false;
+        const np = norm(ph);
+        return group.some(syn => np === syn || np.includes(syn) || syn.includes(np));
+      });
+
+      const childMatches = childHeaders.filter(ch => {
+        if (usedChild.has(ch)) return false;
+        const nc = norm(ch);
+        return group.some(syn => nc === syn || nc.includes(syn) || syn.includes(nc));
+      });
+
+      const pairCount = Math.min(parentMatches.length, childMatches.length);
+      for (let i = 0; i < pairCount; i++) {
+        const ph = parentMatches[i];
+        const ch = childMatches[i];
+        if (!usedParent.has(ph) && !usedChild.has(ch)) {
+          matchedPairs.push({ left_key: ph, right_key: ch });
+          usedParent.add(ph);
+          usedChild.add(ch);
+        }
+      }
+    }
+
+    // 4. Common key/ID indicators if no match found yet
+    if (matchedPairs.length === 0) {
+      const idKeywords = ['id', 'key', 'code', 'num', 'number'];
+      for (const kw of idKeywords) {
+        const pId = parentHeaders.find(ph => !usedParent.has(ph) && norm(ph).includes(kw));
+        const cId = childHeaders.find(ch => !usedChild.has(ch) && norm(ch).includes(kw));
+        if (pId && cId) {
+          matchedPairs.push({ left_key: pId, right_key: cId });
+          usedParent.add(pId);
+          usedChild.add(cId);
+          break;
+        }
+      }
+    }
+
+    if (matchedPairs.length === 0) {
+      matchedPairs.push({
+        left_key: parentHeaders[0] || '',
+        right_key: childHeaders[0] || ''
+      });
+    }
+
+    return matchedPairs;
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (!bytes) return '0 KB';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const handleFilesSelected = async (fileList: FileList | File[] | null) => {
@@ -142,14 +239,18 @@ export function Step1SourceData() {
       }
 
       const resData = await res.json();
-      const previewedList: StagedFile[] = (resData.files || []).map((pf: any, idx: number) => ({
-        file: filesArray[idx] || filesArray.find(f => f.name === pf.filename) || filesArray[0],
-        filename: pf.filename,
-        headers: pf.headers || [],
-        sample_rows: pf.sample_rows || [],
-        row_count: pf.row_count || 0,
-        columns_count: pf.columns_count || (pf.headers ? pf.headers.length : 0),
-      }));
+      const previewedList: StagedFile[] = (resData.files || []).map((pf: any, idx: number) => {
+        const fileObj = filesArray[idx] || filesArray.find(f => f.name === pf.filename) || filesArray[0];
+        return {
+          file: fileObj,
+          filename: pf.filename,
+          headers: pf.headers || [],
+          sample_rows: pf.sample_rows || [],
+          row_count: pf.row_count || 0,
+          columns_count: pf.columns_count || (pf.headers ? pf.headers.length : 0),
+          size: formatFileSize(fileObj?.size || pf.file_size || 0),
+        };
+      });
 
       // Combine with existing staged files (replace matching filenames, append new ones)
       const existingMap = new Map(stagedFiles.map(f => [f.filename, f]));
@@ -165,22 +266,30 @@ export function Step1SourceData() {
         setBaseFileName(currentBase);
 
         const baseFileObj = combinedList.find(f => f.filename === currentBase);
-        const currentBaseKey = baseKey && baseFileObj?.headers.includes(baseKey)
-          ? baseKey
-          : findBestKeyMatch(baseFileObj?.headers || []);
-        setBaseKey(currentBaseKey);
+        const baseHeaders = baseFileObj?.headers || [];
 
-        const updatedJoinKeys: Record<string, string> = { ...joinKeys };
-        combinedList.filter(f => f.filename !== currentBase).forEach(sec => {
-          if (!updatedJoinKeys[sec.filename] || !sec.headers.includes(updatedJoinKeys[sec.filename])) {
-            updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, currentBaseKey);
+        const updatedConfigs: Record<string, SecondaryJoinConfig> = { ...joinConfigs };
+        combinedList.forEach((sec) => {
+          if (sec.filename !== currentBase) {
+            const targetParent = updatedConfigs[sec.filename]?.join_with || currentBase;
+            const parentObj = combinedList.find(f => f.filename === targetParent);
+            const parentHeaders = parentObj?.headers || baseHeaders;
+
+            if (!updatedConfigs[sec.filename] || updatedConfigs[sec.filename].key_conditions.length === 0) {
+              const matchedPairs = findAllMatchingKeyPairs(parentHeaders, sec.headers);
+              updatedConfigs[sec.filename] = {
+                file_name: sec.filename,
+                join_with: targetParent,
+                key_conditions: matchedPairs,
+              };
+            }
           }
         });
-        setJoinKeys(updatedJoinKeys);
+        setJoinConfigs(updatedConfigs);
 
         // If only 1 file is staged, auto load directly
         if (combinedList.length === 1) {
-          await executeMergeDirect(combinedList, currentBase, currentBaseKey, {});
+          await executeMergeDirect(combinedList, currentBase, {});
         } else {
           toast(`Staged ${combinedList.length} files. Configure your Primary & Join Keys below to merge!`, 'info');
         }
@@ -197,56 +306,149 @@ export function Step1SourceData() {
   const handleBaseFileChange = (newBaseName: string) => {
     setBaseFileName(newBaseName);
     const baseObj = stagedFiles.find(f => f.filename === newBaseName);
-    if (baseObj) {
-      const newBaseKey = findBestKeyMatch(baseObj.headers);
-      setBaseKey(newBaseKey);
-      const updatedJoinKeys: Record<string, string> = {};
-      stagedFiles.filter(f => f.filename !== newBaseName).forEach(sec => {
-        updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, newBaseKey);
-      });
-      setJoinKeys(updatedJoinKeys);
-    }
+    if (!baseObj) return;
+
+    const updatedConfigs: Record<string, SecondaryJoinConfig> = {};
+    stagedFiles.filter(f => f.filename !== newBaseName).forEach(sec => {
+      const prevJoinWith = joinConfigs[sec.filename]?.join_with;
+      const targetParent = (prevJoinWith && prevJoinWith !== sec.filename && stagedFiles.some(f => f.filename === prevJoinWith))
+        ? prevJoinWith
+        : newBaseName;
+      const parentObj = stagedFiles.find(f => f.filename === targetParent);
+      const parentHeaders = parentObj?.headers || baseObj.headers;
+      const matchedPairs = findAllMatchingKeyPairs(parentHeaders, sec.headers);
+
+      updatedConfigs[sec.filename] = {
+        file_name: sec.filename,
+        join_with: targetParent,
+        key_conditions: matchedPairs
+      };
+    });
+    setJoinConfigs(updatedConfigs);
   };
 
-  const handleBaseKeyChange = (newKey: string) => {
-    setBaseKey(newKey);
-    const updatedJoinKeys: Record<string, string> = { ...joinKeys };
-    stagedFiles.filter(f => f.filename !== baseFileName).forEach(sec => {
-      updatedJoinKeys[sec.filename] = findBestKeyMatch(sec.headers, newKey);
+  const updateJoinParent = (secFilename: string, newParent: string) => {
+    const parentObj = stagedFiles.find(f => f.filename === newParent);
+    const parentHeaders = parentObj?.headers || [];
+    const secObj = stagedFiles.find(f => f.filename === secFilename);
+    const secHeaders = secObj?.headers || [];
+
+    const matchedPairs = findAllMatchingKeyPairs(parentHeaders, secHeaders);
+    setJoinConfigs(prev => ({
+      ...prev,
+      [secFilename]: {
+        file_name: secFilename,
+        join_with: newParent,
+        key_conditions: matchedPairs
+      }
+    }));
+  };
+
+  const updateKeyCondition = (secFilename: string, condIdx: number, field: 'left_key' | 'right_key', val: string) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename] || { file_name: secFilename, join_with: baseFileName, key_conditions: [] };
+      const nextConds = current.key_conditions.map((c, i) => i === condIdx ? { ...c, [field]: val } : c);
+      return {
+        ...prev,
+        [secFilename]: { ...current, key_conditions: nextConds }
+      };
     });
-    setJoinKeys(updatedJoinKeys);
+  };
+
+  const addCompositeKeyCondition = (secFilename: string) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename] || { file_name: secFilename, join_with: baseFileName, key_conditions: [] };
+      const parentName = current.join_with || baseFileName;
+      const parentObj = stagedFiles.find(f => f.filename === parentName);
+      const parentHeaders = parentObj?.headers || [];
+      const secObj = stagedFiles.find(f => f.filename === secFilename);
+      const secHeaders = secObj?.headers || [];
+
+      const usedLeft = new Set(current.key_conditions.map(c => c.left_key).filter(Boolean));
+      const usedRight = new Set(current.key_conditions.map(c => c.right_key).filter(Boolean));
+
+      const unusedParent = parentHeaders.filter(h => !usedLeft.has(h));
+      const unusedChild = secHeaders.filter(h => !usedRight.has(h));
+
+      const candidatePairs = findAllMatchingKeyPairs(
+        unusedParent.length > 0 ? unusedParent : parentHeaders,
+        unusedChild.length > 0 ? unusedChild : secHeaders
+      );
+
+      const nextPair = candidatePairs[0] || {
+        left_key: unusedParent[0] || parentHeaders[0] || '',
+        right_key: unusedChild[0] || secHeaders[0] || ''
+      };
+
+      return {
+        ...prev,
+        [secFilename]: {
+          ...current,
+          key_conditions: [...current.key_conditions, nextPair]
+        }
+      };
+    });
+  };
+
+  const removeCompositeKeyCondition = (secFilename: string, condIdx: number) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename];
+      if (!current || current.key_conditions.length <= 1) return prev;
+      return {
+        ...prev,
+        [secFilename]: {
+          ...current,
+          key_conditions: current.key_conditions.filter((_, i) => i !== condIdx)
+        }
+      };
+    });
   };
 
   const executeMergeDirect = async (
     filesList: StagedFile[],
     baseName: string,
-    currentBaseKey: string,
-    currentJoinKeys: Record<string, string>
+    configs: Record<string, SecondaryJoinConfig>
   ) => {
     if (filesList.length === 0) return;
 
     setIsUploading(true);
-    showLoad('Merging Datasets...', `Performing relational Left Join on ${filesList.length} files`, ['Combining fields & deduplicating keys...']);
+    showLoad('Merging Datasets...', `Performing relational Left Join on ${filesList.length} files`, ['Combining fields & resolving composite keys...']);
 
-    const formData = new FormData();
-    filesList.forEach(sf => formData.append('files', sf.file));
-
-    const joinConfigs = filesList
-      .filter(sf => sf.filename !== baseName)
-      .map(sf => ({
-        file_name: sf.filename,
-        base_key: currentBaseKey,
-        join_key: currentJoinKeys[sf.filename] || currentBaseKey
-      }));
-
-    formData.append('join_config_json', JSON.stringify(joinConfigs));
-    formData.append('base_file', baseName);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
     try {
+      const formData = new FormData();
+      filesList.forEach(sf => formData.append('files', sf.file));
+
+      const configsArray = filesList
+        .filter(sf => sf.filename !== baseName)
+        .map(sf => {
+          const cfg = configs[sf.filename] || {
+            file_name: sf.filename,
+            join_with: baseName,
+            key_conditions: findAllMatchingKeyPairs(
+              filesList.find(f => f.filename === baseName)?.headers || [],
+              sf.headers
+            )
+          };
+          return {
+            file_name: sf.filename,
+            join_with: cfg.join_with || baseName,
+            key_conditions: (cfg.key_conditions || []).filter(c => c.left_key && c.right_key)
+          };
+        });
+
+      formData.append('join_config_json', JSON.stringify(configsArray));
+      formData.append('base_file', baseName);
+
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload-merge`, {
         method: 'POST',
-        body: formData
+        body: formData,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ detail: 'Merge failed' }));
@@ -259,12 +461,25 @@ export function Step1SourceData() {
         updates: {
           rawData: data.data,
           headers: data.headers,
-          uploadedData: data.data
+          uploadedData: data.data,
+          uploadedFileName: baseName,
+          extracted: [],
+          extractedTables: [],
+          edaStats: [],
+          reportMetrics: null,
+          complianceData: [],
+          aiReport: null,
+          isDataSaved: false,
         }
       });
       toast(`Successfully merged ${filesList.length} files into ${data.headers.length} columns and ${data.data.length} records!`, 'ok');
     } catch (err: any) {
-      toast(err.message || 'Merge failed', 'err');
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        toast('Merge timed out after 60 seconds. Try simplifying your join keys or reducing file sizes.', 'err');
+      } else {
+        toast(err.message || 'Merge failed', 'err');
+      }
     } finally {
       setIsUploading(false);
       hideLoad();
@@ -272,20 +487,20 @@ export function Step1SourceData() {
   };
 
   const handleMergeClick = () => {
-    executeMergeDirect(stagedFiles, baseFileName, baseKey, joinKeys);
+    executeMergeDirect(stagedFiles, baseFileName, joinConfigs);
   };
 
   const handleRemoveStagedFile = (filename: string) => {
     const remaining = stagedFiles.filter(f => f.filename !== filename);
     setStagedFiles(remaining);
-    if (remaining.length > 0) {
-      if (baseFileName === filename) {
-        handleBaseFileChange(remaining[0].filename);
-      }
-    } else {
+    const updatedConfigs = { ...joinConfigs };
+    delete updatedConfigs[filename];
+    setJoinConfigs(updatedConfigs);
+
+    if (baseFileName === filename && remaining.length > 0) {
+      handleBaseFileChange(remaining[0].filename);
+    } else if (remaining.length === 0) {
       setBaseFileName('');
-      setBaseKey('');
-      setJoinKeys({});
     }
   };
 
@@ -601,135 +816,237 @@ export function Step1SourceData() {
                       </Button>
                     </div>
 
-                    {/* Staged Files List */}
+                    {/* Staged Files List & Key Modeling */}
                     {stagedFiles.length > 0 && (
-                      <div className="space-y-2 p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]">
-                        <div className="flex items-center justify-between text-[11px] font-bold text-[var(--text-primary)]">
-                          <span className="flex items-center gap-1.5">
-                            <Layers className="w-3.5 h-3.5 text-primary-500" />
-                            Staged Files ({stagedFiles.length})
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              fileInputRef.current?.click();
-                            }}
-                            disabled={isUploading}
-                            className="flex items-center gap-1 text-[10.5px] font-semibold text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 transition-colors cursor-pointer px-2 py-0.5 rounded bg-primary-50 dark:bg-primary-950/40 border border-primary-200 dark:border-primary-900/40"
-                          >
-                            <Plus className="w-3 h-3" />
-                            <span>Add File</span>
-                          </button>
-                        </div>
-
-                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                      <div className="space-y-3 pt-1">
+                        {/* Staged Files List - Matching exact screenshot */}
+                        <div className="space-y-2">
                           {stagedFiles.map((sf) => (
-                            <div key={sf.filename} className="flex items-center justify-between p-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] text-[11px]">
-                              <div className="flex items-center gap-2 truncate">
-                                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                                <span className="font-semibold text-[var(--text-primary)] truncate" title={sf.filename}>{sf.filename}</span>
-                                <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-[var(--bg-primary)] text-[var(--text-tertiary)] border border-[var(--border)]">
-                                  {sf.columns_count} cols · {sf.row_count} rows
-                                </span>
+                            <div
+                              key={sf.filename}
+                              className="flex items-center justify-between p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-emerald-300 transition-colors"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40">
+                                  <FileSpreadsheet className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <div className="text-[13px] font-bold text-gray-900 dark:text-gray-100">{sf.filename}</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {sf.size} <span className="mx-1">•</span> <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{sf.columns_count} columns</span>
+                                  </div>
+                                </div>
                               </div>
                               <button
+                                type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleRemoveStagedFile(sf.filename);
                                 }}
-                                className="text-[var(--text-tertiary)] hover:text-red-500 p-1 transition-colors"
+                                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer"
                                 title="Remove file"
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <X className="w-4 h-4" />
                               </button>
                             </div>
                           ))}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            fileInputRef.current?.click();
-                          }}
-                          disabled={isUploading}
-                          className="w-full py-1.5 px-2.5 border border-dashed border-[var(--border)] rounded-md text-[10.5px] font-medium text-[var(--text-secondary)] hover:text-primary-600 hover:border-primary-400 dark:hover:text-primary-400 transition-colors flex items-center justify-center gap-1.5 bg-[var(--bg-tertiary)]/40 hover:bg-[var(--bg-tertiary)] cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5 text-primary-500" />
-                          <span>Add another file (.xlsx, .xls, .csv)</span>
-                        </button>
+                        {/* Divider Line */}
+                        <hr className="border-gray-200 dark:border-gray-800 my-3" />
 
-                        {/* Multi-File Relational Join Configuration */}
+                        {/* Multi-File Relational Join Configuration (Data Modeling) */}
                         {stagedFiles.length > 1 && (
-                          <div className="pt-2.5 mt-2 border-t border-[var(--border)] space-y-2.5">
-                            <div className="text-[10.5px] font-bold uppercase tracking-wider text-primary-600 dark:text-primary-400 flex items-center gap-1">
-                              <Link2 className="w-3.5 h-3.5" />
-                              Relational Join Configuration (Left Join)
+                          <div className="space-y-3 pt-1">
+                            {/* Section Header */}
+                            <div className="flex items-center gap-2">
+                              <Link2 className="w-4 h-4 text-emerald-500" />
+                              <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100">
+                                Key Join Configuration (Data Modeling)
+                              </span>
                             </div>
 
-                            {/* Base Table & Primary Key */}
-                            <div className="grid grid-cols-2 gap-2 p-2 rounded-md bg-[var(--bg-primary)] border border-primary-200 dark:border-primary-900/40">
-                              <div>
-                                <label className="text-[9.5px] font-bold text-[var(--text-tertiary)] uppercase block mb-1">
-                                  Base Table (PK Table)
-                                </label>
-                                <Select
-                                  value={baseFileName}
-                                  onChange={handleBaseFileChange}
-                                  options={stagedFiles.map(f => ({ value: f.filename, label: f.filename }))}
-                                />
-                              </div>
-                              <div>
-                                <label className="text-[9.5px] font-bold text-[var(--text-tertiary)] uppercase block mb-1">
-                                  Primary Key (Base Key)
-                                </label>
-                                <Select
-                                  value={baseKey}
-                                  onChange={handleBaseKeyChange}
-                                  options={(stagedFiles.find(f => f.filename === baseFileName)?.headers || []).map(h => ({
-                                    value: h,
-                                    label: h
-                                  }))}
-                                />
-                              </div>
+                            {/* PRIMARY / BASE TABLE (MASTER TABLE) */}
+                            <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/40 space-y-1.5 shadow-xs">
+                              <label className="text-[9.5px] font-mono font-bold uppercase tracking-wider text-gray-400 block">
+                                PRIMARY / BASE TABLE (MASTER TABLE)
+                              </label>
+                              <select
+                                value={baseFileName}
+                                onChange={(e) => handleBaseFileChange(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg text-[12.5px] font-semibold bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer"
+                              >
+                                {stagedFiles.map(f => (
+                                  <option key={f.filename} value={f.filename}>{f.filename}</option>
+                                ))}
+                              </select>
                             </div>
 
-                            {/* Foreign Key for each Secondary Table */}
-                            <div className="space-y-2">
-                              {stagedFiles.filter(f => f.filename !== baseFileName).map(sec => (
-                                <div key={sec.filename} className="p-2 rounded-md bg-[var(--bg-tertiary)] border border-[var(--border)] space-y-1">
-                                  <div className="flex items-center justify-between text-[10px] font-semibold text-[var(--text-secondary)]">
-                                    <span>Join Table: <strong className="text-[var(--text-primary)]">{sec.filename}</strong></span>
-                                    {joinKeys[sec.filename] && (
-                                      <span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-mono">⚡ Auto-matched</span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-[var(--text-tertiary)] whitespace-nowrap">Foreign Key:</span>
-                                    <div className="flex-1">
-                                      <Select
-                                        value={joinKeys[sec.filename] || ''}
-                                        onChange={(val) => setJoinKeys(prev => ({ ...prev, [sec.filename]: val }))}
-                                        options={sec.headers.map(h => ({ value: h, label: h }))}
-                                      />
+                            {/* Secondary Table Join Cards */}
+                            <div className="space-y-3.5 pt-1">
+                              {stagedFiles.filter(f => f.filename !== baseFileName).map((sec) => {
+                                const config = joinConfigs[sec.filename] || {
+                                  file_name: sec.filename,
+                                  join_with: baseFileName,
+                                  key_conditions: [{ left_key: '', right_key: '' }]
+                                };
+
+                                const keyConditions = (config.key_conditions && config.key_conditions.length > 0)
+                                  ? config.key_conditions
+                                  : [{ left_key: '', right_key: '' }];
+
+                                const parentName = config.join_with || baseFileName;
+                                const parentObj = stagedFiles.find(f => f.filename === parentName);
+                                const parentHeaders = parentObj?.headers || [];
+                                const secHeaders = sec.headers || [];
+
+                                const availableParents = Array.from(new Set([
+                                  baseFileName,
+                                  ...stagedFiles.map(f => f.filename),
+                                ])).filter(p => p && p !== sec.filename);
+
+                                return (
+                                  <div
+                                    key={sec.filename}
+                                    className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs space-y-3"
+                                  >
+                                    {/* Card Header */}
+                                    <div className="flex items-center justify-between flex-wrap gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <Layers className="w-4 h-4 text-emerald-500" />
+                                        <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100">
+                                          Join: {sec.filename}
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/60 text-[11px]">
+                                          <span className="text-gray-400 font-mono">Join With:</span>
+                                          <select
+                                            value={config.join_with || baseFileName}
+                                            onChange={(e) => updateJoinParent(sec.filename, e.target.value)}
+                                            className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-none cursor-pointer"
+                                          >
+                                            {availableParents.map(p => (
+                                              <option key={p} value={p}>
+                                                {p === baseFileName ? `${p} (Base)` : p}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        {keyConditions.length > 1 && (
+                                          <span className="px-2 py-0.5 rounded text-[9.5px] font-mono font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                                            {keyConditions.length} KEY CONDITIONS
+                                          </span>
+                                        )}
+
+                                        <span className="text-[10px] font-mono font-bold tracking-wider text-gray-400 uppercase">
+                                          LEFT JOIN
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Condition Box */}
+                                    <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-700/80 bg-gray-50/40 dark:bg-gray-800/30 space-y-3">
+                                      {keyConditions.map((cond, cIdx) => (
+                                        <React.Fragment key={cIdx}>
+                                          {cIdx > 0 && (
+                                            <div className="flex items-center justify-center pt-1 pb-0.5">
+                                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 uppercase tracking-wider shadow-2xs">
+                                                AND (COMPOSITE KEY)
+                                              </span>
+                                            </div>
+                                          )}
+                                          <div className="flex items-center gap-3">
+                                            {/* Left Dropdown (Parent Key) */}
+                                            <div className="flex-1 min-w-0 space-y-1">
+                                              <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                                {parentName} {config.key_conditions.length > 1 ? `Key #${cIdx + 1}` : 'Key'}
+                                              </label>
+                                              <select
+                                                value={cond.left_key || ''}
+                                                onChange={(e) => updateKeyCondition(sec.filename, cIdx, 'left_key', e.target.value)}
+                                                className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                              >
+                                                <option value="">Select {parentName} Key...</option>
+                                                {parentHeaders.map(h => (
+                                                  <option key={h} value={h}>{h}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+
+                                            {/* Arrow */}
+                                            <div className="shrink-0 pt-4 text-emerald-500 font-bold text-base">
+                                              ➔
+                                            </div>
+
+                                            {/* Right Dropdown (Child Key) */}
+                                            <div className="flex-1 min-w-0 space-y-1">
+                                              <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                                {sec.filename} {config.key_conditions.length > 1 ? `Key #${cIdx + 1}` : 'Foreign Key'}
+                                              </label>
+                                              <select
+                                                value={cond.right_key || ''}
+                                                onChange={(e) => updateKeyCondition(sec.filename, cIdx, 'right_key', e.target.value)}
+                                                className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                              >
+                                                <option value="">Select {sec.filename} Key...</option>
+                                                {secHeaders.map(h => (
+                                                  <option key={h} value={h}>{h}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+
+                                            {/* Delete Condition Button / Spacer */}
+                                            {keyConditions.length > 1 && cIdx > 0 ? (
+                                              <div className="shrink-0 pt-4">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => removeCompositeKeyCondition(sec.filename, cIdx)}
+                                                  className="p-1.5 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                                                  title="Remove key condition"
+                                                >
+                                                  <Trash2 className="w-4 h-4 text-red-500" />
+                                                </button>
+                                              </div>
+                                            ) : keyConditions.length > 1 ? (
+                                              <div className="shrink-0 pt-4 w-7" />
+                                            ) : null}
+                                          </div>
+                                        </React.Fragment>
+                                      ))}
+                                    </div>
+
+                                    {/* Add Composite Key Condition Button */}
+                                    <div>
+                                      <button
+                                        type="button"
+                                        onClick={() => addCompositeKeyCondition(sec.filename)}
+                                        className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                      >
+                                        <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>Add Composite Key Condition</span>
+                                      </button>
                                     </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
 
-                            {/* Merge Execution Button */}
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              icon={<Zap className="w-3.5 h-3.5" />}
-                              className="w-full justify-center mt-1"
-                              disabled={isUploading || !baseKey}
-                              onClick={handleMergeClick}
-                            >
-                              {isUploading ? 'Merging Datasets...' : 'Join & Merge Datasets'}
-                            </Button>
+                            {/* Bottom Action Button */}
+                            <div className="pt-2">
+                              <Button
+                                variant="primary"
+                                size="lg"
+                                icon={<Link2 className="w-4 h-4" />}
+                                className="w-full justify-center py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] rounded-xl shadow-sm cursor-pointer"
+                                disabled={isUploading || stagedFiles.length === 0}
+                                onClick={handleMergeClick}
+                              >
+                                {isUploading ? 'Merging Datasets…' : `Merge & Load ${stagedFiles.length} Tables`}
+                              </Button>
+                            </div>
                           </div>
                         )}
                       </div>

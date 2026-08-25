@@ -42,6 +42,7 @@ export interface MigrationState {
   spart: string;
   rawData: Record<string, string>[];
   uploadedData: Record<string, any>[];
+  uploadedFileName: string;
   headers: string[];
   mapping: MappingEntry[];
   extracted: Record<string, string>[];
@@ -97,6 +98,7 @@ const defaultState: MigrationState = {
   spart: '00',
   rawData: [],
   uploadedData: [],
+  uploadedFileName: '',
   headers: [],
   mapping: [],
   extracted: [],

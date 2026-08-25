@@ -595,44 +595,28 @@ You MUST return the output as a valid JSON object matching this exact schema:
                     return True
             return False
 
-        # 2. Group columns by sheet dynamically
-        cols_by_table = {}
+        primary_sheet = obj_name if obj_name.endswith("Data") else f"{obj_name} Data"
+
+        # Deduplicate columns by normalized base field name so fields appear only once
+        meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
+        seen_bases = set()
+        final_cols = []
         for col in all_cols:
-            sheets = get_col_sheets(col)
-            for sheet in sheets:
-                if sheet not in cols_by_table:
-                    cols_by_table[sheet] = []
-                if col not in cols_by_table[sheet]:
-                    cols_by_table[sheet].append(col)
-
-        # 3. Sort key columns first for each table, and ensure main primary key is present in all sheets
-        main_keys = []
-        for c in all_cols:
-            c_clean = re.sub(r"^\[\d+\]", "", c).upper().replace("_", "-")
-            if any(k == c_clean or k in c_clean for k in ["PERSON-ID-EXTERNAL", "USER-ID", "KUNNR", "LIFNR", "MATNR", "ACCOUNT-NUMBER", "PARTY-NUMBER"]):
-                if c not in main_keys:
-                    main_keys.append(c)
-
-        result_tables = []
-        for sheet, cols in cols_by_table.items():
-            if not cols:
+            col_clean = re.sub(r"^\[\d+\]", "", str(col)).strip()
+            col_lower = col_clean.lower()
+            if any(kw in col_lower for kw in meta_keywords):
                 continue
-            sheet_cols = list(cols)
-            for mk in reversed(main_keys):
-                if mk not in sheet_cols:
-                    sheet_cols.insert(0, mk)
+            col_base = norm_str(col_clean.split(".")[-1])
+            if col_base in seen_bases:
+                continue
+            seen_bases.add(col_base)
+            final_cols.append(col)
 
-            key_cols = [c for c in sheet_cols if is_column_key(c)]
-            non_key_cols = [c for c in sheet_cols if c not in key_cols]
-            final_cols = key_cols + non_key_cols
-            
-            result_tables.append({
-                "table_name": sheet,
-                "columns": final_cols,
-                "row_count": len(harmonized_results)
-            })
-
-        return result_tables
+        return [{
+            "table_name": primary_sheet,
+            "columns": final_cols,
+            "row_count": len(harmonized_results)
+        }]
 
     group_records_by_sf_structure = group_records_by_sap_structure
 

@@ -145,9 +145,25 @@ export function getTableDisplayData(
   const srcNormToSapKeys = new Map<string, string[]>();
   const sapNormToSrcKeys = new Map<string, string[]>();
 
+  // Build SAP target field -> Source field string map
+  const sapNormToSrcStr = new Map<string, string>();
+
   (mappings || []).forEach(m => {
     const srcStr = typeof m === 'object' ? String(m.src || m.source_field_name || '') : '';
     const sapStr = typeof m === 'object' ? String(m.sap || m.field_name || '') : '';
+    if (srcStr && sapStr) {
+      const srcClean = srcStr.replace(/^\[\d+\]\s*/, '').trim();
+      const sapClean = sapStr.replace(/^\[\d+\]\s*/, '').trim();
+      const sapBase = sapClean.split('.').pop() || '';
+
+      [sapStr, sapClean, sapBase].forEach(k => {
+        const n = norm(k);
+        if (n && !sapNormToSrcStr.has(n)) {
+          sapNormToSrcStr.set(n, srcClean);
+        }
+      });
+    }
+
     const srcClean = srcStr.replace(/^\[\d+\]\s*/, '').trim();
     const srcBase = srcClean.split('.').pop() || '';
     const sapClean = sapStr.replace(/^\[\d+\]\s*/, '').trim();
@@ -176,12 +192,47 @@ export function getTableDisplayData(
   // For each column in table.columns, build candidate key list
   const colCandidates = new Map<string, string[]>();
   const finalColumns: string[] = [];
+  const tableColumns = (table && Array.isArray(table.columns)) ? table.columns : (Array.isArray(table) ? table : []);
 
-  table.columns.forEach(col => {
-    finalColumns.push(col);
+  const seenNormCols = new Set<string>();
+
+  tableColumns.forEach(col => {
     const colClean = col.replace(/^\[\d+\]\s*/, '').trim();
+    const colLower = colClean.toLowerCase();
+
+    // Skip template metadata description columns
+    if (colLower.includes('hris element') || colLower.includes('business key:') || colLower.includes('effective-dated:') || colLower.includes('entity perperson')) {
+      return;
+    }
+
     const colBase = colClean.split('.').pop() || '';
     const nCol = norm(colClean);
+    const nBase = norm(colBase);
+
+    // Default display name: field name after the dot
+    let displayCol = colClean.includes('.') ? colClean.split('.').pop()! : colClean;
+
+    // Only if preferTargetFields is FALSE (Step 3 Extract), map target SAP fields back to source field names.
+    // When preferTargetFields is TRUE (Step 4 Harmonize, Step 5 Validate, Step 6 Cleanse), keep the Target SAP field name (after the dot)!
+    if (!preferTargetFields) {
+      let mappedSrc = sapNormToSrcStr.get(nCol) || sapNormToSrcStr.get(nBase);
+      if (!mappedSrc) {
+        const cleanBase = colBase.replace(/[-_]/g, '');
+        mappedSrc = sapNormToSrcStr.get(norm(cleanBase));
+      }
+      if (mappedSrc) displayCol = mappedSrc;
+    }
+
+    const displayBase = displayCol.split('.').pop() || displayCol;
+    const nDisplayBase = norm(displayBase);
+
+    // Skip if a column for this field concept has already been added
+    if (seenNormCols.has(nDisplayBase)) {
+      return;
+    }
+    seenNormCols.add(nDisplayBase);
+
+    finalColumns.push(displayCol);
 
     const candidates: string[] = [col, colClean, colBase];
 

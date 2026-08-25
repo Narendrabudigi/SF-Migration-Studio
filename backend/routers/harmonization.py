@@ -66,9 +66,13 @@ async def run_harmonization(
     primary_source: str = Form("SAP_ECC"),
     secondary_source: str = Form("ORACLE_EBS"),
     primary_file: UploadFile = File(...),
+    secondary_files: List[UploadFile] = File(default=[]),
+    secondary_mapping_files: List[UploadFile] = File(default=[]),
     secondary_file: Optional[UploadFile] = File(None),
     primary_mapping_file: Optional[UploadFile] = File(None),
     secondary_mapping_file: Optional[UploadFile] = File(None),
+    join_configs_json: str = Form("[]"),
+    base_table_name: Optional[str] = Form(None),
     preview: str = Form("false"),
     rule_config_json: str = Form(""),
     custom_prompts_json: str = Form(""),
@@ -137,26 +141,71 @@ async def run_harmonization(
             )
 
         elif mode == "multi":
-            if not secondary_file or not secondary_file.filename:
-                raise HTTPException(400, "Secondary file is required for multi mode")
-            secondary_content = await secondary_file.read()
-            secondary_df = parse_data_from_upload(
-                secondary_content, secondary_file.filename or "data.csv"
-            )
+            primary_mappings = None
+            if primary_mapping_file and primary_mapping_file.filename:
+                pm_content = await primary_mapping_file.read()
+                primary_mappings = parse_mapping_from_upload(
+                    pm_content, primary_mapping_file.filename or "mapping.csv"
+                )
 
-            if not primary_mapping_file or not primary_mapping_file.filename:
-                raise HTTPException(400, "Primary mapping file is required for multi mode")
-            pm_content = await primary_mapping_file.read()
-            primary_mappings = parse_mapping_from_upload(
-                pm_content, primary_mapping_file.filename or "mapping.csv"
-            )
+            # Collect all secondary files
+            all_sec_files = list(secondary_files) if secondary_files else []
+            if secondary_file and secondary_file.filename and secondary_file not in all_sec_files:
+                all_sec_files.append(secondary_file)
 
-            if not secondary_mapping_file or not secondary_mapping_file.filename:
-                raise HTTPException(400, "Secondary mapping file is required for multi mode")
-            sm_content = await secondary_mapping_file.read()
-            secondary_mappings = parse_mapping_from_upload(
-                sm_content, secondary_mapping_file.filename or "mapping.csv"
-            )
+            if not all_sec_files:
+                raise HTTPException(400, "At least one secondary file is required for multi mode")
+
+            # Collect secondary mapping files
+            all_map_files = list(secondary_mapping_files) if secondary_mapping_files else []
+            if secondary_mapping_file and secondary_mapping_file.filename and secondary_mapping_file not in all_map_files:
+                all_map_files.append(secondary_mapping_file)
+
+            mapping_by_target: Dict[str, List[MappingEntry]] = {}
+            for mf in all_map_files:
+                if not mf.filename:
+                    continue
+                mf_content = await mf.read()
+                m_entries = parse_mapping_from_upload(mf_content, mf.filename)
+                mapping_by_target[mf.filename] = m_entries
+                stem = mf.filename.replace("_mapping.csv", "").replace("_map.csv", "").replace(".csv", "")
+                mapping_by_target[stem] = m_entries
+
+            # Join configs
+            join_configs = []
+            if join_configs_json:
+                try:
+                    join_configs = json.loads(join_configs_json)
+                    if not isinstance(join_configs, list):
+                        join_configs = [join_configs]
+                except Exception:
+                    pass
+
+            secondary_tables = []
+            for sf in all_sec_files:
+                if not sf.filename:
+                    continue
+                sf_content = await sf.read()
+                sf_df = parse_data_from_upload(sf_content, sf.filename)
+                sf_stem = sf.filename.replace(".csv", "").replace(".xlsx", "").replace(".xls", "")
+                matched_mapping = (
+                    mapping_by_target.get(sf.filename)
+                    or mapping_by_target.get(sf_stem)
+                    or (all_map_files and len(all_map_files) == 1 and mapping_by_target.get(all_map_files[0].filename, []))
+                    or []
+                )
+                for cfg in join_configs:
+                    if cfg.get("file_name") == sf.filename and cfg.get("mapping_file"):
+                        m_name = cfg["mapping_file"]
+                        if m_name in mapping_by_target:
+                            matched_mapping = mapping_by_target[m_name]
+
+                secondary_tables.append({
+                    "name": sf.filename,
+                    "df": sf_df,
+                    "mappings": matched_mapping,
+                    "source": secondary_source,
+                })
 
             mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings or [])
             actual_columns = list(mapped_df_preview.columns)
@@ -167,8 +216,12 @@ async def run_harmonization(
                 dynamic_rules.extend(compiled)
 
             result = agent.run_multi_source(
-                primary_df, secondary_df, primary_mappings, secondary_mappings,
-                primary_source=primary_source, secondary_source=secondary_source,
+                primary_df=primary_df,
+                primary_mappings=primary_mappings,
+                primary_source=primary_source,
+                secondary_tables=secondary_tables,
+                join_configs=join_configs,
+                base_table_name=base_table_name or primary_file.filename,
                 preview_only=is_preview,
                 rule_config=rule_config,
                 dynamic_rules=dynamic_rules,
@@ -384,8 +437,12 @@ async def run_harmonization_multi_flow(
     currency: str = Form("INR"),
     primary_source: str = Form("SAP_ECC"),
     secondary_source: str = Form("ORACLE_EBS"),
-    secondary_file: UploadFile = File(...),
-    secondary_mapping_file: UploadFile = File(...),
+    secondary_files: List[UploadFile] = File(default=[]),
+    secondary_mapping_files: List[UploadFile] = File(default=[]),
+    secondary_file: Optional[UploadFile] = File(None),
+    secondary_mapping_file: Optional[UploadFile] = File(None),
+    join_configs_json: str = Form("[]"),
+    base_table_name: Optional[str] = Form(None),
     preview: str = Form("false"),
     rule_config_json: str = Form(""),
     custom_prompts_json: str = Form(""),
@@ -485,16 +542,62 @@ async def run_harmonization_multi_flow(
         if not primary_mappings:
             raise HTTPException(400, "No valid mappings could be constructed from the database.")
 
-        # 3. Parse Secondary file + mapping from uploads
-        if not secondary_file or not secondary_file.filename:
-            raise HTTPException(400, "Secondary data file is required for multi mode")
-        secondary_content = await secondary_file.read()
-        secondary_df = parse_data_from_upload(secondary_content, secondary_file.filename or "data.csv")
+        # 3. Parse Secondary files & mapping files from uploads
+        all_sec_files = list(secondary_files) if secondary_files else []
+        if secondary_file and secondary_file.filename and secondary_file not in all_sec_files:
+            all_sec_files.append(secondary_file)
 
-        if not secondary_mapping_file or not secondary_mapping_file.filename:
-            raise HTTPException(400, "Secondary mapping file is required for multi mode")
-        sm_content = await secondary_mapping_file.read()
-        secondary_mappings = parse_mapping_from_upload(sm_content, secondary_mapping_file.filename or "mapping.csv")
+        if not all_sec_files:
+            raise HTTPException(400, "At least one secondary data file is required for multi mode")
+
+        all_map_files = list(secondary_mapping_files) if secondary_mapping_files else []
+        if secondary_mapping_file and secondary_mapping_file.filename and secondary_mapping_file not in all_map_files:
+            all_map_files.append(secondary_mapping_file)
+
+        mapping_by_target: Dict[str, List[MappingEntry]] = {}
+        for mf in all_map_files:
+            if not mf.filename:
+                continue
+            mf_content = await mf.read()
+            m_entries = parse_mapping_from_upload(mf_content, mf.filename)
+            mapping_by_target[mf.filename] = m_entries
+            stem = mf.filename.replace("_mapping.csv", "").replace("_map.csv", "").replace(".csv", "")
+            mapping_by_target[stem] = m_entries
+
+        join_configs = []
+        if join_configs_json:
+            try:
+                join_configs = json.loads(join_configs_json)
+                if not isinstance(join_configs, list):
+                    join_configs = [join_configs]
+            except Exception:
+                pass
+
+        secondary_tables = []
+        for sf in all_sec_files:
+            if not sf.filename:
+                continue
+            sf_content = await sf.read()
+            sf_df = parse_data_from_upload(sf_content, sf.filename)
+            sf_stem = sf.filename.replace(".csv", "").replace(".xlsx", "").replace(".xls", "")
+            matched_mapping = (
+                mapping_by_target.get(sf.filename)
+                or mapping_by_target.get(sf_stem)
+                or (all_map_files and len(all_map_files) == 1 and mapping_by_target.get(all_map_files[0].filename, []))
+                or []
+            )
+            for cfg in join_configs:
+                if cfg.get("file_name") == sf.filename and cfg.get("mapping_file"):
+                    m_name = cfg["mapping_file"]
+                    if m_name in mapping_by_target:
+                        matched_mapping = mapping_by_target[m_name]
+
+            secondary_tables.append({
+                "name": sf.filename,
+                "df": sf_df,
+                "mappings": matched_mapping,
+                "source": secondary_source,
+            })
 
         # 4. Determine post-mapping SF columns for dynamic rules
         mapped_df_preview = agent._apply_mapping(primary_df.head(2), primary_mappings)
@@ -509,10 +612,14 @@ async def run_harmonization_multi_flow(
             compiled = _generate_dynamic_rules_internal(all_prompts, sap_object, actual_columns)
             dynamic_rules.extend(compiled)
 
-        # 5. Run Multi-Source Agent
+        # 5. Run Multi-Source Agent with Relational Merge
         result = agent.run_multi_source(
-            primary_df, secondary_df, primary_mappings, secondary_mappings,
-            primary_source=primary_source, secondary_source=secondary_source,
+            primary_df=primary_df,
+            primary_mappings=primary_mappings,
+            primary_source=primary_source,
+            secondary_tables=secondary_tables,
+            join_configs=join_configs,
+            base_table_name=base_table_name or "Primary Data",
             preview_only=is_preview,
             rule_config=rule_config,
             dynamic_rules=dynamic_rules,
@@ -581,34 +688,32 @@ def _generate_dynamic_rules_internal(
     """
     from services.llm_orchestrator import llm_orchestrator
 
-    system_prompt = f"""You are a Python code generator for SuccessFactors data harmonization transforms.
+    cols_hint = f"Exact columns in dataset: {actual_columns}" if actual_columns else f"Target Object: {target_object}"
 
-The dataset has ONLY these exact columns: {actual_columns}
-SuccessFactors Object: {target_object}
+    system_prompt = f"""You are an AI code generator for SuccessFactors data harmonization transforms.
+
+{cols_hint}
+SuccessFactors Target Object: {target_object}
 
 For each user rule prompt:
-1. First, check if the rule prompt applies to any of the actual dataset columns listed above.
-2. CRITICAL: If the concept, field, or data type described in the rule prompt (e.g. quantity, weight, price, tax number, etc.) DOES NOT exist in the dataset columns ({actual_columns}), DO NOT generate a transform. Set `target_field: ""` and `python_code: ""`.
-3. NEVER map quantity/weight rules to currency (WAERS), country (LAND1), name, or phone columns.
-4. IF a matching column exists in the dataset, generate a Python transform function: `def transform(value, row): -> str`
-   - `value`: the current cell value (string) of the target field
-   - `row`: a dict of ALL columns for the current row (all values are strings)
-   - Returns: the new value (string)
+Generate a Python transform function: `def transform(value, row): -> str`
+- `value`: the current cell value (string) of the target field
+- `row`: a dict of ALL columns for the current row (all values are strings)
+- Returns: the new value (string)
 
 Return a JSON array where each element has:
 {{
   "id": "DYNAMIC_HARM_<N>",
-  "label": "<short title>",
-  "description": "<what it does>",
-  "target_field": "<EXACT column name from the dataset columns listed above, or empty string if no relevant column exists>",
+  "label": "<short descriptive title of the rule>",
+  "description": "<detailed rule description>",
+  "target_field": "<target column name from the dataset or object>",
   "python_code": "def transform(value, row):\\n    ..."
 }}
 
 CRITICAL RULES:
-1. target_field MUST be an EXACT column name from: {actual_columns}.
-2. If no column in {actual_columns} matches the rule intent (e.g. quantity rule when no quantity/UOM columns exist), set `target_field: ""` and `python_code: ""`.
-3. `python_code` must be a COMPLETE function definition starting with `def transform(value, row):`.
-4. Return ONLY the JSON array, no markdown, no explanation."""
+1. `target_field` MUST be a relevant field name from the dataset columns or target object.
+2. `python_code` must be a COMPLETE, VALID Python function starting with `def transform(value, row):`.
+3. Return ONLY the JSON array, no markdown wrappers."""
 
     user_msg = "Generate transform functions for these rules:\n"
     for i, p in enumerate(prompts, 1):
@@ -618,22 +723,33 @@ CRITICAL RULES:
     try:
         rules = llm_orchestrator.execute_json_prompt(system_prompt, user_msg)
         if not isinstance(rules, list):
-            rules = [rules]
+            rules = [rules] if isinstance(rules, dict) else []
 
         cleaned_rules = []
         for idx, r in enumerate(rules, 1):
             if not isinstance(r, dict):
                 continue
             rule_id = r.get("id")
-            if not rule_id or rule_id in ("DYNAMIC_HARM_1", "DYNAMIC_HARM_<N>", "DYNAMIC_1", "DYNAMIC_RULE_1"):
+            if not rule_id or "DYNAMIC" not in str(rule_id):
                 rule_id = f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}"
             prompt_str = prompts[min(idx - 1, len(prompts) - 1)] if prompts else ""
+
+            tf = str(r.get("target_field") or "").strip()
+            if not tf and actual_columns:
+                tf = actual_columns[0]
+            elif not tf:
+                tf = target_object
+
+            py_code = str(r.get("python_code") or "").strip()
+            if not py_code:
+                py_code = "def transform(value, row):\n    return value"
+
             cleaned_rules.append({
                 "id": rule_id,
-                "label": r.get("label") or f"Transform Rule {idx}",
+                "label": r.get("label") or f"Rule: {prompt_str[:30]}",
                 "description": r.get("description") or prompt_str,
-                "target_field": r.get("target_field") or "",
-                "python_code": r.get("python_code") or "",
+                "target_field": tf,
+                "python_code": py_code,
                 "enabled": r.get("enabled", True),
             })
 
@@ -642,7 +758,19 @@ CRITICAL RULES:
 
     except Exception as e:
         logger.exception(f"Failed to generate dynamic harmonization rules: {e}")
-        return []
+        # Fallback: create basic rule placeholders so prompts are not lost
+        fallback_rules = []
+        import uuid
+        for p in prompts:
+            fallback_rules.append({
+                "id": f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}",
+                "label": f"Rule: {p[:30]}",
+                "description": p,
+                "target_field": actual_columns[0] if actual_columns else target_object,
+                "python_code": "def transform(value, row):\n    return value",
+                "enabled": True,
+            })
+        return fallback_rules
 
 
 class GenerateHarmonizationRulesRequest(BaseModel):

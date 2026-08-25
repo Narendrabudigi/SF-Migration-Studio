@@ -5,11 +5,12 @@ import { useLoading } from '@/components/ui/loading-overlay';
 import { dl, expCSV } from '@/lib/utils';
 import {
   PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button,
-  StatBox, StatsGrid, DataTable, PageHeader, EmptyState
+  DataTable, EmptyState
 } from '@/components/shared';
 import {
-  FlaskConical, Upload, FileSpreadsheet, MapPin, Download,
-  Play, Trash2, CheckCircle2, AlertCircle, FileText, ArrowLeft, ArrowRight, Save, Database, Plus, Sparkles, Eye, Zap, X, Check, Pencil, ChevronDown, ChevronUp
+  FlaskConical, FileSpreadsheet, Download,
+  Play, Trash2, CheckCircle2, ArrowLeft, ArrowRight, Save, Database, Plus, Eye, Zap, X, Check, Pencil, ChevronDown, ChevronUp,
+  Link2, FileText, Layers, Sparkles, RefreshCw, UploadCloud
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
@@ -18,13 +19,6 @@ import type { TableInfo } from '@/components/shared/TableFilterToolbar';
 import { TablePaginationFooter } from '@/components/shared/TablePaginationFooter';
 
 /* ─── Types ─── */
-interface DroppedFile {
-  file: File;
-  name: string;
-  size: string;
-  rows?: number;
-}
-
 interface HarmonizationStats {
   total_input: number;
   total_output: number;
@@ -43,12 +37,30 @@ interface HarmonizationResult {
   columns: string[];
   session_id?: string;
   is_preview?: boolean;
+  tables?: any[];
+  dynamic_rules?: any[];
+  custom_prompts?: string[];
 }
 
-interface AdditionalSource {
-  source: string;
-  file: DroppedFile | null;
-  mappingFile: DroppedFile | null;
+interface StagedSecondaryFile {
+  file: File;
+  filename: string;
+  size: string;
+  columns_count: number;
+  row_count: number;
+  headers: string[];
+  mappingFile: File | null;
+}
+
+interface KeyCondition {
+  left_key: string;
+  right_key: string;
+}
+
+interface SecondaryJoinConfig {
+  file_name: string;
+  join_with: string;
+  key_conditions: KeyCondition[];
 }
 
 interface RuleItemConfig {
@@ -57,175 +69,112 @@ interface RuleItemConfig {
   params?: Record<string, any>;
 }
 
-/* ─── Drop Zone Component ─── */
-function DropZone({
-  id,
-  label,
-  subtitle,
-  icon: Icon,
-  accept,
-  file,
-  onDrop,
-  onClear,
-  disabled = false,
-  accentColor = 'primary',
-}: {
-  id: string;
-  label: string;
-  subtitle: string;
-  icon: React.ElementType;
-  accept: string;
-  file: DroppedFile | null;
-  onDrop: (f: File) => void;
-  onClear: () => void;
-  disabled?: boolean;
-  accentColor?: string;
-}) {
-  const [isDragOver, setDragOver] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+/* ─── Heuristic Key Auto-Matching ─── */
+const ERP_KEY_SYNONYMS: Record<string, string[]> = {
+  customer: ['kunnr', 'customerid', 'customer_id', 'cust_id', 'custid', 'customer', 'account_num', 'account_number', 'customerno', 'customer_no', 'client_id', 'client_no'],
+  company_code: ['bukrs', 'company_code', 'companycode', 'cocode', 'co_code', 'comp_code', 'legal_entity', 'company', 'comp_id', 'compid'],
+  employee: ['pernr', 'person_id_external', 'person_id', 'userid', 'user_id', 'employee_id', 'empid', 'emp_id', 'staff_id'],
+  material: ['matnr', 'material_id', 'mat_id', 'item_id', 'item_code', 'product_id', 'sku'],
+  vendor: ['lifnr', 'vendor_id', 'supplier_id', 'supp_id', 'vendor_num'],
+  sales_org: ['vkorg', 'sales_org', 'sales_organization', 'salesorg'],
+  order: ['vbeln', 'order_id', 'sales_order', 'order_num'],
+  plant: ['werks', 'plant', 'plant_id', 'facility'],
+  address: ['address_id', 'addressid', 'addr_id', 'addrid'],
+};
 
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (disabled) return;
-    if (e.type === 'dragenter' || e.type === 'dragover') setDragOver(true);
-    else if (e.type === 'dragleave') setDragOver(false);
-  }, [disabled]);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (disabled) return;
-    const files = e.dataTransfer.files;
-    if (files?.[0]) onDrop(files[0]);
-  }, [disabled, onDrop]);
-
-  const handleClick = () => {
-    if (!disabled && inputRef.current) inputRef.current.click();
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) onDrop(e.target.files[0]);
-  };
-
-  const colorMap: Record<string, { border: string; bg: string; text: string; glow: string }> = {
-    primary: {
-      border: 'border-primary-400 dark:border-primary-500',
-      bg: 'bg-primary-50/50 dark:bg-primary-900/20',
-      text: 'text-primary-600 dark:text-primary-400',
-      glow: 'shadow-[0_0_20px_rgba(37,99,235,0.15)]',
-    },
-    teal: {
-      border: 'border-teal-400 dark:border-teal-500',
-      bg: 'bg-teal-50/50 dark:bg-teal-900/20',
-      text: 'text-teal-600 dark:text-teal-400',
-      glow: 'shadow-[0_0_20px_rgba(20,184,166,0.15)]',
-    },
-    violet: {
-      border: 'border-violet-400 dark:border-violet-500',
-      bg: 'bg-violet-50/50 dark:bg-violet-900/20',
-      text: 'text-violet-600 dark:text-violet-400',
-      glow: 'shadow-[0_0_20px_rgba(124,58,237,0.15)]',
-    },
-    amber: {
-      border: 'border-amber-400 dark:border-amber-500',
-      bg: 'bg-amber-50/50 dark:bg-amber-900/20',
-      text: 'text-amber-600 dark:text-amber-400',
-      glow: 'shadow-[0_0_20px_rgba(245,158,11,0.15)]',
-    },
-  };
-  const colors = colorMap[accentColor] || colorMap.primary;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
-      <div
-        id={id}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-        onClick={handleClick}
-        className={`
-          relative rounded-xl border-2 border-dashed p-5 transition-all duration-300 cursor-pointer
-          ${disabled
-            ? 'opacity-40 pointer-events-none border-[var(--border)] bg-[var(--bg-tertiary)]/30'
-            : file
-              ? `border-emerald-400 dark:border-emerald-500 bg-emerald-50/30 dark:bg-emerald-900/10`
-              : isDragOver
-                ? `${colors.border} ${colors.bg} ${colors.glow} scale-[1.01]`
-                : 'border-[var(--border)] bg-[var(--bg-tertiary)]/30 hover:border-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)]/60'
-          }
-        `}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={accept}
-          onChange={handleChange}
-          className="hidden"
-        />
-
-        <AnimatePresence mode="wait">
-          {file ? (
-            <motion.div
-              key="file-info"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex items-center gap-3"
-            >
-              <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[12px] font-semibold text-[var(--text-primary)] truncate">
-                  {file.name}
-                </div>
-                <div className="text-[10px] text-[var(--text-tertiary)]">
-                  {file.size}{file.rows ? ` · ${file.rows} rows` : ''}
-                </div>
-              </div>
-              <button
-                onClick={(e) => { e.stopPropagation(); onClear(); }}
-                className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-[var(--text-tertiary)] hover:text-red-500 transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex flex-col items-center gap-2 text-center"
-            >
-              <div className={`w-10 h-10 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center ${isDragOver ? colors.text : 'text-[var(--text-tertiary)]'}`}>
-                <Icon className="w-5 h-5" />
-              </div>
-              <div>
-                <div className={`text-[12px] font-semibold ${isDragOver ? colors.text : 'text-[var(--text-secondary)]'}`}>
-                  {label}
-                </div>
-                <div className="text-[10px] text-[var(--text-tertiary)] mt-0.5">{subtitle}</div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.div>
-  );
+function normalizeKeyName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function findAllMatchingKeyPairs(parentHeaders: string[], childHeaders: string[]): KeyCondition[] {
+  if (!parentHeaders.length || !childHeaders.length) {
+    return [{ left_key: parentHeaders[0] || '', right_key: childHeaders[0] || '' }];
+  }
+
+  const matchedPairs: KeyCondition[] = [];
+  const usedParent = new Set<string>();
+  const usedChild = new Set<string>();
+
+  // 1. Exact matches (case-insensitive)
+  for (const ph of parentHeaders) {
+    if (usedParent.has(ph)) continue;
+    const exact = childHeaders.find(ch => !usedChild.has(ch) && ch.toLowerCase() === ph.toLowerCase());
+    if (exact) {
+      matchedPairs.push({ left_key: ph, right_key: exact });
+      usedParent.add(ph);
+      usedChild.add(exact);
+    }
+  }
+
+  // 2. Normalized matches (e.g. CustID <-> Cust_ID, CoCode <-> Co_Code)
+  for (const ph of parentHeaders) {
+    if (usedParent.has(ph)) continue;
+    const normP = normalizeKeyName(ph);
+    const normMatch = childHeaders.find(ch => !usedChild.has(ch) && normalizeKeyName(ch) === normP);
+    if (normMatch) {
+      matchedPairs.push({ left_key: ph, right_key: normMatch });
+      usedParent.add(ph);
+      usedChild.add(normMatch);
+    }
+  }
+
+  // 3. ERP synonym groups (e.g. Customer, Company Code, Employee, etc.)
+  for (const group of Object.values(ERP_KEY_SYNONYMS)) {
+    const parentMatches = parentHeaders.filter(ph => {
+      if (usedParent.has(ph)) return false;
+      const np = normalizeKeyName(ph);
+      return group.some(syn => np === syn || np.includes(syn) || syn.includes(np));
+    });
+
+    const childMatches = childHeaders.filter(ch => {
+      if (usedChild.has(ch)) return false;
+      const nc = normalizeKeyName(ch);
+      return group.some(syn => nc === syn || nc.includes(syn) || syn.includes(nc));
+    });
+
+    const pairCount = Math.min(parentMatches.length, childMatches.length);
+    for (let i = 0; i < pairCount; i++) {
+      const ph = parentMatches[i];
+      const ch = childMatches[i];
+      if (!usedParent.has(ph) && !usedChild.has(ch)) {
+        matchedPairs.push({ left_key: ph, right_key: ch });
+        usedParent.add(ph);
+        usedChild.add(ch);
+      }
+    }
+  }
+
+  // 4. Common key/ID indicators if no match found yet
+  if (matchedPairs.length === 0) {
+    const idKeywords = ['id', 'key', 'code', 'num', 'number'];
+    for (const kw of idKeywords) {
+      const pId = parentHeaders.find(ph => !usedParent.has(ph) && normalizeKeyName(ph).includes(kw));
+      const cId = childHeaders.find(ch => !usedChild.has(ch) && normalizeKeyName(ch).includes(kw));
+      if (pId && cId) {
+        matchedPairs.push({ left_key: pId, right_key: cId });
+        usedParent.add(pId);
+        usedChild.add(cId);
+        break;
+      }
+    }
+  }
+
+  if (matchedPairs.length === 0) {
+    matchedPairs.push({
+      left_key: parentHeaders[0] || '',
+      right_key: childHeaders[0] || ''
+    });
+  }
+
+  return matchedPairs;
+}
 
 /* ─── Source Options ─── */
 const SOURCE_OPTIONS = [
-  { value: 'EXCEL_CSV', label: 'Excel / CSV File' },
+  { value: 'EXCEL_CSV', label: 'Excel/CSV' },
+  { value: 'SAP_ECC', label: 'SAP ECC' },
+  { value: 'ORACLE_EBS', label: 'Oracle EBS' },
+  { value: 'DATABASE', label: 'Extracted Database' },
 ];
 
 /* ─── Rule Config Defaults ─── */
@@ -239,7 +188,7 @@ const DEFAULT_RULE_CONFIG: Record<string, RuleItemConfig> = {
   phone_clean: { enabled: true, params: { keep_plus: true } },
 };
 
-/* ─── Rule Definitions (Matched to Screenshot UI Layout) ─── */
+/* ─── Rule Definitions ─── */
 interface RuleDef {
   key: string;
   title: string;
@@ -258,7 +207,7 @@ const RULE_LIST: RuleDef[] = [
   { key: 'phone_clean', title: 'Phone Cleanup', sub: 'Remove invalid characters', emoji: '📞', logKey: 'PhoneClean' },
 ];
 
-/* ─── Harmonization Report Card ─── */
+/* ─── Harmonization Report Card (With Vector PDF & Report CSV Exports) ─── */
 function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
   const [showLogDetails, setShowLogDetails] = useState(false);
 
@@ -297,22 +246,85 @@ function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
       items: fixLog.filter((l) => l.includes('[WhitespaceTrim]') || l.includes('[UPPER]') || l.includes('[Pad10]') || l.includes('[Trim]') || l.includes('[Transform:')),
     },
     {
-      title: 'Dynamic AI & Fallback Rules',
+      title: 'Dynamic AI & Relational Joins',
       icon: '⚡',
-      items: fixLog.filter((l) => l.includes('[DynamicAI]')),
+      items: fixLog.filter((l) => l.includes('[DynamicAI]') || l.includes('[RelationalJoin]')),
     },
   ];
 
   const totalFixEvents = fixLog.filter(
-    (l) => l.startsWith('[') && !l.includes('[Init]') && !l.includes('[ColumnNaming]') && !l.includes('[Mapping]') && !l.includes('[Merge]')
+    (l) => l.startsWith('[') && !l.includes('[Init]') && !l.includes('[ColumnNaming]') && !l.includes('[Mapping]') && !l.includes('[Merge]') && !l.includes('::Detail]')
   ).length;
 
+  const exportReportCSV = () => {
+    const structuredRows = fixLog.map((line, idx) => {
+      let category = 'General';
+      let rowNum = '';
+      let fieldName = '';
+      let origVal = '';
+      let harmVal = '';
+      let details = line;
+
+      const matchTransform = line.match(/^\[([^\]]+)\]\s*(?:Row\s*(\d+))?(?:\s*\(([^)]+)\))?:\s*(?:'([^']*)'\s*→\s*'([^']*)')?(.*)$/);
+      if (matchTransform) {
+        category = matchTransform[1] || 'Transform';
+        rowNum = matchTransform[2] || '';
+        fieldName = matchTransform[3] || '';
+        origVal = matchTransform[4] || '';
+        harmVal = matchTransform[5] || '';
+        details = matchTransform[6]?.trim() || line;
+      } else {
+        const matchCat = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+        if (matchCat) {
+          category = matchCat[1];
+          details = matchCat[2];
+        }
+      }
+
+      return {
+        Index: idx + 1,
+        Category: category,
+        Row_Number: rowNum,
+        Field_Name: fieldName,
+        Original_Value: origVal,
+        Harmonized_Value: harmVal,
+        Details: details,
+      };
+    });
+
+    const csvContent = expCSV(structuredRows);
+    dl(csvContent, `harmonization_audit_report_${Date.now()}.csv`, 'text/csv');
+  };
+
+  const exportVectorPDF = () => {
+    window.print();
+  };
+
   return (
-    <Card className="mt-4 border-purple-200 dark:border-purple-900/40 bg-gradient-to-br from-[var(--bg-primary)] via-[var(--bg-secondary)] to-purple-50/20 dark:to-purple-950/10 shadow-sm">
+    <Card className="border-purple-200 dark:border-purple-900/40 bg-gradient-to-br from-[var(--bg-primary)] via-[var(--bg-secondary)] to-purple-50/20 dark:to-purple-950/10 shadow-sm">
       <CardHeader
         title="Harmonization Changes & Audit Report"
         subtitle="Summary of standardized fields, rule fixes and source origins"
-      />
+      >
+        <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FileText className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />}
+            onClick={exportVectorPDF}
+          >
+            Export Vector PDF
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
+            onClick={exportReportCSV}
+          >
+            Export Report CSV
+          </Button>
+        </div>
+      </CardHeader>
       <CardBody className="p-4 space-y-4">
         {/* Metric Cards Grid */}
         <div className="grid grid-cols-4 gap-3">
@@ -332,8 +344,11 @@ function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
           <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/50">
             <div className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Output Columns</div>
             <div className="mt-1 flex items-baseline gap-1.5">
-              <span className="text-xl font-extrabold text-[var(--text-primary)]">{stats.columns || 0}</span>
+              <span className="text-xl font-extrabold text-[var(--text-primary)]">{stats.columns || (rows.length > 0 ? Object.keys(rows[0]).length : 0)}</span>
               <span className="text-[10px] text-[var(--text-tertiary)]">total fields</span>
+            </div>
+            <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
+              Unified relational schema
             </div>
           </div>
 
@@ -342,6 +357,9 @@ function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
             <div className="mt-1 flex items-baseline gap-1.5">
               <span className="text-xl font-extrabold text-purple-600 dark:text-purple-400">{totalFixEvents}</span>
               <span className="text-[10px] text-[var(--text-tertiary)]">field fixes</span>
+            </div>
+            <div className="mt-1 text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
+              Rules & AI transformations
             </div>
           </div>
 
@@ -423,7 +441,6 @@ function groupFixLogEntries(fixLog: string[]): LogGroup[] {
   let lastGroup: LogGroup | null = null;
 
   fixLog.forEach((line, idx) => {
-    // 1. Check if explicit detail line: [Tag::Detail] Row X...
     if (line.includes('::Detail]')) {
       const matchDetail = line.match(/^\[([^:]+)::Detail\]\s*(.*)$/);
       if (matchDetail) {
@@ -440,7 +457,6 @@ function groupFixLogEntries(fixLog: string[]): LogGroup[] {
       }
     }
 
-    // 2. Check if standard log line [Tag] ...
     const matchRule = line.match(/^\[([^\]]+)\]\s*(.*)$/);
     if (!matchRule) {
       const grp: LogGroup = {
@@ -457,7 +473,6 @@ function groupFixLogEntries(fixLog: string[]): LogGroup[] {
     const tag = matchRule[1];
     const content = matchRule[2];
 
-    // 3. Check if line starts with "Row X ..." (individual row log without explicit summary header)
     if (content.startsWith('Row ')) {
       if (!tagSummaryMap[tag]) {
         const grp: LogGroup = {
@@ -476,7 +491,6 @@ function groupFixLogEntries(fixLog: string[]): LogGroup[] {
       return;
     }
 
-    // 4. Standard summary log line
     const grp: LogGroup = {
       id: `grp_${idx}_${tag}`,
       summary: line,
@@ -503,7 +517,6 @@ function PreviewCard({
   ruleConfig?: Record<string, RuleItemConfig>;
   onProceed: () => void;
 }) {
-  // Filter out logs for disabled rules optimistically
   const activeFixLog = useMemo(() => {
     if (!ruleConfig) return fixLog;
     const disabledLogKeys = RULE_LIST.filter(r => ruleConfig[r.key]?.enabled === false).map(r => r.logKey);
@@ -555,7 +568,7 @@ function PreviewCard({
         <div className="space-y-1.5 max-h-[350px] overflow-y-auto scrollbar-thin pr-1">
           {logGroups.map((grp) => {
             const isInit = grp.summary.includes('[Init]') || grp.summary.includes('[Mapping]') || grp.summary.includes('[Merge]');
-            const isDynamic = grp.summary.includes('[DynamicAI]');
+            const isDynamic = grp.summary.includes('[DynamicAI]') || grp.summary.includes('[RelationalJoin]');
             const hasDetails = grp.details.length > 0;
             const isExpanded = !!expandedGroupIds[grp.id];
 
@@ -569,13 +582,11 @@ function PreviewCard({
                       : 'border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/15 text-[var(--text-primary)]'
                   }`}
               >
-                {/* Summary Header Line */}
                 <div className="flex items-center justify-between px-3 py-1.5 text-[11px] font-mono">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     <span className="truncate">{grp.summary}</span>
                   </div>
 
-                  {/* Dropdown Button for Details */}
                   {hasDetails && (
                     <button
                       onClick={() => toggleGroup(grp.id)}
@@ -587,7 +598,6 @@ function PreviewCard({
                   )}
                 </div>
 
-                {/* Collapsible Row Details List */}
                 {hasDetails && isExpanded && (
                   <div className="px-3 py-2 border-t border-amber-200/60 dark:border-amber-900/40 bg-[var(--bg-primary)]/90 max-h-[220px] overflow-y-auto space-y-1 font-mono text-[10.5px] scrollbar-thin">
                     <div className="text-[9.5px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] pb-1 border-b border-[var(--border)] flex justify-between items-center">
@@ -609,7 +619,6 @@ function PreviewCard({
   );
 }
 
-
 /* ─── Main Page ─── */
 export function Step4Harmonize() {
   const { toast } = useToast();
@@ -617,7 +626,7 @@ export function Step4Harmonize() {
   const navigate = useNavigate();
   const { state, dispatch } = useMigration();
 
-  // State
+  // Mode: flow vs multi
   const [mode, setMode] = useState<'flow' | 'multi'>('flow');
   const [sapObject, setSapObject] = useState(state.obj || 'Biographical Info');
   const [companyCode, setCompanyCode] = useState(state.cc || '1000');
@@ -630,14 +639,34 @@ export function Step4Harmonize() {
 
   // Source Systems
   const [primarySource, setPrimarySource] = useState(state.src || 'SAP_ECC');
-  const [secondarySource, setSecondarySource] = useState('');
+  const [secondarySource, setSecondarySource] = useState('EXCEL_CSV');
 
-  // Files for Multi-Source
-  const [secondaryFile, setSecondaryFile] = useState<DroppedFile | null>(null);
-  const [secondaryMappingFile, setSecondaryMappingFile] = useState<DroppedFile | null>(null);
+  // Primary Data Info
+  const primaryHeaders = useMemo(() => {
+    if (state.headers && state.headers.length > 0) return state.headers;
+    if (state.extracted && state.extracted.length > 0) return Object.keys(state.extracted[0]);
+    if (state.rawData && state.rawData.length > 0) return Object.keys(state.rawData[0]);
+    if (state.uploadedData && state.uploadedData.length > 0) return Object.keys(state.uploadedData[0]);
+    return ['CustomerID', 'CustomerName', 'Country', 'Currency', 'CompanyCode'];
+  }, [state.headers, state.extracted, state.rawData, state.uploadedData]);
 
-  // Additional Sources (N-source)
-  const [additionalSources, setAdditionalSources] = useState<AdditionalSource[]>([]);
+  const primaryRowCount = (state.extracted?.length) || (state.rawData?.length) || (state.uploadedData?.length) || 5;
+  const primaryFileName = useMemo(() => {
+    // Use actual uploaded filename from Step 1 if available
+    if (state.uploadedFileName) return state.uploadedFileName;
+    return state.obj ? `${state.obj.replace(/[\s/]+/g, '_')}.csv` : 'Customers.csv';
+  }, [state.obj, state.uploadedFileName]);
+
+  // Multi-Source Staged Files & Relational Joins
+  const [stagedFiles, setStagedFiles] = useState<StagedSecondaryFile[]>([]);
+  const [baseTableSelection, setBaseTableSelection] = useState<string>(primaryFileName);
+  const [joinConfigs, setJoinConfigs] = useState<Record<string, SecondaryJoinConfig>>({});
+  const [isInspectingFiles, setIsInspectingFiles] = useState(false);
+
+  // File input refs
+  const multiFileInputRef = useRef<HTMLInputElement>(null);
+  const mappingFileInputRef = useRef<HTMLInputElement>(null);
+  const [activeMappingTargetFile, setActiveMappingTargetFile] = useState<string | null>(null);
 
   // Results & Preview
   const result: HarmonizationResult | null = state.harmonizationResult;
@@ -650,7 +679,6 @@ export function Step4Harmonize() {
   const [tablePages, setTablePages] = useState<Record<string, number>>({});
   const extractedTables = state.extractedTables || [];
 
-  // Initialize selectedOutputTables when extractedTables or result.tables are available
   useEffect(() => {
     const tablesToUse = (result as any)?.tables || extractedTables || [];
     if (tablesToUse.length > 0) {
@@ -658,15 +686,12 @@ export function Step4Harmonize() {
     }
   }, [extractedTables.length, (result as any)?.tables]);
 
-  // Editable Rule Config (Inline box per rule)
+  // Editable Rule Config
   const [ruleConfig, setRuleConfig] = useState<Record<string, RuleItemConfig>>({ ...DEFAULT_RULE_CONFIG });
   const [expandedRuleKey, setExpandedRuleKey] = useState<string | null>(null);
 
-  // Dynamic AI Rules (Isolated to Harmonize)
+  // Dynamic AI Rules
   const [customPrompts, setCustomPrompts] = useState<string[]>(state.harmonizeCustomPrompts || []);
-  const [newPromptInput, setNewPromptInput] = useState('');
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingText, setEditingText] = useState('');
   const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.harmonizeDynamicRules || []);
   const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
     Object.fromEntries((state.harmonizeDynamicRules || []).map((r: any) => [r.id, true]))
@@ -684,74 +709,24 @@ export function Step4Harmonize() {
     });
   };
 
-  // Load saved harmonized data & dynamic rules on mount if available in DB
-  useEffect(() => {
-    if (!state.projectId) {
-      setSavedDynamicRules([]);
-      setSelectedDynamicRules({});
-      dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: [] });
-      return;
-    }
-
-    const loadSavedData = async () => {
-      try {
-        const objName = state.obj || sapObject;
-        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
-        if (res.ok) {
-          const data = await res.json();
-          const rawDynRules = Array.isArray(data.dynamic_rules) ? data.dynamic_rules : [];
-          const loadedRules = dedupeRules(rawDynRules);
-          
-          setSavedDynamicRules(loadedRules);
-          dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: loadedRules });
-          setSelectedDynamicRules(
-            Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
-          );
-
-          if (data.status === 'success') {
-            if (data.data && data.data.length > 0 && !result) {
-              setResult({
-                final_table: data.data,
-                columns: data.data.length > 0 ? Object.keys(data.data[0]) : [],
-                tables: data.tables || [],
-                stats: { total_input: data.data.length, total_output: data.data.length },
-                fix_log: [],
-                dynamic_rules: loadedRules,
-                custom_prompts: data.custom_prompts || [],
-              });
-            }
-            if (data.custom_prompts && Array.isArray(data.custom_prompts)) {
-              setCustomPrompts(data.custom_prompts);
-              dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: data.custom_prompts });
-            }
-            if (data.tables && data.tables.length > 0) {
-              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load saved harmonized data:', e);
-      }
-    };
-
-    loadSavedData();
-  }, [state.projectId, state.obj, sapObject, dispatch]);
-
-  const enabledRuleCount = RULE_LIST.filter(r => (ruleConfig[r.key] !== undefined ? ruleConfig[r.key].enabled : true)).length;
-  const totalRuleCount = RULE_LIST.length;
+  // Dynamic Rule Editing States (matched with Step 5 Validate)
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
+  const [newPromptInput, setNewPromptInput] = useState<string>('');
 
   const handleAddPrompt = () => {
     if (!newPromptInput.trim()) return;
-    const next = [...customPrompts, newPromptInput.trim()];
-    setCustomPrompts(next);
-    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
+    const updatedPrompts = [...customPrompts, newPromptInput.trim()];
+    setCustomPrompts(updatedPrompts);
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: updatedPrompts });
     setNewPromptInput('');
+    toast('Custom rule added! Click Preview Changes or Merge & Harmonize to apply.', 'ok');
   };
 
-  const handleRemovePrompt = (index: number) => {
-    const next = customPrompts.filter((_, i) => i !== index);
-    setCustomPrompts(next);
-    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
+  const handleDeletePrompt = (index: number) => {
+    const updated = customPrompts.filter((_, i) => i !== index);
+    setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: updated });
     if (editingIndex === index) {
       setEditingIndex(null);
       setEditingText('');
@@ -760,17 +735,21 @@ export function Step4Harmonize() {
 
   const handleStartEdit = (index: number) => {
     setEditingIndex(index);
-    setEditingText(customPrompts[index]);
+    setEditingText(customPrompts[index] || '');
   };
 
   const handleSaveEdit = (index: number) => {
-    if (!editingText.trim()) return;
-    const next = [...customPrompts];
-    next[index] = editingText.trim();
-    setCustomPrompts(next);
-    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: next });
+    if (!editingText.trim()) {
+      handleDeletePrompt(index);
+      return;
+    }
+    const updated = [...customPrompts];
+    updated[index] = editingText.trim();
+    setCustomPrompts(updated);
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: updated });
     setEditingIndex(null);
     setEditingText('');
+    toast('Rule prompt updated!', 'ok');
   };
 
   const handleCancelEdit = () => {
@@ -778,81 +757,26 @@ export function Step4Harmonize() {
     setEditingText('');
   };
 
-  const deleteDynamicRule = async (rid: string) => {
-    const remaining = savedDynamicRules.filter((r) => r.id !== rid && r.label !== rid);
+  const toggleSelectDynamicRule = (ruleId: string) => {
+    setSelectedDynamicRules((prev) => ({
+      ...prev,
+      [ruleId]: prev[ruleId] === false ? true : false,
+    }));
+  };
+
+  const deleteDynamicRule = (ruleId: string) => {
+    const remaining = savedDynamicRules.filter((r) => r.id !== ruleId);
     setSavedDynamicRules(remaining);
     dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: remaining });
-    if (result) {
-      setResult({ ...result, dynamic_rules: remaining });
-    }
-    setSelectedDynamicRules((d) => {
-      const updated = { ...d };
-      delete updated[rid];
-      return updated;
-    });
-
-    // Persist deletion immediately to Supabase database
-    if (state.projectId) {
-      try {
-        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            project_id: state.projectId,
-            target_object: state.obj || sapObject,
-            rules: remaining
-          })
-        });
-        if (res.ok) {
-          toast('Rule deleted from database', 'ok');
-        }
-      } catch (err) {
-        console.error('Failed to sync rule deletion with database:', err);
-      }
-    }
+    toast('Dynamic rule removed', 'info');
   };
 
-  const handleClearAllDynamicRules = async () => {
+  const handleClearAllDynamicRules = () => {
     setSavedDynamicRules([]);
+    setCustomPrompts([]);
     dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: [] });
-    setSelectedDynamicRules({});
-    if (result) {
-      setResult({ ...result, dynamic_rules: [] });
-    }
-    if (state.projectId) {
-      try {
-        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            project_id: state.projectId,
-            target_object: state.obj || sapObject,
-            rules: []
-          })
-        });
-        if (res.ok) {
-          toast('All dynamic rules removed from database', 'ok');
-        }
-      } catch (err) {
-        console.error('Failed to clear rules in database:', err);
-      }
-    }
-  };
-
-  const targetCols = React.useMemo(() => {
-    if (result?.columns && result.columns.length > 0) return result.columns;
-    if (state.mapping && state.mapping.length > 0) {
-      return Array.from(new Set(state.mapping.map((m: any) => m.sap?.split('.').pop() || m.sap).filter(Boolean)));
-    }
-    return [];
-  }, [result?.columns, state.mapping]);
-
-  const toggleSelectDynamicRule = (rid: string) => {
-    const nextState = !(selectedDynamicRules[rid] !== false);
-    setSelectedDynamicRules((prev) => ({ ...prev, [rid]: nextState }));
-    const updatedRules = savedDynamicRules.map(r => r.id === rid ? { ...r, enabled: nextState } : r);
-    setSavedDynamicRules(updatedRules);
-    dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: updatedRules });
+    dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
+    toast('All dynamic rules cleared', 'info');
   };
 
   const saveRulesToDB = async () => {
@@ -862,6 +786,10 @@ export function Step4Harmonize() {
     }
     showLoad('Saving rules...', 'Compiling and saving dynamic harmonization rules to database');
     try {
+      const actualCols = (state.extracted && state.extracted.length > 0)
+        ? Object.keys(state.extracted[0])
+        : ((result?.columns && result.columns.length > 0) ? result.columns : (state.headers || []));
+
       let compiled: any[] = [];
       if (customPrompts.length > 0) {
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/generate-dynamic-rules`, {
@@ -869,18 +797,21 @@ export function Step4Harmonize() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             prompts: customPrompts,
-            target_object: state.obj || sapObject,
-            actual_columns: targetCols
+            target_object: state.obj,
+            actual_columns: actualCols
           })
         });
-        if (!res.ok) throw new Error('Failed to compile prompts');
-        const json = await res.json();
-        compiled = json.rules || [];
+        if (res.ok) {
+          const json = await res.json();
+          compiled = json.rules || [];
+        }
       }
 
-      const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
-      const newlyCompiled = dedupeRules(compiled).filter((r: any) => !existingIds.has(r.id));
-      const payloadRules = [...savedDynamicRules, ...newlyCompiled].map((r: any) => ({
+      const deduupedCompiled = dedupeRules(compiled);
+      const payloadRules = [
+        ...savedDynamicRules,
+        ...deduupedCompiled
+      ].map((r: any) => ({
         ...r,
         enabled: selectedDynamicRules[r.id] !== false
       }));
@@ -888,75 +819,403 @@ export function Step4Harmonize() {
       const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: state.projectId,
-          target_object: state.obj || sapObject,
-          rules: payloadRules
-        })
+        body: JSON.stringify({ project_id: state.projectId, target_object: state.obj, rules: payloadRules })
       });
-      if (!res2.ok) throw new Error('Failed to save rules to database');
+      if (!res2.ok) throw new Error('Failed to save dynamic rules');
 
       setSavedDynamicRules(payloadRules);
       dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: payloadRules });
-      setSelectedDynamicRules((d) => {
-        const updated = { ...d };
-        newlyCompiled.forEach((r: any) => {
-          if (r?.id) {
-            updated[r.id] = true;
-          }
+      setSelectedDynamicRules((prev) => {
+        const updated = { ...prev };
+        payloadRules.forEach((r: any) => {
+          if (!(r.id in updated)) updated[r.id] = true;
         });
         return updated;
       });
-      if (result) {
-        setResult({ ...result, dynamic_rules: payloadRules });
-      }
       setCustomPrompts([]);
       dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
       hideLoad();
-      toast('Harmonization rules saved to database successfully!', 'ok');
+      toast(`Successfully saved ${payloadRules.length} dynamic rule(s) to database!`, 'ok');
     } catch (err: any) {
       hideLoad();
-      toast(err.message || 'Failed to save rules', 'err');
+      toast(err.message || 'Failed to save dynamic rules', 'err');
     }
   };
 
-  const toggleRule = (key: string) => {
-    setRuleConfig(prev => ({
-      ...prev,
-      [key]: { ...prev[key], enabled: !prev[key]?.enabled }
-    }));
+  // Helper to format file sizes
+  const formatSize = (bytes?: number): string => {
+    if (!bytes || isNaN(bytes)) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const updateRuleParamInline = (key: string, paramKey: string, val: any) => {
-    setRuleConfig(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        params: { ...(prev[key]?.params || {}), [paramKey]: val }
+  // Handle uploading/staging multiple secondary files
+  const handleAddSecondaryFiles = async (fileList: FileList | File[] | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const filesArray = Array.from(fileList);
+
+    setIsInspectingFiles(true);
+    showLoad('Inspecting Files...', `Analyzing ${filesArray.length} file schema(s)`, ['Detecting headers & columns...']);
+
+    try {
+      const formData = new FormData();
+      filesArray.forEach(f => formData.append('files', f));
+
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/upload-preview`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: 'Preview failed' }));
+        throw new Error(errData.detail || 'Failed to preview files');
       }
-    }));
+
+      const resData = await res.json();
+      const newStagedList: StagedSecondaryFile[] = (resData.files || []).map((pf: any, idx: number) => {
+        const fileObj = filesArray[idx] || filesArray.find(f => f.name === pf.filename) || filesArray[0];
+        const fileSize = fileObj ? fileObj.size : (pf.file_size || 0);
+        return {
+          file: fileObj,
+          filename: pf.filename || (fileObj ? fileObj.name : `file_${idx}.csv`),
+          size: formatSize(fileSize),
+          headers: pf.headers || [],
+          columns_count: pf.columns_count || (pf.headers ? pf.headers.length : 0),
+          row_count: pf.row_count || 0,
+          mappingFile: null,
+        };
+      });
+
+      // Combine with existing staged files
+      const existingMap = new Map(stagedFiles.map(f => [f.filename, f]));
+      newStagedList.forEach(sf => existingMap.set(sf.filename, sf));
+      const combinedList = Array.from(existingMap.values());
+      setStagedFiles(combinedList);
+
+      // Initialize join configs with heuristic key matching
+      const updatedConfigs = { ...joinConfigs };
+      combinedList.forEach((sec) => {
+        if (!updatedConfigs[sec.filename] || !updatedConfigs[sec.filename].key_conditions || updatedConfigs[sec.filename].key_conditions.length === 0) {
+          // Default join target: Always Primary Base Table (like Step 1)
+          const targetParent = primaryFileName;
+          const parentHdrs = primaryHeaders || [];
+
+          const matchedPairs = findAllMatchingKeyPairs(parentHdrs, sec.headers || []);
+          updatedConfigs[sec.filename] = {
+            file_name: sec.filename,
+            join_with: targetParent,
+            key_conditions: matchedPairs.length > 0 ? matchedPairs : [{ left_key: parentHdrs[0] || '', right_key: sec.headers?.[0] || '' }],
+          };
+        }
+      });
+      setJoinConfigs(updatedConfigs);
+
+      toast(`Staged ${combinedList.length} secondary file(s). Configure relational join keys below!`, 'ok');
+    } catch (err: any) {
+      toast(err.message || 'Error inspecting secondary files', 'err');
+    } finally {
+      setIsInspectingFiles(false);
+      hideLoad();
+      if (multiFileInputRef.current) multiFileInputRef.current.value = '';
+    }
   };
 
-  const updateRuleInstructionInline = (key: string, instruction: string) => {
-    setRuleConfig(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        custom_instruction: instruction || undefined
+  const handleRemoveStagedFile = (filename: string) => {
+    const remaining = stagedFiles.filter(f => f.filename !== filename);
+    setStagedFiles(remaining);
+    const updatedConfigs = { ...joinConfigs };
+    delete updatedConfigs[filename];
+    setJoinConfigs(updatedConfigs);
+  };
+
+  const handleResetSecondary = () => {
+    setStagedFiles([]);
+    setJoinConfigs({});
+    toast('Secondary files reset', 'info');
+  };
+
+  // Attach mapping CSV to a specific secondary file
+  const handleOpenMappingPicker = (targetFilename: string) => {
+    setActiveMappingTargetFile(targetFilename);
+    if (mappingFileInputRef.current) {
+      mappingFileInputRef.current.click();
+    }
+  };
+
+  const handleMappingFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && activeMappingTargetFile) {
+      setStagedFiles(prev => prev.map(sf => {
+        if (sf.filename === activeMappingTargetFile) {
+          return { ...sf, mappingFile: file };
+        }
+        return sf;
+      }));
+      toast(`Attached mapping CSV to ${activeMappingTargetFile}`, 'ok');
+    }
+    setActiveMappingTargetFile(null);
+    if (mappingFileInputRef.current) mappingFileInputRef.current.value = '';
+  };
+
+  const handleRemoveMappingFile = (targetFilename: string) => {
+    setStagedFiles(prev => prev.map(sf => {
+      if (sf.filename === targetFilename) {
+        return { ...sf, mappingFile: null };
       }
+      return sf;
     }));
   };
 
-  const addAdditionalSource = () => {
-    setAdditionalSources(prev => [...prev, { source: '', file: null, mappingFile: null }]);
+  // Join Topology & Composite Keys modification
+  const updateJoinParent = (secFilename: string, newParent: string) => {
+    const parentHeaders = newParent === primaryFileName
+      ? primaryHeaders
+      : (stagedFiles.find(f => f.filename === newParent)?.headers || primaryHeaders);
+    const secObj = stagedFiles.find(f => f.filename === secFilename);
+    const secHeaders = secObj?.headers || [];
+
+    const matchedPairs = findAllMatchingKeyPairs(parentHeaders, secHeaders);
+    setJoinConfigs(prev => ({
+      ...prev,
+      [secFilename]: {
+        file_name: secFilename,
+        join_with: newParent,
+        key_conditions: matchedPairs,
+      },
+    }));
   };
 
-  const removeAdditionalSource = (idx: number) => {
-    setAdditionalSources(prev => prev.filter((_, i) => i !== idx));
+  const updateKeyCondition = (secFilename: string, condIdx: number, field: 'left_key' | 'right_key', val: string) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename] || { file_name: secFilename, join_with: primaryFileName, key_conditions: [] };
+      const nextConds = current.key_conditions.map((c, i) => i === condIdx ? { ...c, [field]: val } : c);
+      return {
+        ...prev,
+        [secFilename]: { ...current, key_conditions: nextConds },
+      };
+    });
   };
 
-  const updateAdditionalSource = (idx: number, updates: Partial<AdditionalSource>) => {
-    setAdditionalSources(prev => prev.map((s, i) => i === idx ? { ...s, ...updates } : s));
+  const addCompositeKeyCondition = (secFilename: string) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename] || { file_name: secFilename, join_with: primaryFileName, key_conditions: [] };
+      const parentName = current.join_with || primaryFileName;
+      const parentHeaders = parentName === primaryFileName
+        ? primaryHeaders
+        : (stagedFiles.find(f => f.filename === parentName)?.headers || primaryHeaders);
+      const secObj = stagedFiles.find(f => f.filename === secFilename);
+      const secHeaders = secObj?.headers || [];
+
+      const usedLeft = new Set(current.key_conditions.map(c => c.left_key).filter(Boolean));
+      const usedRight = new Set(current.key_conditions.map(c => c.right_key).filter(Boolean));
+
+      const unusedParent = parentHeaders.filter(h => !usedLeft.has(h));
+      const unusedChild = secHeaders.filter(h => !usedRight.has(h));
+
+      const candidatePairs = findAllMatchingKeyPairs(
+        unusedParent.length > 0 ? unusedParent : parentHeaders,
+        unusedChild.length > 0 ? unusedChild : secHeaders
+      );
+
+      const nextPair = candidatePairs[0] || {
+        left_key: unusedParent[0] || parentHeaders[0] || '',
+        right_key: unusedChild[0] || secHeaders[0] || ''
+      };
+
+      return {
+        ...prev,
+        [secFilename]: {
+          ...current,
+          key_conditions: [...current.key_conditions, nextPair],
+        },
+      };
+    });
+  };
+
+  const removeCompositeKeyCondition = (secFilename: string, condIdx: number) => {
+    setJoinConfigs(prev => {
+      const current = prev[secFilename];
+      if (!current || current.key_conditions.length <= 1) return prev;
+      return {
+        ...prev,
+        [secFilename]: {
+          ...current,
+          key_conditions: current.key_conditions.filter((_, i) => i !== condIdx),
+        },
+      };
+    });
+  };
+
+  // Harmonization Execution
+  const canRun = mode === 'flow'
+    ? true
+    : stagedFiles.length > 0;
+
+  async function runHarmonization(isPreview: boolean = true, silent: boolean = false) {
+    if (!canRun) {
+      if (mode === 'multi' && stagedFiles.length === 0) {
+        toast('Please stage at least one secondary file to harmonize in Multi mode', 'err');
+      }
+      return;
+    }
+    dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: false });
+
+    if (!silent) {
+      const loadMsg = isPreview ? 'Generating Preview…' : 'Running Harmonization Agent…';
+      showLoad(loadMsg, `Processing multi-source data through relational topology & rules`, [
+        'Reading primary data from Database payload…',
+        'Parsing secondary file schemas & direct columns…',
+        'Resolving topological join hierarchy & composite keys…',
+        'Executing LEFT JOIN merges with suffix protection…',
+        'Applying standardization & dynamic AI rules…',
+        'Generating audit report & results…',
+      ]);
+      [0, 1, 2, 3, 4, 5, 6, 7].forEach(i => setTimeout(() => tick(i), 300 + i * 300));
+    }
+
+    try {
+      let res;
+      const selectedDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
+
+      if (mode === 'flow') {
+        if (!state.projectId) {
+          throw new Error('No Project ID found. Please extract and save data in Step 3 first.');
+        }
+        res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/flow`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            sap_object: sapObject,
+            company_code: companyCode,
+            sales_org: salesOrg,
+            purch_org: purchOrg,
+            plant: plant,
+            dist_channel: distChannel,
+            division: division,
+            currency: currency,
+            primary_source: state.src || primarySource,
+            preview: isPreview,
+            rule_config: ruleConfig,
+            custom_prompts: customPrompts,
+            dynamic_rules: selectedDynRules,
+          }),
+        });
+      } else {
+        // Multi mode
+        const formData = new FormData();
+        formData.append('project_id', state.projectId || '');
+        formData.append('sap_object', sapObject);
+        formData.append('company_code', companyCode);
+        formData.append('sales_org', salesOrg);
+        formData.append('purch_org', purchOrg);
+        formData.append('plant', plant);
+        formData.append('dist_channel', distChannel);
+        formData.append('division', division);
+        formData.append('currency', currency);
+        formData.append('primary_source', state.src || primarySource);
+        formData.append('secondary_source', secondarySource);
+        formData.append('preview', isPreview ? 'true' : 'false');
+        formData.append('rule_config_json', JSON.stringify(ruleConfig));
+        if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
+        if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
+
+        // Append all secondary files
+        stagedFiles.forEach(sf => {
+          formData.append('secondary_files', sf.file);
+          if (sf.mappingFile) {
+            formData.append('secondary_mapping_files', sf.mappingFile);
+          }
+        });
+
+        // Join configs array
+        const configsArray = stagedFiles.map(sf => {
+          const cfg = joinConfigs[sf.filename] || {
+            file_name: sf.filename,
+            join_with: primaryFileName,
+            key_conditions: findAllMatchingKeyPairs(primaryHeaders, sf.headers),
+          };
+          return {
+            file_name: sf.filename,
+            join_with: cfg.join_with || primaryFileName,
+            key_conditions: (cfg.key_conditions || []).filter(c => c.left_key && c.right_key),
+            mapping_file: sf.mappingFile ? sf.mappingFile.name : undefined,
+          };
+        });
+
+        formData.append('join_configs_json', JSON.stringify(configsArray));
+        formData.append('base_table_name', primaryFileName);
+
+        const endpoint = state.projectId
+          ? `${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/multi-flow`
+          : `${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize`;
+
+        res = await fetch(endpoint, { method: 'POST', body: formData });
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(err.detail || 'Harmonization failed');
+      }
+
+      const data = await res.json();
+
+      if (silent) {
+        if (data.is_preview) {
+          setPreviewData({ fixLog: data.fix_log, stats: data.stats });
+        }
+        return;
+      }
+
+      setTimeout(() => {
+        tick(8, 'Complete');
+        setTimeout(() => {
+          hideLoad();
+          if (data.is_preview) {
+            setPreviewData({ fixLog: data.fix_log, stats: data.stats });
+            setResult(null);
+            toast(`Preview ready: ${data.fix_log.length} transformations detected`, 'ok');
+          } else {
+            setPreviewData(null);
+            setResult(data);
+            if (data.tables && data.tables.length > 0) {
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+            }
+
+            const returnedDynRules = data.dynamic_rules || [];
+            const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
+            const newlyAddedRules = dedupeRules(returnedDynRules).filter((r: any) => !existingIds.has(r.id));
+            const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
+            setSavedDynamicRules(combinedDynamicRules);
+            dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: combinedDynamicRules });
+            setSelectedDynamicRules((d) => {
+              const updated = { ...d };
+              newlyAddedRules.forEach((r: any) => {
+                if (r?.id && !(r.id in updated)) {
+                  updated[r.id] = true;
+                }
+              });
+              return updated;
+            });
+
+            toast(
+              `Harmonized: ${data.stats.total_output} rows from ${data.stats.total_input} input rows across tables`,
+              'ok'
+            );
+          }
+        }, 600);
+      }, 500);
+
+    } catch (err: any) {
+      if (!silent) hideLoad();
+      toast(err.message || 'Harmonization failed', 'err');
+    }
+  }
+
+  const handleProceed = () => {
+    setPreviewData(null);
+    runHarmonization(false);
   };
 
   const saveDataToDB = async () => {
@@ -985,7 +1244,7 @@ export function Step4Harmonize() {
           tables: currentTables,
           dynamic_rules: currentDynRules,
           custom_prompts: customPrompts,
-        })
+        }),
       });
 
       if (!res.ok) throw new Error('Failed to save data');
@@ -994,7 +1253,6 @@ export function Step4Harmonize() {
       dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: currentTables });
       dispatch({ type: 'SET_FIELD', field: 'harmonized', value: result.final_table });
       dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: currentDynRules });
-      dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: customPrompts });
       dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: true });
       toast('Harmonized data saved to database successfully!', 'ok');
     } catch (err: any) {
@@ -1003,220 +1261,41 @@ export function Step4Harmonize() {
     }
   };
 
-  const formatSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const toggleRule = (key: string) => {
+    setRuleConfig(prev => ({
+      ...prev,
+      [key]: { ...prev[key], enabled: !prev[key]?.enabled },
+    }));
   };
 
-  const handleFileDrop = (
-    setter: React.Dispatch<React.SetStateAction<DroppedFile | null>>
-  ) => async (file: File) => {
-    const dropped: DroppedFile = {
-      file,
-      name: file.name,
-      size: formatSize(file.size),
-    };
-
-    if (file.name.endsWith('.csv')) {
-      try {
-        const text = await file.text();
-        const lines = text.split('\n').filter(l => l.trim());
-        dropped.rows = Math.max(0, lines.length - 1);
-      } catch { /* ignore */ }
-    }
-
-    setter(dropped);
+  const updateRuleParamInline = (key: string, paramKey: string, val: any) => {
+    setRuleConfig(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        params: { ...(prev[key]?.params || {}), [paramKey]: val },
+      },
+    }));
   };
 
-  const canRun = mode === 'flow'
-    ? true
-    : !!(secondarySource && secondaryFile && secondaryMappingFile);
+  const updateRuleInstructionInline = (key: string, instruction: string) => {
+    setRuleConfig(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        custom_instruction: instruction || undefined,
+      },
+    }));
+  };
 
-  async function runHarmonization(isPreview: boolean = true, silent: boolean = false) {
-    if (!canRun) return;
-    dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: false });
-
-    if (!silent) {
-      const loadMsg = isPreview ? 'Generating Preview…' : 'Running Harmonization Agent…';
-      showLoad(loadMsg, `Processing your data through rules${customPrompts.length > 0 ? ` + ${customPrompts.length} AI rules` : ''}`, [
-        'Reading files from Database or Uploads…',
-        'Applying field mappings…',
-        'Applying Cleansing & Harmonization Rules…',
-        'Checking fallback LLM constraints if needed…',
-        'Generating audit report & results…',
-      ]);
-      [0, 1, 2, 3, 4, 5, 6, 7].forEach(i => setTimeout(() => tick(i), 300 + i * 300));
-    }
-
-    try {
-      let res;
-      if (mode === 'flow') {
-        if (!state.projectId) {
-          throw new Error("No Project ID found. Please extract and save data in Step 3 first.");
-        }
-        const selectedDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
-        res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/flow`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            project_id: state.projectId,
-            sap_object: sapObject,
-            company_code: companyCode,
-            sales_org: salesOrg,
-            purch_org: purchOrg,
-            plant: plant,
-            dist_channel: distChannel,
-            division: division,
-            currency: currency,
-            primary_source: state.src || primarySource,
-            preview: isPreview,
-            rule_config: ruleConfig,
-            custom_prompts: customPrompts,
-            dynamic_rules: selectedDynRules,
-          })
-        });
-      } else {
-        // Multi mode
-        const selectedDynRules = savedDynamicRules.filter((r: any) => selectedDynamicRules[r.id] !== false);
-        if (!state.projectId) {
-          // If multi mode with standalone uploads
-          const formData = new FormData();
-          formData.append('mode', 'multi');
-          formData.append('sap_object', sapObject);
-          formData.append('company_code', companyCode);
-          formData.append('sales_org', salesOrg);
-          formData.append('purch_org', purchOrg);
-          formData.append('plant', plant);
-          formData.append('dist_channel', distChannel);
-          formData.append('division', division);
-          formData.append('currency', currency);
-          formData.append('primary_source', primarySource);
-          formData.append('secondary_source', secondarySource);
-          formData.append('secondary_file', secondaryFile!.file);
-          if (secondaryMappingFile) formData.append('secondary_mapping_file', secondaryMappingFile.file);
-          formData.append('preview', isPreview ? 'true' : 'false');
-          formData.append('rule_config_json', JSON.stringify(ruleConfig));
-          if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
-          if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
-
-          res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize`, { method: 'POST', body: formData });
-        } else {
-          const formData = new FormData();
-          formData.append('project_id', state.projectId || '');
-          formData.append('sap_object', sapObject);
-          formData.append('company_code', companyCode);
-          formData.append('sales_org', salesOrg);
-          formData.append('purch_org', purchOrg);
-          formData.append('plant', plant);
-          formData.append('dist_channel', distChannel);
-          formData.append('division', division);
-          formData.append('currency', currency);
-          formData.append('primary_source', state.src || primarySource);
-          formData.append('secondary_source', secondarySource);
-          formData.append('secondary_file', secondaryFile!.file);
-          formData.append('secondary_mapping_file', secondaryMappingFile!.file);
-          formData.append('preview', isPreview ? 'true' : 'false');
-          formData.append('rule_config_json', JSON.stringify(ruleConfig));
-          if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
-          if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
-
-          res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/multi-flow`, { method: 'POST', body: formData });
-        }
-      }
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(err.detail || 'Harmonization failed');
-      }
-
-      const data = await res.json();
-
-      if (silent) {
-        if (data.is_preview) {
-          setPreviewData({ fixLog: data.fix_log, stats: data.stats });
-        }
-        return;
-      }
-
-      setTimeout(() => {
-        tick(8, 'Complete');
-        setTimeout(() => {
-          hideLoad();
-          if (data.is_preview) {
-            setPreviewData({ fixLog: data.fix_log, stats: data.stats });
-            setResult(null);
-            toast(`Preview ready: ${data.fix_log.length} log entries generated`, 'ok');
-          } else {
-            setPreviewData(null);
-            setResult(data);
-            if (data.tables && data.tables.length > 0) {
-              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
-            }
-
-            const returnedDynRules = data.dynamic_rules || [];
-            const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
-            const newlyAddedRules = dedupeRules(returnedDynRules).filter((r: any) => !existingIds.has(r.id));
-            const combinedDynamicRules = [...savedDynamicRules, ...newlyAddedRules];
-            setSavedDynamicRules(combinedDynamicRules);
-            dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: combinedDynamicRules });
-            setSelectedDynamicRules((d) => {
-              const updated = { ...d };
-              newlyAddedRules.forEach((r: any) => {
-                if (r?.id && !(r.id in updated)) {
-                  updated[r.id] = true;
-                }
-              });
-              return updated;
-            });
-            if (customPrompts.length > 0) {
-              setCustomPrompts([]);
-              dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
-            }
-            toast(
-              `Harmonized: ${data.stats.total_output} rows from ${data.stats.total_input} input rows`,
-              'ok'
-            );
-          }
-        }, 600);
-      }, 500);
-
-    } catch (err: any) {
-      if (!silent) hideLoad();
-      toast(err.message || 'Harmonization failed', 'err');
-    }
-  }
-
-  // Auto-refresh preview in background when ruleConfig or customPrompts changes
-  const isFirstRender = useRef(true);
-  React.useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    if (previewData) {
-      const timer = setTimeout(() => {
-        runHarmonization(true, true);
-      }, 400);
-      return () => clearTimeout(timer);
-    }
-  }, [ruleConfig, customPrompts, selectedDynamicRules]);
-
-  function handleProceed() {
-    setPreviewData(null);
-    runHarmonization(false);
-  }
-
-  function downloadResult() {
-    if (!result?.session_id) return;
-    window.open(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/download/${result.session_id}`, '_blank');
-  }
+  const enabledRuleCount = RULE_LIST.filter(r => (ruleConfig[r.key] !== undefined ? ruleConfig[r.key].enabled : true)).length;
+  const totalRuleCount = RULE_LIST.length;
 
   return (
     <PageLayout>
       <PageGrid>
 
-        {/* ─── Main Column: Drop Zones + Results ─── */}
+        {/* ─── Main Column: Staging + Data Modeling + Reports + Results ─── */}
         <GridCol span={9}>
           <div className="space-y-4">
             <div>
@@ -1224,7 +1303,7 @@ export function Step4Harmonize() {
               <p className="mt-1 max-w-2xl text-sm text-[var(--text-secondary)]">Upload files, configure rules, and test the harmonization pipeline</p>
             </div>
 
-            {/* Two mode options: Flow & Multi */}
+            {/* Mode toggle: Flow vs Multi */}
             <div className="flex items-center gap-2">
               {(['flow', 'multi'] as const).map(m => (
                 <button
@@ -1252,6 +1331,7 @@ export function Step4Harmonize() {
                 icon={<Eye className="w-3.5 h-3.5" />}
                 onClick={() => runHarmonization(true)}
                 disabled={!canRun}
+                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
               >
                 Preview Changes
               </Button>
@@ -1264,10 +1344,10 @@ export function Step4Harmonize() {
                   Proceed & Execute
                 </Button>
               )}
-              <div title={!result ? "Run harmonization first before saving." : ""}>
+              <div title={!result ? 'Run harmonization first before saving.' : ''}>
                 <Button variant="secondary" icon={<Save className="w-3.5 h-3.5" />} onClick={saveDataToDB} disabled={!result}>Save Data</Button>
               </div>
-              <div title={!state.isHarmonizedSaved ? "You must save your data before proceeding to Step 5." : ""}>
+              <div title={!state.isHarmonizedSaved ? 'You must save your data before proceeding to Step 5.' : ''}>
                 <Button
                   variant="primary"
                   icon={<ArrowRight className="w-3.5 h-3.5" />}
@@ -1280,154 +1360,382 @@ export function Step4Harmonize() {
             </div>
           </div>
 
+          {/* ─── Multi-Source Data Modeling & Relational Key Join Card ─── */}
           {mode === 'multi' && (
-            <Card>
+            <Card className="mt-4 border-[var(--border)] shadow-sm">
               <CardHeader
-                title="Multi-Source Harmonization"
-                subtitle="Primary data from database + secondary/additional data uploaded"
+                title="Multi-Source Data Modeling & Relational Key Join"
+                subtitle="Stage multi-table files, configure primary & foreign key relationships, and harmonise"
               />
               <CardBody className="p-4 space-y-4">
-                {/* Primary data from DB indicator */}
-                <div className="px-3 py-2.5 rounded-xl border border-emerald-300 dark:border-emerald-600 bg-emerald-50/50 dark:bg-emerald-900/20">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-                      <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                {/* Source System selector */}
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
+                    SOURCE SYSTEM
+                  </label>
+                  <select
+                    value={secondarySource}
+                    onChange={(e) => setSecondarySource(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:border-purple-500 cursor-pointer"
+                  >
+                    {SOURCE_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Selected Files Header & Action Buttons */}
+                <div className="pt-2">
+                  <div className="flex items-center justify-between pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11.5px] font-bold uppercase tracking-wider text-[var(--text-primary)]">
+                        SELECTED FILES ({stagedFiles.length + 1})
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-900/40">
+                        Multi-Table Join
+                      </span>
                     </div>
-                    <div>
-                      <div className="text-[11.5px] font-semibold text-emerald-700 dark:text-emerald-300">Primary Data: From Database ({state.src || 'SAP_ECC'})</div>
-                      <div className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
-                        Using extracted data & mappings from Step 3 {state.extracted.length > 0 ? `(${state.extracted.length} rows)` : ''}
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        multiple
+                        accept=".csv,.xlsx,.xls"
+                        ref={multiFileInputRef}
+                        className="hidden"
+                        onChange={(e) => handleAddSecondaryFiles(e.target.files)}
+                      />
+                      <input
+                        type="file"
+                        accept=".csv"
+                        ref={mappingFileInputRef}
+                        className="hidden"
+                        onChange={handleMappingFileSelected}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => multiFileInputRef.current?.click()}
+                        disabled={isInspectingFiles}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-white dark:bg-gray-800 border border-[var(--border)] text-[var(--text-primary)] hover:border-purple-400 hover:text-purple-600 transition-colors cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-purple-600" />
+                        <span>{isInspectingFiles ? 'Inspecting…' : 'Add Secondary File'}</span>
+                      </button>
+                      {stagedFiles.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleResetSecondary}
+                          className="px-2 py-1 rounded-md text-[11px] font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                        >
+                          Reset Secondary
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Staged Files List */}
+                  <div className="space-y-2">
+                    {/* Primary / Base Table Card */}
+                    <div className="flex items-center justify-between p-3 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/40 dark:bg-emerald-950/20">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-600">
+                          <Database className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-bold text-[var(--text-primary)]">{primaryFileName}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9.5px] font-extrabold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
+                              PRIMARY / BASE
+                            </span>
+                          </div>
+                          <div className="text-[10.5px] text-[var(--text-tertiary)]">
+                            {primaryRowCount} records • {primaryHeaders.length} columns (Extracted & Mapped)
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-[10.5px] font-semibold">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Step 3 Schema Linked</span>
                       </div>
                     </div>
-                    {state.isDataSaved && <CheckCircle2 className="w-4 h-4 text-emerald-500 ml-auto" />}
+
+                    {/* Secondary Staged Files Cards */}
+                    {stagedFiles.map((sf) => (
+                      <div
+                        key={sf.filename}
+                        className="flex items-center justify-between p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-emerald-300 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/40">
+                            <FileSpreadsheet className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-[13px] font-bold text-gray-900 dark:text-gray-100">{sf.filename}</div>
+                            <div className="text-[11px] text-gray-400">
+                              {sf.size} <span className="mx-1">•</span> <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{sf.columns_count} columns</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {/* Optional Mapping CSV Picker */}
+                          {!sf.mappingFile ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenMappingPicker(sf.filename)}
+                              className="px-2.5 py-1 rounded-md border border-dashed border-amber-400 dark:border-amber-600 bg-amber-50/40 dark:bg-amber-950/20 text-amber-700 dark:text-amber-300 text-[10.5px] font-bold hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors flex items-center gap-1 cursor-pointer"
+                            >
+                              <UploadCloud className="w-3 h-3 text-amber-600" />
+                              <span>+ Add Mapping CSV (Optional)</span>
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 dark:bg-purple-950/30 border border-purple-300 dark:border-purple-800 text-[10.5px] font-semibold text-purple-700 dark:text-purple-300">
+                              <span className="truncate max-w-[120px]">{sf.mappingFile.name}</span>
+                              <button
+                                onClick={() => handleRemoveMappingFile(sf.filename)}
+                                className="text-purple-500 hover:text-red-500 p-0.5"
+                                title="Remove mapping CSV"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Delete Staged File */}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStagedFile(sf.filename)}
+                            className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                            title="Remove file"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                {/* Secondary Data Source Selector */}
-                <div className="px-3 py-2.5 rounded-xl border border-teal-300 dark:border-teal-600 bg-teal-50/40 dark:bg-teal-900/15">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[11.5px] font-semibold text-teal-800 dark:text-teal-300">Secondary Data Source System</div>
-                      <div className="text-[10px] text-teal-600/80 dark:text-teal-400/80">Select system origin for secondary file</div>
+                {/* ─── Key Join Configuration (Data Modeling) ─── */}
+                {stagedFiles.length > 0 && (
+                  <div className="pt-3 border-t border-[var(--border)] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-wider text-[var(--text-primary)]">
+                        <Link2 className="w-4 h-4 text-teal-600" />
+                        <span>Key Join Configuration (Data Modeling)</span>
+                      </div>
+                      <span className="text-[10px] font-mono text-[var(--text-tertiary)]">
+                        Joining secondary tables into Base Table
+                      </span>
                     </div>
-                    <select
-                      value={secondarySource}
-                      onChange={(e) => setSecondarySource(e.target.value)}
-                      className="px-3 py-1.5 rounded-lg text-[11.5px] font-bold bg-[var(--bg-primary)] border border-teal-400 dark:border-teal-500 text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-sm"
-                    >
-                      <option value="">— Select Source —</option>
-                      {SOURCE_OPTIONS.map((s) => (
-                        <option key={s.value} value={s.value}>{s.label} ({s.value})</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
 
-                {/* Secondary file uploads — only visible when source selected */}
-                {secondarySource && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <DropZone
-                      id="drop-secondary"
-                      label="Secondary Data File"
-                      subtitle="Drag & drop CSV or Excel"
-                      icon={FileSpreadsheet}
-                      accept=".csv,.xlsx,.xls"
-                      file={secondaryFile}
-                      onDrop={handleFileDrop(setSecondaryFile)}
-                      onClear={() => setSecondaryFile(null)}
-                      accentColor="teal"
-                    />
+                    {/* Master Base Table Designation */}
+                    <div>
+                      <label className="text-[9.5px] font-bold uppercase tracking-wider text-[var(--text-tertiary)] block mb-1">
+                        PRIMARY / BASE TABLE (MASTER TABLE)
+                      </label>
+                      <select
+                        value={baseTableSelection}
+                        onChange={(e) => setBaseTableSelection(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg text-[12px] font-bold bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:border-purple-500 cursor-pointer"
+                      >
+                        <option value={primaryFileName}>{primaryFileName} (Primary Data)</option>
+                        {stagedFiles.map(f => (
+                          <option key={f.filename} value={f.filename}>{f.filename}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                    <DropZone
-                      id="drop-secondary-mapping"
-                      label="Secondary Mapping CSV"
-                      subtitle="Columns: src, sap, transform, confidence"
-                      icon={MapPin}
-                      accept=".csv"
-                      file={secondaryMappingFile}
-                      onDrop={handleFileDrop(setSecondaryMappingFile)}
-                      onClear={() => setSecondaryMappingFile(null)}
-                      accentColor="amber"
-                    />
+                    {/* Secondary Join Cards */}
+                    <div className="space-y-3.5 pt-1">
+                      {stagedFiles.map((sec, secIdx) => {
+                        const fallbackConds = findAllMatchingKeyPairs(primaryHeaders || [], sec.headers || []);
+                        const config = joinConfigs[sec.filename] || {
+                          file_name: sec.filename,
+                          join_with: primaryFileName,
+                          key_conditions: fallbackConds.length > 0 ? fallbackConds : [{ left_key: '', right_key: '' }],
+                        };
+
+                        const keyConditions = (config.key_conditions && config.key_conditions.length > 0)
+                          ? config.key_conditions
+                          : (fallbackConds.length > 0 ? fallbackConds : [{ left_key: '', right_key: '' }]);
+
+                        const parentName = config.join_with || primaryFileName;
+                        const parentHeaders = (parentName === primaryFileName
+                          ? primaryHeaders
+                          : (stagedFiles.find(f => f.filename === parentName)?.headers || primaryHeaders)) || [];
+                        const secHeaders = sec.headers || [];
+
+                        const availableParents = Array.from(new Set([
+                          primaryFileName,
+                          ...stagedFiles.map(f => f.filename),
+                        ])).filter(p => p && p !== sec.filename);
+
+                        const isMapped = !!sec.mappingFile;
+
+                        return (
+                          <div
+                            key={sec.filename}
+                            className="p-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs space-y-3"
+                          >
+                            {/* Card Top Row */}
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-2">
+                                <Layers className="w-4 h-4 text-emerald-500" />
+                                <span className="text-[13px] font-bold text-gray-900 dark:text-gray-100">
+                                  Join: {sec.filename}
+                                </span>
+                                {isMapped && (
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-bold border bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800">
+                                    Mapped Join
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2.5">
+                                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-800/60 text-[11px]">
+                                  <span className="text-gray-400 font-mono">Join With:</span>
+                                  <select
+                                    value={config.join_with || primaryFileName}
+                                    onChange={(e) => updateJoinParent(sec.filename, e.target.value)}
+                                    className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:outline-none cursor-pointer"
+                                  >
+                                    {availableParents.map((p) => (
+                                      <option key={p} value={p}>
+                                        {p === primaryFileName ? `${p} (Base)` : p}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                {keyConditions.length > 1 && (
+                                  <span className="px-2 py-0.5 rounded text-[9.5px] font-mono font-bold uppercase tracking-wider bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                                    {keyConditions.length} KEY CONDITIONS
+                                  </span>
+                                )}
+
+                                <span className="text-[10px] font-mono font-bold tracking-wider text-gray-400 uppercase">
+                                  LEFT JOIN
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Condition Box */}
+                            <div className="p-3.5 rounded-xl border border-gray-200 dark:border-gray-700/80 bg-gray-50/40 dark:bg-gray-800/30 space-y-3">
+                              {keyConditions.map((cond, condIdx) => (
+                                <React.Fragment key={condIdx}>
+                                  {condIdx > 0 && (
+                                    <div className="flex items-center justify-center pt-1 pb-0.5">
+                                      <span className="px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 uppercase tracking-wider shadow-2xs">
+                                        AND (COMPOSITE KEY)
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  <div className="flex items-center gap-3">
+                                     {/* Left Dropdown (Parent Key) */}
+                                     <div className="flex-1 min-w-0 space-y-1">
+                                       <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                         {parentName} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Key'}
+                                       </label>
+                                       <select
+                                         value={cond.left_key || ''}
+                                         onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'left_key', e.target.value)}
+                                         className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                       >
+                                         <option value="">Select {parentName} Key...</option>
+                                         {parentHeaders.map((h) => (
+                                           <option key={h} value={h}>{h}</option>
+                                         ))}
+                                       </select>
+                                     </div>
+
+                                     {/* Arrow */}
+                                     <div className="shrink-0 pt-4 text-emerald-500 font-bold text-base">
+                                       ➔
+                                     </div>
+
+                                     {/* Right Dropdown (Foreign Key) */}
+                                     <div className="flex-1 min-w-0 space-y-1">
+                                       <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                          {sec.filename} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Foreign Key'}
+                                       </label>
+                                       <select
+                                         value={cond.right_key || ''}
+                                         onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'right_key', e.target.value)}
+                                         className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                       >
+                                         <option value="">Select {sec.filename} Key...</option>
+                                         {secHeaders.map((h) => (
+                                           <option key={h} value={h}>{h}</option>
+                                         ))}
+                                       </select>
+                                     </div>
+
+                                     {/* Delete Condition Button / Spacer */}
+                                     {keyConditions.length > 1 && condIdx > 0 ? (
+                                       <div className="shrink-0 pt-4">
+                                         <button
+                                           type="button"
+                                           onClick={() => removeCompositeKeyCondition(sec.filename, condIdx)}
+                                           className="p-1.5 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                                           title="Remove key condition"
+                                         >
+                                           <Trash2 className="w-4 h-4 text-red-500" />
+                                         </button>
+                                       </div>
+                                     ) : keyConditions.length > 1 ? (
+                                       <div className="shrink-0 pt-4 w-7" />
+                                     ) : null}
+                                   </div>
+                                </React.Fragment>
+                              ))}
+                            </div>
+
+                            {/* Add Composite Key Button */}
+                              <div>
+                                <button
+                                  type="button"
+                                  onClick={() => addCompositeKeyCondition(sec.filename)}
+                                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                                >
+                                  <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>Add Composite Key Condition</span>
+                                </button>
+                              </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Bottom Action Button */}
+                    <div className="pt-2">
+                      <Button
+                        variant="primary"
+                        size="lg"
+                        icon={<Link2 className="w-4 h-4" />}
+                        className="w-full justify-center py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[13px] rounded-xl shadow-sm cursor-pointer"
+                        onClick={() => runHarmonization(false)}
+                      >
+                        Merge & Load {stagedFiles.length + 1} Tables
+                      </Button>
+                    </div>
                   </div>
                 )}
-
-                {/* Additional Sources */}
-                {additionalSources.map((extra, idx) => (
-                  <div key={idx} className="space-y-2">
-                    <div className="flex items-center justify-between px-3 py-2 rounded-xl border border-purple-300 dark:border-purple-600 bg-purple-50/40 dark:bg-purple-900/15">
-                      <div className="flex items-center gap-3 flex-1">
-                        <div>
-                          <div className="text-[11.5px] font-semibold text-purple-800 dark:text-purple-300">Additional Source #{idx + 1}</div>
-                        </div>
-                        <select
-                          value={extra.source}
-                          onChange={(e) => updateAdditionalSource(idx, { source: e.target.value })}
-                          className="px-3 py-1.5 rounded-lg text-[11.5px] font-bold bg-[var(--bg-primary)] border border-purple-400 dark:border-purple-500 text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-purple-500 cursor-pointer shadow-sm"
-                        >
-                          <option value="">— Select Source —</option>
-                          {SOURCE_OPTIONS.map((s) => (
-                            <option key={s.value} value={s.value}>{s.label} ({s.value})</option>
-                          ))}
-                        </select>
-                      </div>
-                      <button onClick={() => removeAdditionalSource(idx)} className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-[var(--text-tertiary)] hover:text-red-500 transition-colors ml-2 cursor-pointer">
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    {extra.source && (
-                      <div className="grid grid-cols-2 gap-3 pl-3">
-                        <DropZone
-                          id={`drop-extra-${idx}`}
-                          label={`Source #${idx + 1} Data File`}
-                          subtitle="Drag & drop CSV or Excel"
-                          icon={FileSpreadsheet}
-                          accept=".csv,.xlsx,.xls"
-                          file={extra.file}
-                          onDrop={(f) => {
-                            const dropped: DroppedFile = { file: f, name: f.name, size: formatSize(f.size) };
-                            updateAdditionalSource(idx, { file: dropped });
-                          }}
-                          onClear={() => updateAdditionalSource(idx, { file: null })}
-                          accentColor="violet"
-                        />
-                        <DropZone
-                          id={`drop-extra-mapping-${idx}`}
-                          label={`Source #${idx + 1} Mapping CSV`}
-                          subtitle="Columns: src, sap, transform, confidence"
-                          icon={MapPin}
-                          accept=".csv"
-                          file={extra.mappingFile}
-                          onDrop={(f) => {
-                            const dropped: DroppedFile = { file: f, name: f.name, size: formatSize(f.size) };
-                            updateAdditionalSource(idx, { mappingFile: dropped });
-                          }}
-                          onClear={() => updateAdditionalSource(idx, { mappingFile: null })}
-                          accentColor="amber"
-                        />
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Add Source Button */}
-                <button
-                  onClick={addAdditionalSource}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border-2 border-dashed border-[var(--border)] hover:border-purple-400 text-[11.5px] font-semibold text-[var(--text-tertiary)] hover:text-purple-600 transition-all cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Another Source
-                </button>
               </CardBody>
             </Card>
           )}
 
-          {/* Preview Card */}
+          {/* ─── Preview Proposed Changes Card ─── */}
           {previewData && (
             <PreviewCard fixLog={previewData.fixLog} stats={previewData.stats} ruleConfig={ruleConfig} onProceed={handleProceed} />
           )}
 
-          {/* Results Table — Multi-Table Display */}
+          {/* ─── Harmonization Changes & Audit Report (SHOWN FIRST ABOVE DATA TABLES) ─── */}
+          {result && <HarmonizationReportCard result={result} />}
+
+          {/* ─── Harmonized Data Output Tables (SHOWN BELOW AUDIT REPORT) ─── */}
           {result && (() => {
             const outputRows = result.final_table || [];
             const targetCols = (result.columns && result.columns.length > 0)
@@ -1442,7 +1750,7 @@ export function Step4Harmonize() {
             const allTables: TableInfo[] = tablesSource.length > 0
               ? tablesSource.map((t: any) => ({
                   table_name: t.table_name,
-                  columns: (t.columns && t.columns.length > 0) ? t.columns : targetCols
+                  columns: (t.columns && t.columns.length > 0) ? t.columns : targetCols,
                 }))
               : [{ table_name: 'Harmonized Output', columns: targetCols }];
 
@@ -1509,25 +1817,21 @@ export function Step4Harmonize() {
             );
           })()}
 
-          {/* Harmonization Changes & Audit Report */}
-          {result && <HarmonizationReportCard result={result} />}
-
           {!result && !previewData && (
             <Card>
               <CardBody>
                 <EmptyState
                   icon={<FlaskConical className="w-10 h-10 text-purple-500" />}
-                  message="Click 'Preview Changes' to see what harmonization will do, then 'Proceed' to execute"
+                  message="Click 'Preview Changes' to inspect transformations or 'Merge & Harmonize' to execute"
                 />
               </CardBody>
             </Card>
           )}
         </GridCol>
 
-        {/* ─── Right Column: Cleansing Rules UI Redesign (Inline Parameter Box) ─── */}
+        {/* ─── Right Column: Cleansing Rules UI Redesign ─── */}
         <GridCol span={3} className="space-y-4">
 
-          {/* Harmonization Rules Card (Redesigned with Inline Parameter Boxes — No Popups!) */}
           <Card className="shadow-xs border-[var(--border)]">
             <CardHeader
               title="Harmonization Rules"
@@ -1552,10 +1856,8 @@ export function Step4Harmonize() {
                       }
                     `}
                   >
-                    {/* Main Rule Header Line */}
                     <div className="flex items-center justify-between p-3">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        {/* Purple Square Checkbox */}
                         <button
                           onClick={() => toggleRule(rule.key)}
                           className={`
@@ -1571,7 +1873,6 @@ export function Step4Harmonize() {
 
                         <span className="text-sm shrink-0">{rule.emoji}</span>
 
-                        {/* Title & Subtitle */}
                         <div className="min-w-0 flex-1">
                           <div className={`text-[12px] font-bold leading-snug truncate ${cfg.enabled ? (isEdited ? 'text-purple-700 dark:text-purple-300' : 'text-emerald-600 dark:text-emerald-400') : 'text-[var(--text-tertiary)] line-through'}`}>
                             {rule.title}
@@ -1583,7 +1884,6 @@ export function Step4Harmonize() {
                         </div>
                       </div>
 
-                      {/* Far Right: Edit Pencil Icon to toggle inline box */}
                       <button
                         onClick={() => setExpandedRuleKey(isExpanded ? null : rule.key)}
                         title={`Configure parameters for ${rule.title}`}
@@ -1596,7 +1896,6 @@ export function Step4Harmonize() {
                       </button>
                     </div>
 
-                    {/* Inline Parameter Box (No popups!) */}
                     {isExpanded && (
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
@@ -1604,7 +1903,6 @@ export function Step4Harmonize() {
                         exit={{ height: 0, opacity: 0 }}
                         className="px-3 pb-3 pt-1 border-t border-[var(--border)] bg-[var(--bg-tertiary)]/50 space-y-2 text-[11px]"
                       >
-                        {/* Specific parameters */}
                         {rule.key === 'country_iso' && (
                           <div className="flex items-center justify-between gap-2 pt-1">
                             <span className="font-semibold text-[var(--text-secondary)]">ISO Format:</span>
@@ -1634,7 +1932,6 @@ export function Step4Harmonize() {
                           </div>
                         )}
 
-                        {/* Custom Instruction Box */}
                         <div>
                           <label className="text-[10px] font-bold text-purple-600 dark:text-purple-400 block mb-0.5">
                             Custom Constraint:
@@ -1655,172 +1952,153 @@ export function Step4Harmonize() {
             </CardBody>
           </Card>
 
-          {/* Dynamic AI Harmonization Rules Card */}
-          <Card className="border-purple-200 dark:border-purple-900/50 bg-gradient-to-br from-[var(--bg-primary)] to-purple-50/20 dark:to-purple-950/10">
+          {/* Dynamic AI Rules Card (Matched with Step 5 Validate) */}
+          <Card className="shadow-xs border-[var(--border)]">
             <CardHeader
               title="Dynamic AI Rules"
-              subtitle="Custom harmonization transforms"
+              subtitle={`${savedDynamicRules.filter(r => selectedDynamicRules[r.id] !== false).length + customPrompts.length} active`}
               icon={<Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
-            />
+            >
+              <Button variant="secondary" size="sm" icon={<Save className="w-3 h-3" />} onClick={saveRulesToDB}>
+                Save Rules
+              </Button>
+            </CardHeader>
             <CardBody className="p-3 space-y-3">
-              {/* Input & Add Prompt */}
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={newPromptInput}
-                  onChange={(e) => setNewPromptInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddPrompt()}
-                  placeholder="e.g. Convert all names to uppercase"
-                  className="flex-1 px-2.5 py-1.5 rounded-lg text-[11px] bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-purple-500"
-                />
-                <Button variant="secondary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={handleAddPrompt}>
-                  Add
-                </Button>
-              </div>
-
-              {/* List of Custom Prompts */}
-              {customPrompts.length > 0 ? (
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
-                    <span>Transform Prompts ({customPrompts.length})</span>
-                    <span className="text-[9.5px] text-purple-600 dark:text-purple-400 font-semibold normal-case">
-                      ⚡ 1 LLM Call
-                    </span>
-                  </div>
-                  <div className="space-y-1.5 max-h-[160px] overflow-y-auto scrollbar-thin">
-                    {customPrompts.map((p, idx) => (
-                      <div key={idx} className="p-2 rounded-lg bg-[var(--bg-tertiary)]/70 text-[10.5px] border border-[var(--border)] space-y-1.5">
-                        {editingIndex === idx ? (
-                          <div className="space-y-1.5">
-                            <textarea
-                              value={editingText}
-                              onChange={(e) => setEditingText(e.target.value)}
-                              rows={2}
-                              className="w-full p-1.5 rounded text-[10.5px] bg-[var(--bg-primary)] border border-purple-400 text-[var(--text-primary)] focus:outline-none"
-                            />
-                            <div className="flex items-center justify-end gap-1">
-                              <button
-                                onClick={handleCancelEdit}
-                                className="px-2 py-0.5 rounded text-[9.5px] text-[var(--text-tertiary)] hover:bg-[var(--bg-secondary)] cursor-pointer"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                onClick={() => handleSaveEdit(idx)}
-                                className="px-2 py-0.5 rounded text-[9.5px] bg-purple-600 text-white font-semibold cursor-pointer"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex items-start justify-between gap-1.5">
-                            <div className="flex gap-1.5 min-w-0 flex-1">
-                              <span className="text-purple-600 font-bold shrink-0">⚡</span>
-                              <span className="text-[var(--text-primary)] font-medium leading-tight break-words">#{idx + 1}. {p}</span>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={() => handleStartEdit(idx)}
-                                className="text-[var(--text-tertiary)] hover:text-purple-600 p-0.5 cursor-pointer"
-                                title="Edit prompt"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleRemovePrompt(idx)}
-                                className="text-[var(--text-tertiary)] hover:text-red-500 p-0.5 cursor-pointer"
-                                title="Remove prompt"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={<Sparkles className="w-3.5 h-3.5 text-purple-600" />}
-                    onClick={saveRulesToDB}
-                    className="w-full mt-2"
-                  >
-                    Save Rules
-                  </Button>
-                </div>
-              ) : (
-                <div className="text-[10px] text-[var(--text-tertiary)] italic px-1 py-1">
-                  No custom AI rules added yet. Add prompts above to create LLM-generated transform functions.
-                </div>
-              )}
-
-              {/* Saved / Persisted Dynamic Transforms */}
+              {/* Saved Dynamic Rules */}
               {savedDynamicRules.length > 0 && (
-                <div className="space-y-1.5 pt-2 border-t border-[var(--border)]">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
-                    <span>⚡ Saved Rules ({savedDynamicRules.length})</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-3 py-1">
+                    <span className="text-[11px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider">
+                      ⚡ Saved Rules ({savedDynamicRules.length})
+                    </span>
                     <button
-                      type="button"
                       onClick={handleClearAllDynamicRules}
-                      className="text-[9.5px] text-red-500 hover:underline cursor-pointer font-bold"
-                      title="Clear all active dynamic rules"
+                      className="text-[10px] text-red-500 hover:text-red-600 font-semibold cursor-pointer"
                     >
                       Clear All
                     </button>
                   </div>
-                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto scrollbar-thin">
-                    {savedDynamicRules.map((dr: any, idx: number) => {
-                      const isSelected = selectedDynamicRules[dr.id] !== false;
-                      return (
-                        <div
-                          key={dr.id || idx}
-                          className={`p-2 rounded-lg border text-[10px] space-y-1 transition-all ${
-                            isSelected
-                              ? 'bg-purple-50/70 dark:bg-purple-950/40 border-purple-200 dark:border-purple-900/50'
-                              : 'bg-gray-50/50 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1.5 font-semibold text-purple-700 dark:text-purple-300">
-                            <div className="flex items-center gap-2 min-w-0 flex-1">
-                              <button
-                                onClick={() => toggleSelectDynamicRule(dr.id)}
-                                className={`w-4 h-4 rounded flex items-center justify-center transition-all cursor-pointer shrink-0 ${
-                                  isSelected
-                                    ? 'bg-purple-600 text-white shadow-xs'
-                                    : 'border border-gray-300 dark:border-gray-600 bg-transparent'
-                                }`}
-                              >
-                                {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                              </button>
-                              <span className="truncate flex-1 font-bold">{dr.label || dr.id || `Rule #${idx + 1}`}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              {dr.target_field && (
-                                <span className="px-1.5 py-0.2 rounded text-[8.5px] font-mono bg-purple-200/80 dark:bg-purple-900/60 text-purple-900 dark:text-purple-200">
-                                  {dr.target_field}
-                                </span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => deleteDynamicRule(dr.id)}
-                                className="text-[var(--text-tertiary)] hover:text-red-500 p-0.5 cursor-pointer transition-colors"
-                                title="Delete this rule from database"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                  <div className="space-y-1.5 px-1 max-h-[180px] overflow-y-auto scrollbar-thin">
+                    {savedDynamicRules.map((r: any) => (
+                      <div key={r.id} className="flex items-start gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)]/40">
+                        <input
+                          type="checkbox"
+                          checked={selectedDynamicRules[r.id] !== false}
+                          onChange={() => toggleSelectDynamicRule(r.id)}
+                          className="w-4 h-4 mt-0.5 cursor-pointer accent-violet-600 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-bold text-[10.5px] ${selectedDynamicRules[r.id] !== false ? 'text-violet-600 dark:text-violet-400' : 'text-[var(--text-tertiary)] line-through'}`}>
+                            {r.label || r.title || r.id}
                           </div>
-                          {dr.description && (
-                            <div className="text-[9.5px] text-[var(--text-secondary)] leading-tight pl-6">
-                              {dr.description}
-                            </div>
+                          {r.description && (
+                            <div className="text-[var(--text-secondary)] text-[10px] mt-0.5">{r.description}</div>
                           )}
                         </div>
-                      );
-                    })}
+                        <button
+                          onClick={() => deleteDynamicRule(r.id)}
+                          className="text-[var(--text-tertiary)] hover:text-red-500 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                          title="Delete rule"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Divider */}
+              {(savedDynamicRules.length > 0 || customPrompts.length > 0) && (
+                <div className="h-px bg-[var(--border)]" />
+              )}
+
+              {/* Add New Custom Prompt Section */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider px-1">
+                  Add Custom Rule
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={newPromptInput}
+                    onChange={(e) => setNewPromptInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddPrompt()}
+                    placeholder="e.g. Convert currency USD to EUR for Plant 2000..."
+                    className="flex-1 px-2.5 py-1.5 rounded-lg text-[11px] bg-[var(--bg-tertiary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-violet-500 focus:border-violet-400 transition-all font-mono"
+                  />
+                  <Button variant="secondary" size="sm" icon={<Plus className="w-3.5 h-3.5" />} onClick={handleAddPrompt}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+
+              {/* List of Custom Prompts */}
+              {customPrompts.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[11px] font-bold text-purple-700 dark:text-purple-300 uppercase tracking-wider">
+                      ✨ Custom Prompts ({customPrompts.length})
+                    </span>
+                  </div>
+                  <div className="space-y-1.5 max-h-[200px] overflow-y-auto scrollbar-thin">
+                    {customPrompts.map((p, idx) => (
+                      <div key={idx} className="flex items-start gap-2 p-2.5 rounded-lg border border-purple-200 dark:border-purple-900/40 bg-purple-50/40 dark:bg-purple-950/20">
+                        {editingIndex === idx ? (
+                          <div className="flex items-center gap-1.5 w-full">
+                            <span className="text-purple-600 font-bold shrink-0 text-[10px]">#{idx + 1}</span>
+                            <input
+                              type="text"
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveEdit(idx);
+                                if (e.key === 'Escape') handleCancelEdit();
+                              }}
+                              className="flex-1 px-2 py-1 text-[10px] rounded bg-[var(--bg-primary)] border border-purple-400 text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-purple-500 font-medium"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleSaveEdit(idx)}
+                              className="p-1 rounded text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer shrink-0 transition-colors"
+                              title="Save"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={handleCancelEdit}
+                              className="p-1 rounded text-[var(--text-tertiary)] hover:bg-[var(--bg-secondary)] cursor-pointer shrink-0 transition-colors"
+                              title="Cancel"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex gap-1.5 items-start flex-1 min-w-0">
+                              <span className="text-purple-600 dark:text-purple-400 font-bold shrink-0 text-[10px]">✨</span>
+                              <span className="text-[var(--text-primary)] font-medium text-[10px] leading-snug break-words">#{idx + 1}. {p}</span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleStartEdit(idx)}
+                                className="text-[var(--text-tertiary)] hover:text-purple-500 p-1 rounded hover:bg-purple-500/10 transition-colors cursor-pointer"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => handleDeletePrompt(idx)}
+                                className="text-[var(--text-tertiary)] hover:text-red-500 p-1 rounded hover:bg-red-500/10 transition-colors cursor-pointer"
+                                title="Delete prompt"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

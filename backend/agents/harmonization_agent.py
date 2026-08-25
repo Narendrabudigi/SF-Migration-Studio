@@ -32,6 +32,7 @@ Usage (CLI):
 import argparse
 import csv
 import io
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -533,8 +534,184 @@ class HarmonizationAgent:
         return result
 
     # ──────────────────────────────────────
-    # Multi-source merge
+    # Multi-source relational & topological merge
     # ──────────────────────────────────────
+
+    def _topological_sort_tables(
+        self,
+        base_name: str,
+        table_names: List[str],
+        join_configs: List[Dict[str, Any]],
+    ) -> List[str]:
+        """
+        Sort secondary tables in topological dependency order starting from base_name.
+        Ensures parent tables are merged before child tables that depend on them.
+        """
+        parent_map: Dict[str, str] = {}
+        for cfg in join_configs:
+            child = cfg.get("file_name")
+            parent = cfg.get("join_with") or base_name
+            if child and child in table_names:
+                parent_map[child] = parent
+
+        resolved = [base_name]
+        remaining = [t for t in table_names if t != base_name]
+
+        max_iters = len(remaining) + 2
+        for _ in range(max_iters):
+            if not remaining:
+                break
+            added_this_round = []
+            for t in remaining:
+                p = parent_map.get(t, base_name)
+                if p in resolved:
+                    resolved.append(t)
+                    added_this_round.append(t)
+            for t in added_this_round:
+                remaining.remove(t)
+
+        if remaining:
+            resolved.extend(remaining)
+
+        return resolved
+
+    def _merge_relational_sources(
+        self,
+        base_df: pd.DataFrame,
+        base_name: str,
+        secondary_tables: List[Dict[str, Any]],
+        join_configs: List[Dict[str, Any]],
+        primary_source: str = "SAP_ECC",
+    ) -> pd.DataFrame:
+        """
+        Executes multi-level relational LEFT JOIN merge based on topological join configs and composite keys.
+        """
+        table_dfs: Dict[str, pd.DataFrame] = {base_name: base_df.copy()}
+
+        for sec in secondary_tables:
+            sec_name = sec["name"]
+            sec_df = sec["df"].copy()
+            sec_mappings = sec.get("mappings")
+            sec_src = sec.get("source", "SECONDARY")
+
+            if sec_mappings:
+                mapped_sec = self._apply_mapping(sec_df, sec_mappings)
+                mapped_sec["SOURCE"] = sec_src
+                table_dfs[sec_name] = mapped_sec
+                self.fix_log.append(f"[Mapping] Secondary '{sec_name}' mapped ({len(sec_mappings)} rules) → {len(mapped_sec.columns)} cols")
+            else:
+                sec_df["SOURCE"] = sec_src
+                table_dfs[sec_name] = sec_df
+                self.fix_log.append(f"[DirectJoin] Secondary '{sec_name}' direct join (no mapping) → {len(sec_df.columns)} cols")
+
+        secondary_names = [sec["name"] for sec in secondary_tables]
+        all_table_names = [base_name] + secondary_names
+        order = self._topological_sort_tables(base_name, all_table_names, join_configs)
+
+        cfg_map: Dict[str, Dict[str, Any]] = {
+            cfg.get("file_name", ""): cfg for cfg in join_configs if cfg.get("file_name")
+        }
+
+        merged_df = table_dfs[base_name].copy().astype(str)
+
+        for tbl_name in order:
+            if tbl_name == base_name or tbl_name not in table_dfs:
+                continue
+
+            sec_df = table_dfs[tbl_name].copy().astype(str)
+            cfg = cfg_map.get(tbl_name, {})
+            join_parent = cfg.get("join_with") or base_name
+
+            key_conditions = cfg.get("key_conditions", [])
+            if not key_conditions:
+                bk = cfg.get("base_key")
+                jk = cfg.get("join_key")
+                if bk and jk:
+                    key_conditions = [{"left_key": bk, "right_key": jk}]
+
+            def _find_df_col(df: pd.DataFrame, col_name: str):
+                if not col_name:
+                    return None
+                if col_name in df.columns:
+                    return col_name
+                for c in df.columns:
+                    if str(c).strip().lower() == str(col_name).strip().lower():
+                        return c
+                for c in df.columns:
+                    if str(c).strip().lower().replace('_', '').replace(' ', '') == str(col_name).strip().lower().replace('_', '').replace(' ', ''):
+                        return c
+                return None
+
+            valid_conditions = []
+            for c in key_conditions:
+                lk = (c.get("left_key") or "").strip()
+                rk = (c.get("right_key") or "").strip()
+                if not lk or not rk:
+                    continue
+                actual_lk = _find_df_col(merged_df, lk)
+                actual_rk = _find_df_col(sec_df, rk)
+                if actual_lk and actual_rk:
+                    valid_conditions.append({"left_key": actual_lk, "right_key": actual_rk})
+
+            file_tag = re.sub(r'[^a-zA-Z0-9]', '', tbl_name.split('.')[0])[:8]
+
+            if valid_conditions:
+                left_keys = [c["left_key"] for c in valid_conditions]
+                right_keys = [c["right_key"] for c in valid_conditions]
+
+                for lk in left_keys:
+                    merged_df[lk] = merged_df[lk].astype(str).str.strip()
+                for rk in right_keys:
+                    sec_df[rk] = sec_df[rk].astype(str).str.strip()
+
+                cond_str = " AND ".join([f"{c['left_key']} ➔ {c['right_key']}" for c in valid_conditions])
+                self.fix_log.append(
+                    f"[RelationalJoin] LEFT JOIN on '{tbl_name}' into '{join_parent}' on {cond_str}"
+                )
+
+                # Prevent Cartesian explosion on blank/empty keys
+                temp_merged = merged_df.copy()
+                temp_sec = sec_df.copy()
+                for idx, (lk, rk) in enumerate(zip(left_keys, right_keys)):
+                    l_blank = temp_merged[lk].isin(["", "nan", "None", "null", "undefined"])
+                    r_blank = temp_sec[rk].isin(["", "nan", "None", "null", "undefined"])
+                    if l_blank.any():
+                        temp_merged.loc[l_blank, lk] = [f"__BLANK_L_{i}_{idx}__" for i in range(l_blank.sum())]
+                    if r_blank.any():
+                        temp_sec.loc[r_blank, rk] = [f"__BLANK_R_{i}_{idx}__" for i in range(r_blank.sum())]
+
+                merged_df = pd.merge(
+                    temp_merged,
+                    temp_sec,
+                    left_on=left_keys,
+                    right_on=right_keys,
+                    how="left",
+                    suffixes=("", f"_{file_tag}")
+                )
+
+                # Restore blank keys
+                for lk in left_keys:
+                    if lk in merged_df.columns:
+                        merged_df[lk] = merged_df[lk].astype(str).apply(lambda v: "" if str(v).startswith("__BLANK_") else v)
+
+                for lk, rk in zip(left_keys, right_keys):
+                    if rk != lk and rk in merged_df.columns:
+                        merged_df.drop(columns=[rk], inplace=True, errors="ignore")
+                    suffixed_rk = f"{rk}_{file_tag}"
+                    if suffixed_rk in merged_df.columns:
+                        merged_df.drop(columns=[suffixed_rk], inplace=True, errors="ignore")
+            else:
+                self.fix_log.append(
+                    f"[RelationalJoin] Merging columns of '{tbl_name}' into unified master view"
+                )
+                for col in sec_df.columns:
+                    if col == "SOURCE":
+                        continue
+                    target_col = col if col not in merged_df.columns else f"{col}_{file_tag}"
+                    merged_df[target_col] = sec_df[col]
+
+        merged_df = merged_df.fillna("")
+        return merged_df
 
     def _merge_sources(
         self,
@@ -542,16 +719,8 @@ class HarmonizationAgent:
         secondary_df: pd.DataFrame,
     ) -> pd.DataFrame:
         """
-        Row-append merge:
-          1. Column naming uses primary table's column names for all shared/SAP columns.
-          2. New columns that exist only in secondary keep secondary's column names.
-          3. Missing columns are filled with null (NaN).
+        Row-append merge fallback.
         """
-        # The primary_df columns are the "canonical" names.
-        # For any column in secondary_df that already exists in primary_df → data aligns.
-        # For any column in secondary_df NOT in primary_df → new column, primary rows get NaN.
-        # For any column in primary_df NOT in secondary_df → secondary rows get NaN.
-
         merged = pd.concat([primary_df, secondary_df], ignore_index=True, sort=False)
         return merged
 
@@ -832,8 +1001,12 @@ class HarmonizationAgent:
             "ERDAT", "AEDAT", "ERNAM_DATE", "BUDAT", "BLDAT", "CPUDT",
             "FKDAT", "AUDAT", "VDATU", "BDATU", "PSODT", "BEDAT",
         ]
+        meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
         target_cols = []
         for col in df.columns:
+            col_str = str(col).lower()
+            if any(kw in col_str for kw in meta_keywords):
+                continue
             col_upper = col.upper()
             base = col_upper.split(".")[-1] if "." in col_upper else col_upper
             if base in DATE_NAME_PATTERNS:
@@ -1152,87 +1325,108 @@ class HarmonizationAgent:
     def run_multi_source(
         self,
         primary_df: pd.DataFrame,
-        secondary_df: pd.DataFrame,
-        primary_mappings: List[MappingEntry],
-        secondary_mappings: List[MappingEntry],
+        secondary_df: Optional[pd.DataFrame] = None,
+        primary_mappings: Optional[List[MappingEntry]] = None,
+        secondary_mappings: Optional[List[MappingEntry]] = None,
         primary_source: str = "SAP_ECC",
         secondary_source: str = "ORACLE_EBS",
         additional_sources: Optional[List[Dict[str, Any]]] = None,
+        secondary_tables: Optional[List[Dict[str, Any]]] = None,
+        join_configs: Optional[List[Dict[str, Any]]] = None,
+        base_table_name: Optional[str] = None,
         preview_only: bool = False,
         rule_config: Optional[Dict[str, Any]] = None,
         dynamic_rules: Optional[List[Dict[str, Any]]] = None,
     ) -> HarmonizationResult:
         """
         Mode 1: Multi-source harmonization pipeline.
-        Supports N additional sources beyond primary + secondary.
+        Supports relational multi-table topology (join_configs & composite keys)
+        as well as legacy 2-source/N-source row-append merges.
         preview_only=True returns fix_log without mutating data.
         """
         self.fix_log = []
         self.stats = {}
 
-        total_input = len(primary_df) + len(secondary_df)
-        self.stats["total_input"] = total_input
-        self.stats["primary_rows"] = len(primary_df)
-        self.stats["secondary_rows"] = len(secondary_df)
-
-        self.fix_log.append(
-            f"[Init] Multi-source mode: {len(primary_df)} primary ({primary_source}) + "
-            f"{len(secondary_df)} secondary ({secondary_source}) rows"
-        )
-
-        # Work on copies for preview mode
         work_primary = primary_df.copy() if preview_only else primary_df
-        work_secondary = secondary_df.copy() if preview_only else secondary_df
 
-        # Step 1: Apply mappings
-        mapped_primary = self._apply_mapping(work_primary, primary_mappings)
-        mapped_secondary = self._apply_mapping(work_secondary, secondary_mappings)
+        # Apply primary mappings if provided
+        if primary_mappings:
+            mapped_primary = self._apply_mapping(work_primary, primary_mappings)
+            self.fix_log.append(
+                f"[Mapping] Primary ({primary_source}): {len(primary_df.columns)} cols → "
+                f"{len(mapped_primary.columns)} cols"
+            )
+        else:
+            mapped_primary = work_primary.copy()
+            self.fix_log.append(
+                f"[Init] Primary ({primary_source}): {len(primary_df.columns)} cols preserved"
+            )
 
-        # Step 2: Assign SOURCE tracking column
         mapped_primary["SOURCE"] = primary_source
-        mapped_secondary["SOURCE"] = secondary_source
+        base_name = base_table_name or "Primary Data"
 
-        self.fix_log.append(
-            f"[Mapping] Primary ({primary_source}): {len(primary_df.columns)} cols → "
-            f"{len(mapped_primary.columns)} cols"
-        )
-        self.fix_log.append(
-            f"[Mapping] Secondary ({secondary_source}): {len(secondary_df.columns)} cols → "
-            f"{len(mapped_secondary.columns)} cols"
-        )
+        # Build list of secondary tables
+        prepared_secondaries: List[Dict[str, Any]] = []
+        if secondary_tables:
+            prepared_secondaries = secondary_tables
+        elif secondary_df is not None and not secondary_df.empty:
+            prepared_secondaries.append({
+                "name": "Secondary Data",
+                "df": secondary_df.copy() if preview_only else secondary_df,
+                "mappings": secondary_mappings or [],
+                "source": secondary_source,
+            })
+            if additional_sources:
+                for extra in additional_sources:
+                    prepared_secondaries.append({
+                        "name": extra.get("name") or extra.get("source_name", "Extra"),
+                        "df": extra["df"].copy() if preview_only else extra["df"],
+                        "mappings": extra.get("mappings", []),
+                        "source": extra.get("source_name", "EXTRA"),
+                    })
 
-        # Step 3: Row-append merge
-        merged = self._merge_sources(mapped_primary, mapped_secondary)
-
-        # Merge additional sources
-        if additional_sources:
-            for extra in additional_sources:
-                extra_df = extra["df"]
-                extra_mappings = extra.get("mappings", [])
-                extra_source = extra.get("source_name", "EXTRA")
-                total_input += len(extra_df)
-                self.stats[f"{extra_source.lower()}_rows"] = len(extra_df)
-
-                mapped_extra = self._apply_mapping(extra_df.copy() if preview_only else extra_df, extra_mappings)
-                mapped_extra["SOURCE"] = extra_source
-                self.fix_log.append(
-                    f"[Mapping] Additional ({extra_source}): {len(extra_df.columns)} cols → "
-                    f"{len(mapped_extra.columns)} cols"
-                )
-                merged = self._merge_sources(merged, mapped_extra)
+        total_input = len(mapped_primary)
+        self.stats["primary_rows"] = len(mapped_primary)
+        for s in prepared_secondaries:
+            s_rows = len(s["df"])
+            total_input += s_rows
+            s_name = s.get("name", "secondary").lower().replace(" ", "_")
+            self.stats[f"{s_name}_rows"] = s_rows
 
         self.stats["total_input"] = total_input
         self.fix_log.append(
-            f"[Merge] Merged table: {len(merged)} rows × {len(merged.columns)} columns"
+            f"[Init] Multi-source mode: {len(mapped_primary)} primary ({primary_source}) + "
+            f"{len(prepared_secondaries)} secondary table(s) ({total_input} total input records)"
         )
 
-        # Log new columns from secondary
-        primary_cols = set(mapped_primary.columns)
-        secondary_only_cols = [c for c in mapped_secondary.columns if c not in primary_cols]
-        if secondary_only_cols:
-            self.fix_log.append(
-                f"[Merge] New columns from secondary: {secondary_only_cols}"
+        # Relational Join vs Row Append Merge
+        if join_configs is not None and len(join_configs) > 0:
+            merged = self._merge_relational_sources(
+                base_df=mapped_primary,
+                base_name=base_name,
+                secondary_tables=prepared_secondaries,
+                join_configs=join_configs,
+                primary_source=primary_source,
             )
+        elif prepared_secondaries:
+            # Relational fallback with row append or direct mapping
+            merged = mapped_primary
+            for sec in prepared_secondaries:
+                sec_df = sec["df"].copy()
+                sec_map = sec.get("mappings")
+                sec_src = sec.get("source", secondary_source)
+                if sec_map:
+                    m_sec = self._apply_mapping(sec_df, sec_map)
+                else:
+                    m_sec = sec_df
+                m_sec["SOURCE"] = sec_src
+                merged = self._merge_sources(merged, m_sec)
+        else:
+            merged = mapped_primary
+
+        self.fix_log.append(
+            f"[Merge] Unified relational dataset: {len(merged)} rows × {len(merged.columns)} columns"
+        )
 
         # Step 4: Apply harmonization rules
         harmonized = self._apply_rules(merged, rule_config=rule_config)
@@ -1242,7 +1436,7 @@ class HarmonizationAgent:
             harmonized = self.apply_dynamic_rules(harmonized, dynamic_rules)
 
         # Step 5: Format final column headers to short SAP field names (part after dot)
-        rename_dict = {col: col.split(".")[-1] for col in harmonized.columns if "." in col}
+        rename_dict = {col: col.split(".")[-1] for col in harmonized.columns if "." in col and not col.startswith("SOURCE")}
         if rename_dict:
             harmonized = harmonized.rename(columns=rename_dict)
             self.fix_log.append(f"[ColumnNaming] Formatted final output columns with short field names (after dot)")
