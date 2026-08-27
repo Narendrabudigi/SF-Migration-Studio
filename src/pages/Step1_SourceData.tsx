@@ -411,8 +411,14 @@ interface SecondaryJoinConfig {
   ) => {
     if (filesList.length === 0) return;
 
+    const isMultiFile = filesList.length > 1;
+
     setIsUploading(true);
-    showLoad('Merging Datasets...', `Performing relational Left Join on ${filesList.length} files`, ['Combining fields & resolving composite keys...']);
+    showLoad(
+      isMultiFile ? 'Merging Datasets...' : 'Loading Dataset...',
+      isMultiFile ? `Performing relational Left Join on ${filesList.length} files` : `Loading records from ${baseName}`,
+      isMultiFile ? ['Combining fields & resolving composite keys...'] : ['Parsing CSV headers & initializing data table...']
+    );
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
@@ -451,8 +457,8 @@ interface SecondaryJoinConfig {
       clearTimeout(timeoutId);
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({ detail: 'Merge failed' }));
-        throw new Error(errData.detail || 'Failed to merge datasets');
+        const errData = await res.json().catch(() => ({ detail: isMultiFile ? 'Merge failed' : 'Failed to load dataset' }));
+        throw new Error(errData.detail || (isMultiFile ? 'Failed to merge datasets' : 'Failed to load dataset'));
       }
 
       const data = await res.json();
@@ -472,13 +478,17 @@ interface SecondaryJoinConfig {
           isDataSaved: false,
         }
       });
-      toast(`Successfully merged ${filesList.length} files into ${data.headers.length} columns and ${data.data.length} records!`, 'ok');
+      if (isMultiFile) {
+        toast(`Successfully merged ${filesList.length} files into ${data.headers.length} columns and ${data.data.length} records!`, 'ok');
+      } else {
+        toast(`Successfully loaded ${data.headers.length} columns and ${data.data.length} records!`, 'ok');
+      }
     } catch (err: any) {
       clearTimeout(timeoutId);
       if (err.name === 'AbortError') {
-        toast('Merge timed out after 60 seconds. Try simplifying your join keys or reducing file sizes.', 'err');
+        toast(isMultiFile ? 'Merge timed out after 60 seconds. Try simplifying your join keys or reducing file sizes.' : 'Loading timed out after 60 seconds.', 'err');
       } else {
-        toast(err.message || 'Merge failed', 'err');
+        toast(err.message || (isMultiFile ? 'Merge failed' : 'Failed to load dataset'), 'err');
       }
     } finally {
       setIsUploading(false);
@@ -1044,7 +1054,7 @@ interface SecondaryJoinConfig {
                                 disabled={isUploading || stagedFiles.length === 0}
                                 onClick={handleMergeClick}
                               >
-                                {isUploading ? 'Merging Datasets…' : `Merge & Load ${stagedFiles.length} Tables`}
+                                {isUploading ? (stagedFiles.length > 1 ? 'Merging Datasets…' : 'Loading Dataset…') : `Merge & Load ${stagedFiles.length} Tables`}
                               </Button>
                             </div>
                           </div>
@@ -1055,7 +1065,7 @@ interface SecondaryJoinConfig {
                     {state.headers.length > 0 && (
                       <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 text-[11px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                        <span>Merged Dataset Ready ({state.headers.length} columns, {state.rawData.length} rows loaded)</span>
+                        <span>{stagedFiles.length > 1 ? 'Merged Dataset Ready' : 'Dataset Loaded Successfully'} ({state.headers.length} columns, {state.rawData.length} rows loaded)</span>
                       </div>
                     )}
                   </div>

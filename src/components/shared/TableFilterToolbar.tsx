@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, ChevronDown, ChevronUp, Check, X, Layers, CheckCheck, Hash, Plus, CornerDownLeft } from 'lucide-react';
+import { isPrimaryKeyField } from '@/lib/utils';
 
 /* ─── Key Column Detection ─── */
 const KEY_PATTERNS = [
@@ -9,6 +10,7 @@ const KEY_PATTERNS = [
 ];
 
 export function isKeyColumn(colName: string): boolean {
+  if (isPrimaryKeyField(colName)) return true;
   const upper = colName.toUpperCase().replace(/[.\s]/g, '_');
   if (KEY_PATTERNS.some(k => upper.includes(k))) return true;
   if (upper.endsWith('_ID') || upper.endsWith('_NUM') || upper.endsWith('_NO') || upper.endsWith('_CODE')) return true;
@@ -226,24 +228,25 @@ export function getTableDisplayData(
     const displayBase = displayCol.split('.').pop() || displayCol;
     const nDisplayBase = norm(displayBase);
 
-    // Skip if a column for this field concept has already been added
-    if (seenNormCols.has(nDisplayBase)) {
+    // Skip if this exact display column has already been added
+    if (seenNormCols.has(displayCol)) {
       return;
     }
-    seenNormCols.add(nDisplayBase);
+    seenNormCols.add(displayCol);
 
     finalColumns.push(displayCol);
 
-    const candidates: string[] = [col, colClean, colBase];
+    const candidates: string[] = [displayCol, displayBase, col, colClean, colBase];
 
     // Check mappings
-    const fromSap = sapNormToSrcKeys.get(nCol) || [];
-    const fromSrc = srcNormToSapKeys.get(nCol) || [];
+    const fromSap = sapNormToSrcKeys.get(nCol) || sapNormToSrcKeys.get(norm(displayCol)) || [];
+    const fromSrc = srcNormToSapKeys.get(nCol) || srcNormToSapKeys.get(norm(displayCol)) || [];
     candidates.push(...fromSap, ...fromSrc);
 
     // Check SF synonyms
-    if (SF_SYNONYMS[nCol]) {
-      SF_SYNONYMS[nCol].forEach(syn => {
+    const synKey = SF_SYNONYMS[nCol] ? nCol : (SF_SYNONYMS[norm(displayCol)] ? norm(displayCol) : norm(displayBase));
+    if (SF_SYNONYMS[synKey]) {
+      SF_SYNONYMS[synKey].forEach(syn => {
         candidates.push(syn);
         const synSap = sapNormToSrcKeys.get(norm(syn)) || [];
         const synSrc = srcNormToSapKeys.get(norm(syn)) || [];
@@ -251,8 +254,10 @@ export function getTableDisplayData(
       });
     }
 
-    // Deduplicate candidates
-    colCandidates.set(col, Array.from(new Set(candidates.filter(Boolean))));
+    // Deduplicate candidates and index by both displayCol and col
+    const dedupedCands = Array.from(new Set(candidates.filter(Boolean)));
+    colCandidates.set(displayCol, dedupedCands);
+    colCandidates.set(col, dedupedCands);
   });
 
   // Project normalized rows

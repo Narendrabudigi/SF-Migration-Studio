@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
-import { dl, expCSV } from '@/lib/utils';
+import { dl, expCSV, isPrimaryKeyField } from '@/lib/utils';
 import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, StatBox, StatsGrid, DataTable, PageHeader, EmptyState } from '@/components/shared';
-import { ArrowLeft, ArrowRight, Cog, Download, Upload, FileText, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileSpreadsheet, Save, Check, Bot, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Cog, Download, Upload, FileText, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileSpreadsheet, Save, Check, Bot, Sparkles, X, Key } from 'lucide-react';
 import { TableFilterToolbar, filterRowsByKey, detectKeyColumns, getTableDisplayData } from '@/components/shared/TableFilterToolbar';
 import type { TableInfo } from '@/components/shared/TableFilterToolbar';
 import { TablePaginationFooter } from '@/components/shared/TablePaginationFooter';
@@ -293,7 +293,14 @@ function TransformationReportCard({
                               {item.target_table}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-violet-600 dark:text-violet-400 font-bold">{item.field}</td>
+                          <td className="py-2 px-3 text-violet-600 dark:text-violet-400 font-bold">
+                            <div className="inline-flex items-center gap-1">
+                              {isPrimaryKeyField(item.field) && (
+                                <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
+                              )}
+                              <span>{item.field}</span>
+                            </div>
+                          </td>
                           <td className="py-2 px-3">
                             <div className="flex items-center gap-1">
                               <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through text-[10px]">

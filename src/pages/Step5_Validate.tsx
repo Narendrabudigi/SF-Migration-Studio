@@ -6,7 +6,7 @@ import { useLoading } from '@/components/ui/loading-overlay';
 import { OBJS } from '@/data/sap-schemas';
 import { dl } from '@/lib/utils';
 import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge, StatBox, StatsGrid, EmptyState } from '@/components/shared';
-import { ArrowLeft, ArrowRight, Search, Download, Upload, ListChecks, Save, Sparkles, Plus, Trash2, Zap, FileText, Pencil, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Search, Download, Upload, ListChecks, Save, Sparkles, Plus, Trash2, Zap, FileText, Pencil, Check, X, ChevronDown, ChevronUp, Key } from 'lucide-react';
 
 const VALIDATE_API = import.meta.env.VITE_BACKEND_URL;
 
@@ -725,8 +725,13 @@ export function Step5Validate() {
                     <div key={i} className="grid grid-cols-[80px_1fr_70px] gap-3 items-start px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/30">
                       <div>
                         <div className="font-mono text-[11px] text-primary-600 dark:text-primary-400">#{v.idx + 1}</div>
-                        <div className="text-[9.5px] text-[var(--text-tertiary)] mt-0.5 truncate">
-                          {v.primary_key ? `PK: ${v.primary_key}` : Object.values(v.row || {}).filter(Boolean).slice(0, 2).map(String).join(' · ').slice(0, 28)}
+                        <div className="text-[9.5px] text-[var(--text-tertiary)] mt-0.5 truncate flex items-center gap-0.5">
+                          {v.primary_key ? (
+                            <>
+                              <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" title="Primary Key" />
+                              <span className="font-semibold text-amber-600 dark:text-amber-400">PK: {v.primary_key}</span>
+                            </>
+                          ) : Object.values(v.row || {}).filter(Boolean).slice(0, 2).map(String).join(' · ').slice(0, 28)}
                         </div>
                       </div>
                       <div className="space-y-0.5">

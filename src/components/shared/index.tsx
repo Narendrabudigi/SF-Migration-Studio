@@ -1,7 +1,7 @@
 import React, { type ReactNode, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { cn } from '@/lib/utils';
-import { ChevronDown, Check } from 'lucide-react';
+import { cn, isPrimaryKeyField } from '@/lib/utils';
+import { ChevronDown, Check, Key } from 'lucide-react';
 
 /* ── Card ── */
 interface CardProps {
@@ -209,14 +209,25 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
       <table className="w-full border-collapse text-[12px] whitespace-nowrap">
         <thead>
           <tr>
-            {c.map((col) => (
-              <th
-                key={col}
-                className="px-3.5 py-2.5 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] border-b border-[var(--border)] sticky top-0 z-10"
-              >
-                {col}
-              </th>
-            ))}
+            {c.map((col) => {
+              const isPk = isPrimaryKeyField(col);
+              return (
+                <th
+                  key={col}
+                  className={cn(
+                    "px-3.5 py-2.5 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-white dark:bg-gray-900 border-b border-[var(--border)] sticky top-0 z-10",
+                    isPk && "text-amber-600 dark:text-amber-400 font-bold"
+                  )}
+                >
+                  <div className="inline-flex items-center gap-1.5">
+                    {isPk && (
+                      <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" title="Primary Key Field" />
+                    )}
+                    <span>{col}</span>
+                  </div>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -225,12 +236,13 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
               {c.map((col) => {
                 const v = row[col] !== undefined ? String(row[col]) : '';
                 const empty = !v.trim();
+                const isPk = isPrimaryKeyField(col);
                 return (
                   <td
                     key={col}
                     className={cn(
                       'px-3.5 py-2 font-mono text-[11px] border-b border-[var(--border-light)]',
-                      empty ? 'text-red-400 dark:text-red-500 italic' : 'text-[var(--text-secondary)]'
+                      empty ? 'text-red-400 dark:text-red-500 italic' : isPk ? 'text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)]'
                     )}
                   >
                     {empty ? '(empty)' : v}

@@ -570,7 +570,8 @@ You MUST return the output as a valid JSON object matching this exact schema:
         def is_column_key(col_name: str) -> bool:
             clean_col = re.sub(r"^\[\d+\]", "", col_name).upper()
             if any(k in clean_col for k in [
-                "PERSON_ID_EXTERNAL", "PERSONIDEXTERNAL", "USER_ID", "USERID",
+                "PERSON_ID_EXTERNAL", "PERSONIDEXTERNAL", "USER_ID", "USERID", "WORKER",
+                "EMPLOYEE", "EMPLOYMENT", "ASSIGNMENT", "PERSON", "REFERENCE", "REF",
                 "SEQ_NUMBER", "SEQNUMBER", "START_DATE", "STARTDATE", "CODE",
                 "CUSTOMER_NUMBER", "LIFNR", "KUNNR", "MATNR", "PARTNER"
             ]):
@@ -591,30 +592,49 @@ You MUST return the output as a valid JSON object matching this exact schema:
             
             if sap_full:
                 sap_field = sap_full.split(".")[-1].upper()
-                if sap_field in ["PERSON-ID-EXTERNAL", "USER-ID", "START-DATE", "SEQ-NUMBER", "KUNNR", "LIFNR", "MATNR"] or "NUM" in sap_field or "ID" in sap_field:
+                if sap_field in ["PERSON-ID-EXTERNAL", "USER-ID", "START-DATE", "SEQ-NUMBER", "KUNNR", "LIFNR", "MATNR"] or "NUM" in sap_field or "ID" in sap_field or "REF" in sap_field:
                     return True
             return False
 
         primary_sheet = obj_name if obj_name.endswith("Data") else f"{obj_name} Data"
-
-        # Deduplicate columns by normalized base field name so fields appear only once
         meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
-        seen_bases = set()
-        final_cols = []
+
+        from collections import defaultdict
+        sheets_map = defaultdict(list)
+        key_cols = [c for c in all_cols if is_column_key(c)]
+
         for col in all_cols:
             col_clean = re.sub(r"^\[\d+\]", "", str(col)).strip()
             col_lower = col_clean.lower()
             if any(kw in col_lower for kw in meta_keywords):
                 continue
-            col_base = norm_str(col_clean.split(".")[-1])
-            if col_base in seen_bases:
-                continue
-            seen_bases.add(col_base)
-            final_cols.append(col)
 
-        return [{
+            sheets = get_col_sheets(col)
+            if not sheets:
+                sheets = [primary_sheet]
+
+            for s in sheets:
+                if col not in sheets_map[s]:
+                    sheets_map[s].append(col)
+
+        # Include primary key / ID columns across all generated structure tables
+        for s in sheets_map:
+            for kc in key_cols:
+                if kc not in sheets_map[s]:
+                    sheets_map[s].insert(0, kc)
+
+        tables_list = []
+        for s_name, s_cols in sheets_map.items():
+            if s_cols:
+                tables_list.append({
+                    "table_name": s_name,
+                    "columns": s_cols,
+                    "row_count": len(harmonized_results)
+                })
+
+        return tables_list if tables_list else [{
             "table_name": primary_sheet,
-            "columns": final_cols,
+            "columns": [c for c in all_cols if not any(kw in str(c).lower() for kw in meta_keywords)],
             "row_count": len(harmonized_results)
         }]
 

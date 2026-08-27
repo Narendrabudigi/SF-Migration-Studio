@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
-import { dl, expCSV } from '@/lib/utils';
+import { dl, expCSV, isPrimaryKeyField } from '@/lib/utils';
 import {
   PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button,
   StatBox, StatsGrid, DataTable, PageHeader, EmptyState
@@ -12,7 +12,7 @@ import {
   ArrowLeft, ArrowRight, Zap, Download, ClipboardList,
   UploadCloud, AlertTriangle, Activity, CheckCircle, Save,
   BarChart2, ShieldAlert, Search, FileSpreadsheet, Layers, ChevronDown, ChevronUp,
-  RefreshCw, CheckCircle2
+  RefreshCw, CheckCircle2, Key
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -678,6 +678,9 @@ export function Step3Extract() {
                                 <tr key={i} className="hover:bg-[var(--bg-tertiary)]/50 transition-colors">
                                   <td className="py-2 px-3 font-semibold text-[var(--text-primary)] whitespace-nowrap">
                                     <div className="flex items-center gap-1.5">
+                                      {isPrimaryKeyField(row.field) && (
+                                        <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
+                                      )}
                                       <span>{row.field}</span>
                                       {row.is_mandatory && (
                                         <span className="text-[8.5px] px-1 py-0.2 rounded bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 font-bold">REQ</span>
