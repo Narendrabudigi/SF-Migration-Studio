@@ -151,3 +151,66 @@ class TransformationAgent:
 
         final_rows = transformed_df.to_dict(orient="records")
         return final_rows, summary_stats
+
+    def apply_rule_batch(self, cleansed_rows: list[dict], rules: list[dict]):
+        """
+        Executes a batch of active rules (both find-and-replace mapping rules and Python script rules).
+        """
+        if not cleansed_rows:
+            return [], {
+                "rows_loaded": 0,
+                "rows_modified": 0,
+                "total_modifications": 0,
+                "audit_log": [],
+                "mapping_rules_parsed": len(rules)
+            }
+
+        # Separate rules into find-replace mapping rules and python script rules
+        file_rules = []
+        python_scripts = []
+
+        for r in rules:
+            if not r.get("enabled", True):
+                continue
+            pcode = r.get("python_code") or r.get("pythonCode")
+            if pcode:
+                python_scripts.append(pcode)
+            elif r.get("source_field") or r.get("Source_Field") or r.get("field"):
+                file_rules.append({
+                    "Source_Field": r.get("source_field") or r.get("Source_Field") or r.get("field"),
+                    "Source_Data": r.get("source_data") or r.get("Source_Data") or r.get("oldValue", ""),
+                    "Target_Data": r.get("target_data") or r.get("Target_Data") or r.get("newValue", "")
+                })
+
+        current_rows = [dict(row) for row in cleansed_rows]
+        combined_audit_log = []
+        total_modifications = 0
+
+        # 1. Apply file/find-replace rules
+        if file_rules:
+            current_rows, summary = self.apply_mappings(current_rows, file_rules)
+            combined_audit_log.extend(summary.get("audit_log", []))
+            total_modifications += summary.get("total_modifications", 0)
+
+        # 2. Apply Python script rules sequentially
+        for script in python_scripts:
+            current_rows, summary = self.apply_ai_script(current_rows, script)
+            combined_audit_log.extend(summary.get("audit_log", []))
+            total_modifications += summary.get("total_modifications", 0)
+
+        # Calculate unique modified rows across all audit logs
+        modified_rows_set = set()
+        for event in combined_audit_log:
+            if "row" in event:
+                modified_rows_set.add(event["row"] - 1)
+
+        summary_stats = {
+            "rows_loaded": len(cleansed_rows),
+            "rows_modified": len(modified_rows_set),
+            "total_modifications": total_modifications,
+            "audit_log": combined_audit_log,
+            "mapping_rules_parsed": len(rules)
+        }
+
+        return current_rows, summary_stats
+

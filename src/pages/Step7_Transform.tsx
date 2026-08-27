@@ -5,7 +5,7 @@ import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { dl, expCSV, isPrimaryKeyField } from '@/lib/utils';
 import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, StatBox, StatsGrid, DataTable, PageHeader, EmptyState } from '@/components/shared';
-import { ArrowLeft, ArrowRight, Cog, Download, Upload, FileText, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileSpreadsheet, Save, Check, Bot, Sparkles, X, Key } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Cog, Download, Upload, FileText, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileSpreadsheet, Save, Check, Bot, Sparkles, X, Key, Trash2, CheckSquare, Square, Plus, RotateCcw, ListFilter, Layers } from 'lucide-react';
 import { TableFilterToolbar, filterRowsByKey, detectKeyColumns, getTableDisplayData } from '@/components/shared/TableFilterToolbar';
 import type { TableInfo } from '@/components/shared/TableFilterToolbar';
 import { TablePaginationFooter } from '@/components/shared/TablePaginationFooter';
@@ -342,6 +342,17 @@ function TransformationReportCard({
   );
 }
 
+export interface TransformRuleItem {
+  id: string;
+  source: 'file' | 'nlp';
+  field: string;
+  oldValue?: string;
+  newValue?: string;
+  pythonCode?: string;
+  description: string;
+  enabled: boolean;
+}
+
 export function Step7Transform() {
   const { state, dispatch } = useMigration();
   const navigate = useNavigate();
@@ -350,6 +361,9 @@ export function Step7Transform() {
   
   const [mappingFile, setMappingFile] = useState<File | null>(null);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [rules, setRules] = useState<TransformRuleItem[]>([]);
+  const [isParsingFile, setIsParsingFile] = useState(false);
+  const [isGeneratingAIRule, setIsGeneratingAIRule] = useState(false);
   
   const summary = state.transformSummary;
   
@@ -382,19 +396,20 @@ export function Step7Transform() {
     }
   };
 
-  async function doTransform() {
+  // 1. Run File Mapping Transformation & Extract Rules to Panel
+  async function handleFileTransform() {
     if (!mappingFile) {
       toast('Please upload a mapping file (CSV/Excel) first.', 'err');
       return;
     }
-    
     if (!state.projectId) {
       toast('Project ID not found. Please extract data first.', 'err');
       return;
     }
 
+    setIsParsingFile(true);
     showLoad('Applying Mappings...', 'Finding and replacing data based on your file...');
-    
+
     const formData = new FormData();
     formData.append('project_id', state.projectId);
     formData.append('target_object', state.obj);
@@ -408,36 +423,73 @@ export function Step7Transform() {
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Failed to apply mappings');
+        throw new Error(err.detail || 'Failed to apply mapping file');
       }
 
       const data = await res.json();
+      const auditLog: any[] = data.summary?.audit_log || [];
+      const newRules: TransformRuleItem[] = [];
+
+      // Extract unique field replacement rules from audit log / summary
+      const uniqueRuleMap = new Map<string, TransformRuleItem>();
+      auditLog.forEach((item: any) => {
+        const key = `${item.field}_${item.old_value}_${item.new_value}`;
+        if (!uniqueRuleMap.has(key)) {
+          uniqueRuleMap.set(key, {
+            id: `rule_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            source: 'file',
+            field: item.field || 'General',
+            oldValue: item.old_value,
+            newValue: item.new_value,
+            description: `Replace '${item.old_value || '(empty)'}' → '${item.new_value}' in ${item.field}`,
+            enabled: true,
+          });
+        }
+      });
+
+      if (uniqueRuleMap.size === 0) {
+        newRules.push({
+          id: `rule_file_${Date.now()}`,
+          source: 'file',
+          field: 'Mapping File',
+          description: `Apply rules from ${mappingFile.name}`,
+          enabled: true,
+        });
+      } else {
+        newRules.push(...Array.from(uniqueRuleMap.values()));
+      }
+
+      // Append new rules to active rules list
+      setRules(prev => [...prev, ...newRules]);
       
+      // Dispatch transformed dataset & summary
       dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
       dispatch({ type: 'SET_FIELD', field: 'transformSummary', value: data.summary });
       dispatch({ type: 'SET_FIELD', field: 'isTransformedSaved', value: false });
-      
-      toast(`Transformed data successfully. ${data.summary.total_modifications} replacements made.`, 'ok');
+
+      toast(`Transformed data successfully! ${data.summary?.total_modifications || 0} replacements made.`, 'ok');
     } catch (err: any) {
       toast(err.message, 'err');
     } finally {
+      setIsParsingFile(false);
       hideLoad();
     }
   }
 
-  async function doAITransform() {
+  // 2. Run AI Transformation & Extract Rule to Panel
+  async function handleAITransform() {
     if (!aiPrompt.trim()) {
-      toast('Please enter instructions for the AI.', 'err');
+      toast('Please enter natural language instructions.', 'err');
       return;
     }
-    
     if (!state.projectId) {
       toast('Project ID not found. Please extract data first.', 'err');
       return;
     }
 
-    showLoad('AI is analyzing...', 'Extracting mapping rules from your instructions...');
-    
+    setIsGeneratingAIRule(true);
+    showLoad('AI is Analyzing Instructions...', 'Applying AI transformation rules...');
+
     try {
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/ai-apply-mappings`, {
         method: 'POST',
@@ -445,30 +497,249 @@ export function Step7Transform() {
         body: JSON.stringify({
           project_id: state.projectId,
           target_object: state.obj,
-          prompt: aiPrompt
-        })
+          prompt: aiPrompt,
+        }),
       });
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || 'Failed to apply AI mappings');
+        throw new Error(err.detail || 'Failed to apply AI transformation');
+      }
+
+      const data = await res.json();
+      const pythonScript = data.ai_rules?.[0]?.Target_Data || data.summary?.ai_rules?.[0]?.Target_Data || '';
+
+      const newAIRule: TransformRuleItem = {
+        id: `rule_nlp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        source: 'nlp',
+        field: 'AI Script',
+        pythonCode: pythonScript,
+        description: aiPrompt.trim(),
+        enabled: true,
+      };
+
+      setRules(prev => [...prev, newAIRule]);
+
+      const updatedSummary = { ...data.summary, ai_rules: data.ai_rules };
+      dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
+      dispatch({ type: 'SET_FIELD', field: 'transformSummary', value: updatedSummary });
+      dispatch({ type: 'SET_FIELD', field: 'isTransformedSaved', value: false });
+
+      setAiPrompt('');
+      toast(`AI Transformation successful! Parsed rules added to panel.`, 'ok');
+    } catch (err: any) {
+      toast(err.message, 'err');
+    } finally {
+      setIsGeneratingAIRule(false);
+      hideLoad();
+    }
+  }
+
+  // 1. Reactive Batch Application Helper
+  async function applyRulesBatch(targetRules: TransformRuleItem[]) {
+    if (!state.projectId) return;
+
+    const activeRules = targetRules.filter(r => r.enabled);
+    showLoad('Updating Transformation...', `Applying ${activeRules.length} active rule(s)...`);
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/apply-batch-rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: state.projectId,
+          target_object: state.obj,
+          rules: activeRules,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Transform re-evaluation failed');
       }
 
       const data = await res.json();
       
-      const updatedSummary = { ...data.summary, ai_rules: data.ai_rules };
-      
+      const aiRulesSummary = targetRules
+        .filter(r => r.enabled && r.pythonCode)
+        .map(r => ({ Source_Field: "Python Script", Source_Data: "", Target_Data: r.pythonCode }));
+
+      const updatedSummary = {
+        ...data.summary,
+        ai_rules: aiRulesSummary.length > 0 ? aiRulesSummary : data.summary?.ai_rules
+      };
+
       dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
       dispatch({ type: 'SET_FIELD', field: 'transformSummary', value: updatedSummary });
       dispatch({ type: 'SET_FIELD', field: 'isTransformedSaved', value: false });
-      
-      toast(`AI Transformation successful! Parsed ${data.ai_rules.length} rules.`, 'ok');
     } catch (err: any) {
       toast(err.message, 'err');
     } finally {
       hideLoad();
     }
   }
+
+  // 2. Run File Mapping Transformation & Extract Rules to Panel
+  async function handleFileTransform() {
+    if (!mappingFile) {
+      toast('Please upload a mapping file (CSV/Excel) first.', 'err');
+      return;
+    }
+    if (!state.projectId) {
+      toast('Project ID not found. Please extract data first.', 'err');
+      return;
+    }
+
+    setIsParsingFile(true);
+    showLoad('Applying Mappings...', 'Finding and replacing data based on your file...');
+
+    const formData = new FormData();
+    formData.append('project_id', state.projectId);
+    formData.append('target_object', state.obj);
+    formData.append('file', mappingFile);
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/apply-mappings`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to apply mapping file');
+      }
+
+      const data = await res.json();
+      const auditLog: any[] = data.summary?.audit_log || [];
+      const newRules: TransformRuleItem[] = [];
+
+      // Extract unique field replacement rules from audit log / summary
+      const uniqueRuleMap = new Map<string, TransformRuleItem>();
+      auditLog.forEach((item: any) => {
+        const key = `${item.field}_${item.old_value}_${item.new_value}`;
+        if (!uniqueRuleMap.has(key)) {
+          uniqueRuleMap.set(key, {
+            id: `rule_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            source: 'file',
+            field: item.field || 'General',
+            oldValue: item.old_value,
+            newValue: item.new_value,
+            description: `Replace '${item.old_value || '(empty)'}' → '${item.new_value}' in ${item.field}`,
+            enabled: true,
+          });
+        }
+      });
+
+      if (uniqueRuleMap.size === 0) {
+        newRules.push({
+          id: `rule_file_${Date.now()}`,
+          source: 'file',
+          field: 'Mapping File',
+          description: `Apply rules from ${mappingFile.name}`,
+          enabled: true,
+        });
+      } else {
+        newRules.push(...Array.from(uniqueRuleMap.values()));
+      }
+
+      const updatedRules = [...rules, ...newRules];
+      setRules(updatedRules);
+      
+      // Execute combined active batch
+      applyRulesBatch(updatedRules);
+
+      toast(`Transformed data successfully! Parsed ${newRules.length} rule(s).`, 'ok');
+    } catch (err: any) {
+      toast(err.message, 'err');
+    } finally {
+      setIsParsingFile(false);
+      hideLoad();
+    }
+  }
+
+  // 3. Run AI Transformation & Extract Rule to Panel
+  async function handleAITransform() {
+    if (!aiPrompt.trim()) {
+      toast('Please enter natural language instructions.', 'err');
+      return;
+    }
+    if (!state.projectId) {
+      toast('Project ID not found. Please extract data first.', 'err');
+      return;
+    }
+
+    setIsGeneratingAIRule(true);
+    showLoad('AI is Analyzing Instructions...', 'Applying AI transformation rules...');
+
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/ai-apply-mappings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: state.projectId,
+          target_object: state.obj,
+          prompt: aiPrompt,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Failed to apply AI transformation');
+      }
+
+      const data = await res.json();
+      const pythonScript = data.ai_rules?.[0]?.Target_Data || data.summary?.ai_rules?.[0]?.Target_Data || '';
+
+      const newAIRule: TransformRuleItem = {
+        id: `rule_nlp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        source: 'nlp',
+        field: 'AI Script',
+        pythonCode: pythonScript,
+        description: aiPrompt.trim(),
+        enabled: true,
+      };
+
+      const updatedRules = [...rules, newAIRule];
+      setRules(updatedRules);
+
+      // Execute combined active batch
+      applyRulesBatch(updatedRules);
+
+      setAiPrompt('');
+      toast(`AI Transformation successful! Added rule to active panel.`, 'ok');
+    } catch (err: any) {
+      toast(err.message, 'err');
+    } finally {
+      setIsGeneratingAIRule(false);
+      hideLoad();
+    }
+  }
+
+  // Rule Reactive Controls (Instantly update dataset on toggle/delete)
+  const toggleRule = (id: string) => {
+    const updated = rules.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r);
+    setRules(updated);
+    applyRulesBatch(updated);
+  };
+
+  const deleteRule = (id: string) => {
+    const updated = rules.filter(r => r.id !== id);
+    setRules(updated);
+    applyRulesBatch(updated);
+    toast('Rule removed', 'info');
+  };
+
+  const toggleAllRules = (enabled: boolean) => {
+    const updated = rules.map(r => ({ ...r, enabled }));
+    setRules(updated);
+    applyRulesBatch(updated);
+  };
+
+  const clearAllRules = () => {
+    setRules([]);
+    applyRulesBatch([]);
+    toast('All rules cleared', 'info');
+  };
 
   async function saveToDatabase() {
     if (!state.projectId) return;
@@ -508,14 +779,13 @@ export function Step7Transform() {
     );
   });
 
-  const auditTotalPages = Math.ceil(filteredAuditItems.length / AUDIT_PAGE_SIZE);
-  const paginatedAuditItems = filteredAuditItems.slice((auditPage - 1) * AUDIT_PAGE_SIZE, auditPage * AUDIT_PAGE_SIZE);
+  const activeRulesCount = rules.filter(r => r.enabled).length;
 
   return (
     <PageLayout>
       <PageGrid>
         <GridCol span={12}>
-          <PageHeader title="Step 7 — Data Transformation" subtitle="Upload a mapping file to automatically find and replace field values">
+          <PageHeader title="Step 7 — Data Transformation" subtitle="Upload a mapping file or enter AI instructions to run transformations and manage active rules">
             <Button variant="secondary" icon={<ArrowLeft className="w-3.5 h-3.5" />} onClick={() => navigate('/cleanse')}>Back</Button>
             {has && (
               <Button 
@@ -530,98 +800,236 @@ export function Step7Transform() {
             <Button variant="primary" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => navigate('/export')} disabled={!state.isTransformedSaved}>Next: DMC Export</Button>
           </PageHeader>
 
-          {/* Transformation Options Box */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* 3-Column Transformation Control Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-6">
             
-            {/* File Upload Box */}
-            <Card className="h-full">
-              <CardHeader title="Upload Mapping File" subtitle="File must contain: Source_Field, Source_Data, Target_Data" />
-              <CardBody>
-                <div className="flex flex-col gap-4">
-                  <div className="flex-1 w-full">
-                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-[var(--border)] border-dashed rounded-xl cursor-pointer bg-[var(--bg-tertiary)]/30 hover:bg-[var(--bg-tertiary)] hover:border-violet-400 transition-all">
-                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <Upload className="w-8 h-8 text-[var(--text-tertiary)] mb-2" />
-                        <p className="mb-1 text-sm font-semibold text-[var(--text-secondary)]">Click to upload or drag and drop</p>
-                        <p className="text-xs text-[var(--text-tertiary)]">CSV or Excel file</p>
-                      </div>
-                      <input type="file" className="hidden" accept=".csv,.xlsx,.xls" onChange={handleFileChange} />
-                    </label>
-                  </div>
-                  
-                  <div className="w-full flex flex-row items-center gap-3">
-                    <div className="flex-1">
-                      {mappingFile ? (
-                        <div className="p-3 border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-900/20 rounded-lg flex items-center gap-3 relative pr-8 h-[50px]">
-                          <FileSpreadsheet className="w-5 h-5 text-violet-500 shrink-0" />
-                          <div className="overflow-hidden flex-1">
-                            <div className="text-sm font-bold text-violet-700 dark:text-violet-300 truncate leading-tight">{mappingFile.name}</div>
-                            <div className="text-[10px] text-violet-500 leading-tight">Ready to process</div>
-                          </div>
-                          <button 
-                            className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-violet-400 hover:text-violet-700 hover:bg-violet-200/50 transition-colors cursor-pointer"
-                            onClick={() => setMappingFile(null)}
-                            title="Remove file"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="p-3 border border-[var(--border)] bg-[var(--bg-tertiary)] rounded-lg text-center text-xs text-[var(--text-tertiary)] h-[50px] flex items-center justify-center">
-                          No file selected
-                        </div>
-                      )}
+            {/* 1. File Upload Card (Left, 3.5 cols) */}
+            <div className="lg:col-span-3 flex">
+              <Card className="w-full flex flex-col justify-between">
+                <CardHeader title="1. Upload Mapping File" subtitle="CSV / Excel file with mapping rules" />
+                <CardBody className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                  <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-[var(--border)] border-dashed rounded-xl cursor-pointer bg-[var(--bg-tertiary)]/30 hover:bg-[var(--bg-tertiary)] hover:border-violet-400 transition-all">
+                    <div className="flex flex-col items-center justify-center p-4 text-center">
+                      <Upload className="w-7 h-7 text-[var(--text-tertiary)] mb-1.5" />
+                      <p className="text-[12px] font-semibold text-[var(--text-secondary)]">Click to upload or drag & drop</p>
+                      <p className="text-[10px] text-[var(--text-tertiary)]">.csv, .xlsx, .xls</p>
                     </div>
-                    
+                    <input type="file" className="hidden" accept=".csv,.xlsx,.xls" onChange={handleFileChange} />
+                  </label>
+                  
+                  <div className="space-y-2">
+                    {mappingFile ? (
+                      <div className="p-2.5 border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/40 rounded-lg flex items-center justify-between">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <FileSpreadsheet className="w-4 h-4 text-violet-500 shrink-0" />
+                          <span className="text-[11.5px] font-bold text-violet-700 dark:text-violet-300 truncate">{mappingFile.name}</span>
+                        </div>
+                        <button 
+                          className="p-1 rounded text-violet-400 hover:text-violet-700 dark:hover:text-violet-200 transition-colors cursor-pointer shrink-0"
+                          onClick={() => setMappingFile(null)}
+                          title="Remove file"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="p-2 border border-[var(--border)] bg-[var(--bg-tertiary)]/50 rounded-lg text-center text-[11px] text-[var(--text-tertiary)]">
+                        No file chosen
+                      </div>
+                    )}
+
                     <Button 
                       variant="cyan" 
-                      icon={<Cog className="w-4 h-4" />} 
-                      className="h-[50px]" 
-                      disabled={!mappingFile}
-                      onClick={doTransform}
+                      icon={<Cog className="w-3.5 h-3.5" />} 
+                      className="w-full justify-center text-[12px] py-2 font-bold" 
+                      disabled={!mappingFile || isParsingFile}
+                      onClick={handleFileTransform}
                     >
-                      Run Transform
+                      {isParsingFile ? 'Transforming...' : 'Run Transform'}
                     </Button>
                   </div>
-                </div>
-              </CardBody>
-            </Card>
+                </CardBody>
+              </Card>
+            </div>
 
-            {/* AI Chatbot Box */}
-            <Card className="h-full">
-              <CardHeader 
-                title="AI Natural Language Transform" 
-                subtitle="Tell the AI what to change, e.g., 'Change NET from 90 to NT90'" 
-                icon={<Bot className="w-4 h-4 text-cyan-500" />}
-              />
-              <CardBody>
-                <div className="flex flex-col gap-4">
-                  <div className="flex-1 w-full flex flex-col relative group">
+            {/* 2. AI Prompt Card (Middle, 4.5 cols) */}
+            <div className="lg:col-span-4 flex">
+              <Card className="w-full flex flex-col justify-between">
+                <CardHeader 
+                  title="2. AI Natural Language Transform" 
+                  subtitle="Describe instructions (e.g. 'Change PLANT 1000 to 2000')" 
+                  icon={<Bot className="w-4 h-4 text-cyan-500" />}
+                />
+                <CardBody className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                  <div className="relative flex-1">
                     <textarea
                       value={aiPrompt}
                       onChange={(e) => setAiPrompt(e.target.value)}
-                      placeholder="Enter natural language instructions here...&#10;&#10;Examples:&#10;- Change all PLANT values of '1000' to '2000'&#10;- Map 'USD' to 'EUR' in the CURRENCY field"
-                      className="w-full h-32 p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/50 text-[var(--text-primary)] text-sm resize-none focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all placeholder:text-[var(--text-tertiary)]"
+                      placeholder="Enter natural language instructions...&#10;&#10;Examples:&#10;• Change all PLANT values of '1000' to '2000'&#10;• Convert FIRST_NAME to lower case"
+                      className="w-full h-28 p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/50 text-[var(--text-primary)] text-[12px] resize-none focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all placeholder:text-[var(--text-tertiary)]"
                     />
-                    <div className="absolute top-3 right-3 text-cyan-500/30 group-focus-within:text-cyan-500 transition-colors">
-                      <Sparkles className="w-5 h-5" />
-                    </div>
+                    <Sparkles className="w-4 h-4 absolute top-2.5 right-2.5 text-cyan-500/40 pointer-events-none" />
                   </div>
+
+                  {/* Quick prompt chips */}
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      "Change '1000' to '2000'",
+                      "Lower case FIRST_NAME",
+                      "Trim spaces in USER_ID"
+                    ].map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => setAiPrompt(chip)}
+                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800/60 hover:bg-cyan-100 transition-colors cursor-pointer"
+                      >
+                        + {chip}
+                      </button>
+                    ))}
+                  </div>
+
+                  <Button 
+                    variant="cyan" 
+                    icon={<Cog className="w-3.5 h-3.5" />} 
+                    className="w-full justify-center text-[12px] py-2 font-bold"
+                    disabled={!aiPrompt.trim() || isGeneratingAIRule}
+                    onClick={handleAITransform}
+                  >
+                    {isGeneratingAIRule ? 'Transforming...' : 'Run Transform'}
+                  </Button>
+                </CardBody>
+              </Card>
+            </div>
+
+            {/* 3. Active Transformation Rules Manager Panel (Right, 5 cols) */}
+            <div className="lg:col-span-5 flex">
+              <Card className="w-full flex flex-col justify-between border-violet-300 dark:border-violet-900/60 shadow-sm bg-gradient-to-b from-[var(--bg-primary)] to-violet-50/20 dark:to-violet-950/10">
+                <CardHeader 
+                  title="3. Active Transformation Rules" 
+                  subtitle="Tick/untick rules to enable or delete unwanted rules" 
+                  icon={<Layers className="w-4 h-4 text-violet-500" />}
+                >
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                      {activeRulesCount} Active / {rules.length} Total
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardBody className="p-3 flex-1 flex flex-col justify-between space-y-3">
                   
-                  <div className="w-full flex justify-end">
-                    <Button 
-                      variant="cyan" 
-                      icon={<Cog className="w-4 h-4" />} 
-                      className="h-[50px] w-full"
-                      disabled={!aiPrompt.trim()}
-                      onClick={doAITransform}
-                    >
-                      Run Transform
-                    </Button>
+                  {/* Controls Header */}
+                  {rules.length > 0 && (
+                    <div className="flex items-center justify-between pb-1 border-b border-[var(--border)]">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleAllRules(true)}
+                          className="text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                        <span className="text-[10px] text-[var(--text-tertiary)]">•</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleAllRules(false)}
+                          className="text-[10px] font-bold text-[var(--text-tertiary)] hover:underline cursor-pointer"
+                        >
+                          Deselect All
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearAllRules}
+                        className="text-[10px] font-bold text-red-500 hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" /> Clear All
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Scrollable Rules List */}
+                  <div className="flex-1 max-h-[260px] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                    {rules.length === 0 ? (
+                      <div className="h-[210px] flex flex-col items-center justify-center text-center p-4 rounded-xl border border-dashed border-[var(--border)] bg-[var(--bg-tertiary)]/30 text-[11px] text-[var(--text-tertiary)]">
+                        <ListFilter className="w-8 h-8 text-[var(--text-tertiary)] mb-2 opacity-50" />
+                        <p className="font-semibold text-[var(--text-secondary)] mb-1">No rules added yet</p>
+                        <p className="text-[10px]">Upload a mapping file or enter an AI prompt and click Run Transform.</p>
+                      </div>
+                    ) : (
+                      rules.map((rule) => (
+                        <div
+                          key={rule.id}
+                          className={`p-2.5 rounded-xl border transition-all flex items-start gap-2.5 ${
+                            rule.enabled
+                              ? 'bg-white dark:bg-gray-900/80 border-violet-300 dark:border-violet-800 shadow-xs'
+                              : 'bg-[var(--bg-tertiary)]/40 border-[var(--border)] opacity-60'
+                          }`}
+                        >
+                          {/* Checkbox Tick/Untick */}
+                          <button
+                            type="button"
+                            onClick={() => toggleRule(rule.id)}
+                            className="mt-0.5 cursor-pointer text-violet-600 dark:text-violet-400 hover:opacity-80 transition-opacity shrink-0"
+                            title={rule.enabled ? "Untick to disable rule" : "Tick to enable rule"}
+                          >
+                            {rule.enabled ? (
+                              <CheckSquare className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-[var(--text-tertiary)]" />
+                            )}
+                          </button>
+
+                          {/* Rule Details */}
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-extrabold uppercase tracking-wider ${
+                                rule.source === 'nlp'
+                                  ? 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800'
+                                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
+                              }`}>
+                                {rule.source === 'nlp' ? 'AI NLP' : 'FILE'}
+                              </span>
+                              <span className="text-[11.5px] font-bold text-[var(--text-primary)] font-mono truncate">
+                                {rule.field}
+                              </span>
+                            </div>
+
+                            <div className="text-[11px] text-[var(--text-secondary)] leading-snug font-mono">
+                              {rule.oldValue !== undefined || rule.newValue !== undefined ? (
+                                <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                                  <span className="px-1 py-0.2 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through">
+                                    {rule.oldValue || '(empty)'}
+                                  </span>
+                                  <span className="text-[var(--text-tertiary)]">→</span>
+                                  <span className="px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
+                                    {rule.newValue}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-[10.5px] font-sans text-[var(--text-secondary)] line-clamp-2">
+                                  {rule.description}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Delete Button */}
+                          <button
+                            type="button"
+                            onClick={() => deleteRule(rule.id)}
+                            className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
+                            title="Delete rule"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
                   </div>
-                </div>
-              </CardBody>
-            </Card>
+                </CardBody>
+              </Card>
+            </div>
 
           </div>
 

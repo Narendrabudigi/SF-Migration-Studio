@@ -174,3 +174,45 @@ def apply_ai_transform_mappings(req: AITransformRequest):
         "summary": summary,
         "ai_rules": [{"Source_Field": "Python Script", "Source_Data": "", "Target_Data": python_code}]
     }
+
+class BatchTransformRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: list
+
+@router.post("/apply-batch-rules")
+def apply_batch_transform_rules(req: BatchTransformRequest):
+    client = supabase_service.get_client()
+
+    # 1. Get Object ID from sf_objects
+    res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+    if not res_obj.data:
+        raise HTTPException(status_code=400, detail="Target object not found")
+    object_id = res_obj.data[0]["id"]
+
+    # 2. Fetch Cleansed Data
+    res_cleansed = client.table("cleansed_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+    
+    if not res_cleansed.data:
+        raise HTTPException(status_code=400, detail="No cleansed data found to transform. Run step 6 first.")
+    
+    cleansed_payload = res_cleansed.data[0]["payload"]
+    if isinstance(cleansed_payload, dict) and "rows" in cleansed_payload:
+        cleansed_rows = cleansed_payload["rows"]
+    elif isinstance(cleansed_payload, list):
+        cleansed_rows = cleansed_payload
+    else:
+        raise HTTPException(400, "Invalid cleansed data format.")
+
+    if not cleansed_rows:
+        raise HTTPException(400, "Cleansed data is empty.")
+
+    agent = TransformationAgent()
+    transformed_rows, summary = agent.apply_rule_batch(cleansed_rows, req.rules)
+
+    return {
+        "status": "success",
+        "data": transformed_rows,
+        "summary": summary
+    }
+
