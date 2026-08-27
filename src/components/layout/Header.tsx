@@ -56,7 +56,7 @@ export function Header() {
         </button>
 
         <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-white text-[12px] font-bold shadow-sm ml-2 cursor-pointer hover:bg-primary-700 transition-colors">
-          DC
+          NB
         </div>
       </div>
     </header>

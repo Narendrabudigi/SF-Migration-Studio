@@ -485,6 +485,7 @@ class ExecuteFileRequest(BaseModel):
     target_object: str
     mappings: list
     raw_data: list
+    source_name: Optional[str] = "EXCEL_CSV"
 
 def norm_str(s: str) -> str:
     if not s:
@@ -583,6 +584,10 @@ def execute_file_extraction(req: ExecuteFileRequest):
                 clean_src_key = re.sub(r"^\[\d+\]\s*", "", str(src_full)).strip()
                 harmonized_row[clean_src_key] = val
                 
+            # Always populate SOURCE column with valid source name
+            src_val = row.get("SOURCE") or row.get("source") or row.get("_source") or row.get("SOURCE_FILE") or row.get("source_file") or req.source_name or "EXCEL_CSV"
+            harmonized_row["SOURCE"] = str(src_val)
+
             harmonized_results.append(harmonized_row)
         
         quality_report = agent.generate_eda_quality_report(

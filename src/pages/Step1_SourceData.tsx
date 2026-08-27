@@ -58,6 +58,12 @@ export function Step1SourceData() {
 
   useEffect(() => {
     fetchProjects();
+    if (state.src === 'EXCEL_CSV' && stagedFiles.length === 0) {
+      dispatch({
+        type: 'BATCH_UPDATE',
+        updates: { rawData: [], headers: [], uploadedData: [], uploadedFileName: '' }
+      });
+    }
   }, []);
 
   const fetchProjects = async () => {
@@ -511,6 +517,15 @@ interface SecondaryJoinConfig {
       handleBaseFileChange(remaining[0].filename);
     } else if (remaining.length === 0) {
       setBaseFileName('');
+      dispatch({
+        type: 'BATCH_UPDATE',
+        updates: {
+          rawData: [],
+          headers: [],
+          uploadedData: [],
+          uploadedFileName: '',
+        }
+      });
     }
   };
 
@@ -574,7 +589,15 @@ interface SecondaryJoinConfig {
     }
   };
 
-  const pickSrc = (k: string) => dispatch({ type: 'SET_FIELD', field: 'src', value: k });
+  const pickSrc = (k: string) => {
+    dispatch({ type: 'SET_FIELD', field: 'src', value: k });
+    if (k === 'EXCEL_CSV' && stagedFiles.length === 0) {
+      dispatch({
+        type: 'BATCH_UPDATE',
+        updates: { rawData: [], headers: [], uploadedData: [], uploadedFileName: '' }
+      });
+    }
+  };
   const pickObj = (k: string) => dispatch({ type: 'SET_FIELD', field: 'obj', value: k });
 
   const testConn = async () => {
@@ -685,9 +708,11 @@ interface SecondaryJoinConfig {
     dispatch({ type: 'SET_FIELD', field: field as keyof typeof state, value });
   };
 
-  const has = state.rawData.length > 0;
+  const has = state.rawData.length > 0 && (state.src !== 'EXCEL_CSV' || stagedFiles.length > 0);
 
-  const nextDisabled = !state.src || !state.obj || !state.projectId || (state.src === 'SAP_ECC' && (!state.connUrl || !state.connUser || !state.connPass || state.rawData.length === 0));
+  const nextDisabled = !state.src || !state.obj || !state.projectId ||
+    (state.src === 'EXCEL_CSV' && (stagedFiles.length === 0 || state.rawData.length === 0)) ||
+    (state.src === 'SAP_ECC' && (!state.connUrl || !state.connUser || !state.connPass || state.rawData.length === 0));
 
   const handleLoadOracle = () => {
     const data = SAMPLE.ORACLE_VENDOR || [];
@@ -1062,7 +1087,7 @@ interface SecondaryJoinConfig {
                       </div>
                     )}
 
-                    {state.headers.length > 0 && (
+                    {state.headers.length > 0 && (state.src !== 'EXCEL_CSV' || stagedFiles.length > 0) && (
                       <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/40 text-[11px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                         <span>{stagedFiles.length > 1 ? 'Merged Dataset Ready' : 'Dataset Loaded Successfully'} ({state.headers.length} columns, {state.rawData.length} rows loaded)</span>

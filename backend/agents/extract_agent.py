@@ -456,7 +456,7 @@ You MUST return the output as a valid JSON object matching this exact schema:
         all_cols = list(harmonized_results[0].keys())
         tgt_upper = str(target_object).upper()
         
-        # Determine target SuccessFactors object category
+        # Determine fallback target object table name
         if "BIOGRAPHICAL" in tgt_upper:
             obj_name = "Biographical Info"
         elif "PERSONAL" in tgt_upper:
@@ -474,101 +474,94 @@ You MUST return the output as a valid JSON object matching this exact schema:
         else:
             obj_name = target_object or "Biographical Info"
 
-        # 1. Fetch SuccessFactors Schema metadata from database
-        sf_fields = []
-        try:
-            from services.supabase_client import supabase_service
-            client = supabase_service.get_client()
-            res_obj = client.table("sf_objects").select("id").ilike("name", str(target_object)).execute()
-            if not res_obj.data:
-                res_obj = client.table("sf_objects").select("id").ilike("name", obj_name).execute()
-            if res_obj.data:
-                obj_id = res_obj.data[0]["id"]
-                res_fields = client.table("sf_fields").select("*").eq("object_id", obj_id).execute()
-                sf_fields = res_fields.data or []
-        except Exception as e:
-            logger.warning(f"Could not load sf_fields for grouping: {e}")
+        primary_sheet = obj_name if obj_name.endswith("Data") else f"{obj_name} Data"
+
+        # Structure Name to Table Display Name Mapping
+        STRUCTURE_TABLE_MAP = {
+            "PERPERSON": "Biographical Info Data",
+            "BIOGRAPHICAL": "Biographical Info Data",
+            "PERPERSONAL": "Personal Info Data",
+            "PERSONAL": "Personal Info Data",
+            "EMPEMPLOYMENT": "Employment Details Data",
+            "EMPLOYMENT": "Employment Details Data",
+            "EMPJOB": "Job Info Data",
+            "JOB": "Job Info Data",
+            "EMPCOMPENSATION": "Compensation Info Data",
+            "COMPENSATION": "Compensation Info Data",
+            "EMPPAYCOMPRECURRING": "Compensation Info Data",
+            "EMPPAYCOMPNONRECURRING": "Compensation Info Data",
+            "PEREMAIL": "Email Info Data",
+            "EMAIL": "Email Info Data",
+            "PERPHONE": "Phone Info Data",
+            "PHONE": "Phone Info Data",
+            "PERADDRESS": "Address Info Data",
+            "ADDRESS": "Address Info Data",
+            "PERNATIONALID": "National ID Info Data",
+            "NATIONALID": "National ID Info Data",
+        }
+
+        # Index column -> StructureName from AI Mappings
+        col_to_structure = {}
+        for m in (mappings or []):
+            if isinstance(m, dict):
+                m_src = str(m.get("src", ""))
+                m_sap = str(m.get("sap", ""))
+            else:
+                m_src = str(getattr(m, "src", ""))
+                m_sap = str(getattr(m, "sap", ""))
+
+            src_clean = re.sub(r"^\[\d+\]\s*", "", m_src).strip()
+            src_base = src_clean.split(".")[-1].strip()
+
+            sap_clean = re.sub(r"^\[\d+\]\s*", "", m_sap).strip()
+            sap_struct = sap_clean.split(".")[0].strip() if "." in sap_clean else ""
+
+            if sap_struct:
+                col_to_structure[src_clean] = sap_struct
+                col_to_structure[src_base] = sap_struct
+                col_to_structure[m_src] = sap_struct
+                if m_sap:
+                    col_to_structure[m_sap] = sap_struct
+                    col_to_structure[sap_clean] = sap_struct
+                    col_to_structure[sap_clean.split(".")[-1]] = sap_struct
 
         # Helper to get all sheets a column belongs to
         def get_col_sheets(col_name: str) -> list:
-            clean_col = re.sub(r"^\[\d+\]", "", col_name)
-            
-            # Find in mappings
-            m_found = None
-            sap_full = ""
-            for m in (mappings or []):
-                if isinstance(m, dict):
-                    m_src = str(m.get("src", ""))
-                    m_sap = str(m.get("sap", ""))
-                else:
-                    m_src = str(getattr(m, "src", ""))
-                    m_sap = str(getattr(m, "sap", ""))
+            clean_col = re.sub(r"^\[\d+\]\s*", "", str(col_name)).strip()
+            col_base = clean_col.split(".")[-1].strip()
 
-                m_clean = re.sub(r"^\[\d+\]", "", m_src)
-                if (m_src == col_name or m_clean == clean_col or 
-                    m_src.split(".")[-1] == clean_col or clean_col.split(".")[-1] == m_src or
-                    m_sap == col_name or m_sap.split(".")[-1] == col_name or m_sap.split(".")[-1] == clean_col):
-                    m_found = m
-                    sap_full = m_sap
-                    break
-            
-            if not sap_full and "." in col_name:
-                sap_full = col_name
-            elif not sap_full and m_found:
-                sap_full = str(m_found.get("sap", "")) if isinstance(m_found, dict) else str(getattr(m_found, "sap", ""))
-            
-            sap_struct = sap_full.split(".")[0] if "." in sap_full else ""
-            sap_field = sap_full.split(".")[-1] if "." in sap_full else (col_name.split(".")[-1] if "." in col_name else col_name)
-            sap_field_upper = sap_field.upper()
+            # 1. STRICT AI MAPPING STRUCTURE CHECK (Primary Source of Truth)
+            sap_struct = col_to_structure.get(clean_col) or col_to_structure.get(col_base) or col_to_structure.get(col_name)
+            if not sap_struct and "." in clean_col:
+                sap_struct = clean_col.split(".")[0].strip()
 
-            sheets_found = []
-            if sf_fields:
-                for sf in sf_fields:
-                    sf_name = str(sf.get("field_name", "")).upper()
-                    if sf_name == sap_field_upper:
-                        sheet = sf.get("sheet_name") or sf.get("group_name") or sf.get("sf_structure") or sf.get("sap_structure") or f"{obj_name} Data"
-                        if not sheet.lower().endswith("data"):
-                            sheet = f"{sheet} Data"
-                        if sheet not in sheets_found:
-                            sheets_found.append(sheet)
+            if sap_struct:
+                st_upper = sap_struct.upper()
+                if st_upper in STRUCTURE_TABLE_MAP:
+                    return [STRUCTURE_TABLE_MAP[st_upper]]
+                for k, v in STRUCTURE_TABLE_MAP.items():
+                    if k in st_upper:
+                        return [v]
+                return [f"{sap_struct} Data"]
 
-            if not sheets_found:
-                if sap_struct:
-                    st_upper = sap_struct.upper()
-                    if any(k in st_upper for k in ["PERPERSON", "BIOGRAPHICAL", "KNA1", "LFA1", "MARA"]):
-                        sheet = "Biographical Info Data"
-                    elif any(k in st_upper for k in ["PERPERSONAL", "PERSONAL"]):
-                        sheet = "Personal Info Data"
-                    elif any(k in st_upper for k in ["EMPEMPLOYMENT", "EMPLOYMENT"]):
-                        sheet = "Employment Details Data"
-                    elif any(k in st_upper for k in ["EMPJOB", "JOB", "SALES"]):
-                        sheet = "Job Info Data"
-                    elif any(k in st_upper for k in ["EMPCOMPENSATION", "COMPENSATION", "COMP", "PAY"]):
-                        sheet = "Compensation Info Data"
-                    else:
-                        sheet = f"{sap_struct} Data"
-                    sheets_found.append(sheet)
-                else:
-                    cn_upper = clean_col.upper()
-                    if any(k in cn_upper for k in ["PERSON_ID", "PERSONID", "BIOGRAPHICAL", "BIRTH"]):
-                        sheet = "Biographical Info Data"
-                    elif any(k in cn_upper for k in ["FIRST_NAME", "LAST_NAME", "GENDER", "MARITAL"]):
-                        sheet = "Personal Info Data"
-                    elif any(k in cn_upper for k in ["USER_ID", "USERID", "HIRE_DATE", "EMPLOYMENT"]):
-                        sheet = "Employment Details Data"
-                    elif any(k in cn_upper for k in ["JOB_CODE", "DEPARTMENT", "LOCATION", "DIVISION", "COMPANY"]):
-                        sheet = "Job Info Data"
-                    elif any(k in cn_upper for k in ["PAY", "COMPENSATION", "SALARY", "CURRENCY"]):
-                        sheet = "Compensation Info Data"
-                    else:
-                        sheet = f"{obj_name} Data"
-                    sheets_found.append(sheet)
+            # 2. Fallback heuristic keyword check if unmapped
+            cn_upper = clean_col.upper()
+            if any(k in cn_upper for k in ["PERSON_ID", "PERSONID", "BIOGRAPHICAL", "BIRTH"]):
+                return ["Biographical Info Data"]
+            elif any(k in cn_upper for k in ["FIRST_NAME", "LAST_NAME", "GENDER", "MARITAL"]):
+                return ["Personal Info Data"]
+            elif any(k in cn_upper for k in ["USER_ID", "USERID", "HIRE_DATE", "EMPLOYMENT"]):
+                return ["Employment Details Data"]
+            elif any(k in cn_upper for k in ["JOB_CODE", "DEPARTMENT", "LOCATION", "DIVISION", "COMPANY"]):
+                return ["Job Info Data"]
+            elif any(k in cn_upper for k in ["PAY", "COMPENSATION", "SALARY", "CURRENCY"]):
+                return ["Compensation Info Data"]
 
-            return sheets_found
+            return [primary_sheet]
 
         # Helper to determine if column is a key column
         def is_column_key(col_name: str) -> bool:
-            clean_col = re.sub(r"^\[\d+\]", "", col_name).upper()
+            clean_col = re.sub(r"^\[\d+\]\s*", "", col_name).upper()
             if any(k in clean_col for k in [
                 "PERSON_ID_EXTERNAL", "PERSONIDEXTERNAL", "USER_ID", "USERID", "WORKER",
                 "EMPLOYEE", "EMPLOYMENT", "ASSIGNMENT", "PERSON", "REFERENCE", "REF",
@@ -585,7 +578,7 @@ You MUST return the output as a valid JSON object matching this exact schema:
                 else:
                     m_src = str(getattr(m, "src", ""))
                     m_sap = str(getattr(m, "sap", ""))
-                m_clean = re.sub(r"^\[\d+\]", "", m_src)
+                m_clean = re.sub(r"^\[\d+\]\s*", "", m_src)
                 if m_src == col_name or m_clean == clean_col or m_src.split(".")[-1] == clean_col:
                     sap_full = m_sap
                     break
@@ -596,7 +589,6 @@ You MUST return the output as a valid JSON object matching this exact schema:
                     return True
             return False
 
-        primary_sheet = obj_name if obj_name.endswith("Data") else f"{obj_name} Data"
         meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
 
         from collections import defaultdict
@@ -604,7 +596,7 @@ You MUST return the output as a valid JSON object matching this exact schema:
         key_cols = [c for c in all_cols if is_column_key(c)]
 
         for col in all_cols:
-            col_clean = re.sub(r"^\[\d+\]", "", str(col)).strip()
+            col_clean = re.sub(r"^\[\d+\]\s*", "", str(col)).strip()
             col_lower = col_clean.lower()
             if any(kw in col_lower for kw in meta_keywords):
                 continue

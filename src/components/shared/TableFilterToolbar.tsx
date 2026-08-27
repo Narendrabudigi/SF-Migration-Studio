@@ -322,8 +322,12 @@ export function getTableDisplayData(
       projected[col] = val !== undefined ? val : (r[col] ?? '');
     });
 
-    if (r.SOURCE !== undefined && projected.SOURCE === undefined) {
-      projected.SOURCE = r.SOURCE;
+    const rowSource = (r.SOURCE && String(r.SOURCE).trim() !== '' && r.SOURCE !== '(empty)') 
+      ? r.SOURCE 
+      : (r.source || r._source || r.SOURCE_FILE || 'EXCEL_CSV');
+
+    if (projected.SOURCE === undefined || projected.SOURCE === '' || projected.SOURCE === '(empty)') {
+      projected.SOURCE = rowSource;
     }
     return projected;
   });

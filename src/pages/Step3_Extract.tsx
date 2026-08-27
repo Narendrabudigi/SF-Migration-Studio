@@ -164,14 +164,21 @@ export function Step3Extract() {
 
       try {
         const objName = state.obj || 'Biographical Info';
+        const sourceName = state.uploadedFileName || (state.src === 'EXCEL_CSV' ? 'EXCEL_CSV' : (state.src || 'EXCEL_CSV'));
         const rawPayload = (state.uploadedData && state.uploadedData.length > 0) ? state.uploadedData : (state.rawData || []);
+        const enrichedPayload = rawPayload.map((r: any) => ({
+          ...r,
+          SOURCE: (r.SOURCE && String(r.SOURCE).trim() !== '' && r.SOURCE !== '(empty)') ? r.SOURCE : (r.source || r._source || r.SOURCE_FILE || sourceName)
+        }));
+
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/execute_file`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target_object: objName,
             mappings: state.mapping,
-            raw_data: rawPayload
+            raw_data: enrichedPayload,
+            source_name: sourceName
           })
         });
 
@@ -183,15 +190,20 @@ export function Step3Extract() {
         const data = await res.json();
         tick(4, 'AI analysis done');
 
+        const finalExtracted = (data.data || []).map((r: any) => ({
+          ...r,
+          SOURCE: (r.SOURCE && String(r.SOURCE).trim() !== '' && r.SOURCE !== '(empty)') ? r.SOURCE : (r.source || r._source || r.SOURCE_FILE || sourceName)
+        }));
+
         setTimeout(() => {
           hideLoad();
-          dispatch({ type: 'SET_FIELD', field: 'extracted', value: data.data || [] });
+          dispatch({ type: 'SET_FIELD', field: 'extracted', value: finalExtracted });
           dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables || [] });
           dispatch({ type: 'SET_FIELD', field: 'edaStats', value: data.eda_stats || [] });
           dispatch({ type: 'SET_FIELD', field: 'reportMetrics', value: data.summary_metrics || null });
           dispatch({ type: 'SET_FIELD', field: 'complianceData', value: data.compliance_data || [] });
           dispatch({ type: 'SET_FIELD', field: 'aiReport', value: data.aiAnalysis?.report || data.aiAnalysis || null });
-          toast(`Processed ${data.data?.length || 0} records`, 'ok');
+          toast(`Processed ${finalExtracted.length} records`, 'ok');
         }, 1200);
       } catch (err: any) {
         hideLoad();
