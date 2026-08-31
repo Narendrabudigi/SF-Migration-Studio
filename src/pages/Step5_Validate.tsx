@@ -728,7 +728,9 @@ export function Step5Validate() {
                         <div className="text-[9.5px] text-[var(--text-tertiary)] mt-0.5 truncate flex items-center gap-0.5">
                           {v.primary_key ? (
                             <>
-                              <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" title="Primary Key" />
+                              <span title="Primary Key" className="inline-flex items-center">
+                                <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                              </span>
                               <span className="font-semibold text-amber-600 dark:text-amber-400">PK: {v.primary_key}</span>
                             </>
                           ) : Object.values(v.row || {}).filter(Boolean).slice(0, 2).map(String).join(' · ').slice(0, 28)}

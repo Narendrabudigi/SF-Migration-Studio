@@ -295,9 +295,11 @@ function TransformationReportCard({
                           </td>
                           <td className="py-2 px-3 text-violet-600 dark:text-violet-400 font-bold">
                             <div className="inline-flex items-center gap-1">
-                              {isPrimaryKeyField(item.field) && (
-                                <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
-                              )}
+                               {isPrimaryKeyField(item.field) && (
+                                 <span title="Primary Key Field" className="inline-flex items-center">
+                                   <Key className="w-3 h-3 text-amber-500 shrink-0" />
+                                 </span>
+                               )}
                               <span>{item.field}</span>
                             </div>
                           </td>
@@ -396,144 +398,7 @@ export function Step7Transform() {
     }
   };
 
-  // 1. Run File Mapping Transformation & Extract Rules to Panel
-  async function handleFileTransform() {
-    if (!mappingFile) {
-      toast('Please upload a mapping file (CSV/Excel) first.', 'err');
-      return;
-    }
-    if (!state.projectId) {
-      toast('Project ID not found. Please extract data first.', 'err');
-      return;
-    }
 
-    setIsParsingFile(true);
-    showLoad('Applying Mappings...', 'Finding and replacing data based on your file...');
-
-    const formData = new FormData();
-    formData.append('project_id', state.projectId);
-    formData.append('target_object', state.obj);
-    formData.append('file', mappingFile);
-
-    try {
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/apply-mappings`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Failed to apply mapping file');
-      }
-
-      const data = await res.json();
-      const auditLog: any[] = data.summary?.audit_log || [];
-      const newRules: TransformRuleItem[] = [];
-
-      // Extract unique field replacement rules from audit log / summary
-      const uniqueRuleMap = new Map<string, TransformRuleItem>();
-      auditLog.forEach((item: any) => {
-        const key = `${item.field}_${item.old_value}_${item.new_value}`;
-        if (!uniqueRuleMap.has(key)) {
-          uniqueRuleMap.set(key, {
-            id: `rule_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            source: 'file',
-            field: item.field || 'General',
-            oldValue: item.old_value,
-            newValue: item.new_value,
-            description: `Replace '${item.old_value || '(empty)'}' → '${item.new_value}' in ${item.field}`,
-            enabled: true,
-          });
-        }
-      });
-
-      if (uniqueRuleMap.size === 0) {
-        newRules.push({
-          id: `rule_file_${Date.now()}`,
-          source: 'file',
-          field: 'Mapping File',
-          description: `Apply rules from ${mappingFile.name}`,
-          enabled: true,
-        });
-      } else {
-        newRules.push(...Array.from(uniqueRuleMap.values()));
-      }
-
-      // Append new rules to active rules list
-      setRules(prev => [...prev, ...newRules]);
-      
-      // Dispatch transformed dataset & summary
-      dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
-      dispatch({ type: 'SET_FIELD', field: 'transformSummary', value: data.summary });
-      dispatch({ type: 'SET_FIELD', field: 'isTransformedSaved', value: false });
-
-      toast(`Transformed data successfully! ${data.summary?.total_modifications || 0} replacements made.`, 'ok');
-    } catch (err: any) {
-      toast(err.message, 'err');
-    } finally {
-      setIsParsingFile(false);
-      hideLoad();
-    }
-  }
-
-  // 2. Run AI Transformation & Extract Rule to Panel
-  async function handleAITransform() {
-    if (!aiPrompt.trim()) {
-      toast('Please enter natural language instructions.', 'err');
-      return;
-    }
-    if (!state.projectId) {
-      toast('Project ID not found. Please extract data first.', 'err');
-      return;
-    }
-
-    setIsGeneratingAIRule(true);
-    showLoad('AI is Analyzing Instructions...', 'Applying AI transformation rules...');
-
-    try {
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/ai-apply-mappings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: state.projectId,
-          target_object: state.obj,
-          prompt: aiPrompt,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Failed to apply AI transformation');
-      }
-
-      const data = await res.json();
-      const pythonScript = data.ai_rules?.[0]?.Target_Data || data.summary?.ai_rules?.[0]?.Target_Data || '';
-
-      const newAIRule: TransformRuleItem = {
-        id: `rule_nlp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        source: 'nlp',
-        field: 'AI Script',
-        pythonCode: pythonScript,
-        description: aiPrompt.trim(),
-        enabled: true,
-      };
-
-      setRules(prev => [...prev, newAIRule]);
-
-      const updatedSummary = { ...data.summary, ai_rules: data.ai_rules };
-      dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
-      dispatch({ type: 'SET_FIELD', field: 'transformSummary', value: updatedSummary });
-      dispatch({ type: 'SET_FIELD', field: 'isTransformedSaved', value: false });
-
-      setAiPrompt('');
-      toast(`AI Transformation successful! Parsed rules added to panel.`, 'ok');
-    } catch (err: any) {
-      toast(err.message, 'err');
-    } finally {
-      setIsGeneratingAIRule(false);
-      hideLoad();
-    }
-  }
 
   // 1. Reactive Batch Application Helper
   async function applyRulesBatch(targetRules: TransformRuleItem[]) {
