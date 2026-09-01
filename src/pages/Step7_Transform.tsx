@@ -295,9 +295,11 @@ function TransformationReportCard({
                           </td>
                           <td className="py-2 px-3 text-violet-600 dark:text-violet-400 font-bold">
                             <div className="inline-flex items-center gap-1">
-                              {isPrimaryKeyField(item.field) && (
-                                <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
-                              )}
+                               {isPrimaryKeyField(item.field) && (
+                                 <span title="Primary Key Field" className="inline-flex items-center">
+                                   <Key className="w-3 h-3 text-amber-500 shrink-0" />
+                                 </span>
+                               )}
                               <span>{item.field}</span>
                             </div>
                           </td>

@@ -691,7 +691,9 @@ export function Step3Extract() {
                                   <td className="py-2 px-3 font-semibold text-[var(--text-primary)] whitespace-nowrap">
                                     <div className="flex items-center gap-1.5">
                                       {isPrimaryKeyField(row.field) && (
-                                        <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
+                                        <span title="Primary Key Field" className="inline-flex items-center">
+                                          <Key className="w-3 h-3 text-amber-500 shrink-0" />
+                                        </span>
                                       )}
                                       <span>{row.field}</span>
                                       {row.is_mandatory && (

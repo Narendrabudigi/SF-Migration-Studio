@@ -1727,7 +1727,9 @@ export function Step6Cleanse() {
                                     <span className="text-[10.5px] font-bold text-[var(--text-secondary)] font-mono">Row #{item.row}</span>
                                     {pkVal && (
                                       <span className="text-[9.5px] font-mono text-violet-600 dark:text-violet-400 font-bold inline-flex items-center gap-1">
-                                        <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" title="Primary Key" />
+                                        <span title="Primary Key" className="inline-flex items-center">
+                                          <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                        </span>
                                         <span>{pkKey}: {pkVal}</span>
                                       </span>
                                     )}
@@ -1748,7 +1750,9 @@ export function Step6Cleanse() {
                                 <td className="py-2 px-3 text-violet-600 dark:text-violet-400 font-bold">
                                   <div className="inline-flex items-center gap-1">
                                     {isPrimaryKeyField(item.field) && (
-                                      <Key className="w-3 h-3 text-amber-500 shrink-0" title="Primary Key Field" />
+                                      <span title="Primary Key Field" className="inline-flex items-center">
+                                        <Key className="w-3 h-3 text-amber-500 shrink-0" />
+                                      </span>
                                     )}
                                     <span>{item.field}</span>
                                   </div>

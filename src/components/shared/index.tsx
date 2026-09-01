@@ -114,7 +114,7 @@ const btnStyles: Record<BtnVariant, string> = {
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: BtnVariant;
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'lg';
   icon?: ReactNode;
 }
 export function Button({ variant = 'primary', size = 'md', icon, children, className, disabled, ...props }: ButtonProps) {
@@ -122,7 +122,7 @@ export function Button({ variant = 'primary', size = 'md', icon, children, class
     <button
       className={cn(
         'inline-flex items-center justify-center gap-1.5 font-medium rounded-md transition-all duration-150 whitespace-nowrap cursor-pointer select-none active:scale-[0.98]',
-        size === 'sm' ? 'px-3 py-1.5 text-[12px]' : 'px-4 py-2 text-[13px]',
+        size === 'sm' ? 'px-3 py-1.5 text-[12px]' : size === 'lg' ? 'px-5 py-2.5 text-[14px]' : 'px-4 py-2 text-[13px]',
         btnStyles[variant],
         disabled && 'opacity-40 cursor-not-allowed pointer-events-none',
         className
@@ -221,7 +221,9 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
                 >
                   <div className="inline-flex items-center gap-1.5">
                     {isPk && (
-                      <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" title="Primary Key Field" />
+                      <span title="Primary Key Field" className="inline-flex items-center">
+                        <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" />
+                      </span>
                     )}
                     <span>{col}</span>
                   </div>
