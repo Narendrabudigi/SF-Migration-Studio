@@ -46,15 +46,36 @@ class SaveSourceFieldsRequest(BaseModel):
 
 @router.get("/systems")
 def get_systems():
-    client = supabase_service.get_client()
-    res = client.table("source_systems").select("*").execute()
-    return {"systems": res.data}
+    try:
+        client = supabase_service.get_client()
+        res = client.table("source_systems").select("*").execute()
+        return {"systems": res.data}
+    except Exception as e:
+        logger.warning(f"Failed to fetch source systems from Supabase: {e}")
+        return {"systems": [
+            {"id": "sap-s4", "name": "SAP S/4HANA"},
+            {"id": "oracle-ebs", "name": "Oracle EBS"},
+            {"id": "workday", "name": "Workday HCM"},
+            {"id": "legacy-csv", "name": "Legacy CSV Extract"}
+        ]}
 
 @router.get("/objects")
 def get_objects():
-    client = supabase_service.get_client()
-    res = client.table("sf_objects").select("*").execute()
-    return {"objects": res.data}
+    try:
+        client = supabase_service.get_client()
+        res = client.table("sf_objects").select("*").execute()
+        return {"objects": res.data}
+    except Exception as e:
+        logger.warning(f"Failed to fetch SF objects from Supabase: {e}")
+        return {"objects": [
+            {"id": "bio-info", "name": "Biographical Info"},
+            {"id": "personal-info", "name": "Personal Info"},
+            {"id": "emp-details", "name": "Employment Details"},
+            {"id": "job-info", "name": "Job Info"},
+            {"id": "customer", "name": "CUSTOMER"},
+            {"id": "vendor", "name": "VENDOR"}
+        ]}
+
 
 @router.post("/source_fields")
 def save_source_fields(req: SaveSourceFieldsRequest):
