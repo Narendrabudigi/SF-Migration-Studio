@@ -384,15 +384,60 @@ export function Step7Transform() {
   const [tablePages, setTablePages] = useState<Record<string, number>>({});
   const extractedTables = state.extractedTables || [];
 
-  // Initialize selectedOutputTables when extractedTables are available
+  // Load saved transform rules for current project and target object on mount
   useEffect(() => {
-    if (extractedTables.length > 0) {
-      setSelectedOutputTables(new Set(extractedTables.map((t: any) => t.table_name)));
+    if (!state.projectId) return;
+
+    const loadSavedTransformRules = async () => {
+      try {
+        const objName = state.obj || 'Biographical Info';
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const json = await res.json();
+          const loadedRules = Array.isArray(json.dynamic_rules) ? json.dynamic_rules : [];
+          setRules(loadedRules);
+          dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: loadedRules });
+        }
+      } catch (err) {
+        console.error('Failed to load saved transform dynamic rules:', err);
+      }
+    };
+
+    loadSavedTransformRules();
+  }, [state.projectId, state.obj, dispatch]);
+
+  async function saveTransformRulesToDB(rulesToSave?: TransformRuleItem[]) {
+    if (!state.projectId) {
+      toast('No project selected to save rules', 'err');
+      return;
     }
-  }, [extractedTables.length]);
-  
+    const targetRules = Array.isArray(rulesToSave) ? rulesToSave : rules;
+    showLoad('Saving rules...', 'Persisting transform rules to database');
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/rules/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project_id: state.projectId,
+          target_object: state.obj,
+          rules: targetRules
+        })
+      });
+
+      if (!res.ok) throw new Error('Failed to save transform rules');
+
+      dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: targetRules });
+      hideLoad();
+      toast(`Saved ${targetRules.length} transform rule(s) to database successfully!`, 'ok');
+    } catch (err: any) {
+      hideLoad();
+      toast(err.message || 'Failed to save transform rules', 'err');
+    }
+  }
+
   // File upload handler
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+
     if (e.target.files && e.target.files.length > 0) {
       setMappingFile(e.target.files[0]);
     }
@@ -587,11 +632,27 @@ export function Step7Transform() {
     applyRulesBatch(updated);
   };
 
-  const deleteRule = (id: string) => {
+  const deleteRule = async (id: string) => {
     const updated = rules.filter(r => r.id !== id);
     setRules(updated);
     applyRulesBatch(updated);
-    toast('Rule removed', 'info');
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj,
+            rules: updated
+          })
+        });
+        dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: updated });
+      } catch (err) {
+        console.error('Failed to sync deleted rule to database:', err);
+      }
+    }
+    toast('Rule removed and updated in database', 'info');
   };
 
   const toggleAllRules = (enabled: boolean) => {
@@ -600,10 +661,26 @@ export function Step7Transform() {
     applyRulesBatch(updated);
   };
 
-  const clearAllRules = () => {
+  const clearAllRules = async () => {
     setRules([]);
     applyRulesBatch([]);
-    toast('All rules cleared', 'info');
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj,
+            rules: []
+          })
+        });
+        dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: [] });
+      } catch (err) {
+        console.error('Failed to clear rules in database:', err);
+      }
+    }
+    toast('All rules cleared from database', 'info');
   };
 
   async function saveToDatabase() {
@@ -775,13 +852,23 @@ export function Step7Transform() {
                   subtitle="Tick/untick rules to enable or delete unwanted rules" 
                   icon={<Layers className="w-4 h-4 text-violet-500" />}
                 >
-                  <div className="ml-auto flex items-center gap-1.5">
+                  <div className="ml-auto flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Save className="w-3.5 h-3.5 text-violet-500" />}
+                      onClick={() => saveTransformRulesToDB()}
+                      disabled={rules.length === 0}
+                    >
+                      Save Rules
+                    </Button>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
                       {activeRulesCount} Active / {rules.length} Total
                     </span>
                   </div>
                 </CardHeader>
                 <CardBody className="p-3 flex-1 flex flex-col justify-between space-y-3">
+
                   
                   {/* Controls Header */}
                   {rules.length > 0 && (

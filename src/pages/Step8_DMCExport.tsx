@@ -11,7 +11,7 @@ import { ArrowLeft, ArrowRight, Package, Bot, Download } from 'lucide-react';
 
 function genCSV(rows: Record<string, string>[], cols: string[], obj: string): string {
   const hdr = [
-    '# SAP S/4HANA DMC Preload File',
+    '# SuccessFactors Preload File',
     '# Template: ' + (OBJS[obj]?.dmc || ''),
     '# Object: ' + obj,
     '# Generated: ' + new Date().toISOString(),

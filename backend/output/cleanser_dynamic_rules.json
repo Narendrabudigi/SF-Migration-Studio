@@ -27,20 +27,6 @@
       "target_object": "Biographical Info"
     },
     {
-      "created_at": "2026-08-20T10:22:59.061446+00:00",
-      "description": "Ok to rehire should be of yes or no only, change others into it",
-      "error_message": "Ok to rehire must be either 'yes' or 'no'",
-      "field": "okToRehire",
-      "id": "BIO_1",
-      "label": "Ok to Rehire Validation",
-      "priority": 100,
-      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
-      "python_code": "str(row.get('okToRehire', '')).strip().lower() not in ['yes', 'no']",
-      "severity": "ERROR",
-      "source": "cleanser_dynamic_rule",
-      "target_object": "Biographical Info"
-    },
-    {
       "created_at": "2026-08-27T06:22:35.536639+00:00",
       "description": "The last name must be stored entirely in uppercase characters.",
       "error_message": "Last name must be in uppercase.",
@@ -53,6 +39,34 @@
       "severity": "ERROR",
       "source": "validation_dynamic_rule",
       "target_object": "Personal Info"
+    },
+    {
+      "created_at": "2026-09-09T13:12:56.481425+00:00",
+      "description": "remove EXT- from userid",
+      "error_message": "User ID contains 'EXT-' and should be removed.",
+      "field": "userId",
+      "id": "DYNAMIC_280b19f5",
+      "label": "User ID should not contain 'EXT-'",
+      "priority": 100,
+      "project_id": "76c28050-ce9f-4598-8ee9-189be4405f07",
+      "python_code": "'EXT-' in str(row.get('userId', '')).strip()",
+      "severity": "ERROR",
+      "source": "cleanser_dynamic_rule",
+      "target_object": "Biographical Info"
+    },
+    {
+      "created_at": "2026-09-10T04:19:45.473529+00:00",
+      "description": "trim nativePreferredLang into three letters",
+      "error_message": "Native Preferred Language must be exactly 3 letters long.",
+      "field": "nativePreferredLang",
+      "id": "DYNAMIC_aac510fd",
+      "label": "Validate Native Preferred Language Length",
+      "priority": 100,
+      "project_id": "f642b630-450e-4020-a562-21cba608bf79",
+      "python_code": "len(str(row.get('nativePreferredLang', '')).strip()) != 3",
+      "severity": "ERROR",
+      "source": "validation_dynamic_rule",
+      "target_object": "Biographical Info"
     }
   ],
   "version": "1.0"

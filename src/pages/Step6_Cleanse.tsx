@@ -1439,10 +1439,32 @@ export function Step6Cleanse() {
                               <div>
                                 <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--border)] mb-2">
                                   <div className="font-mono text-[11px] font-bold text-[var(--text-primary)] truncate">{group.rule_code}</div>
-                                  <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] shrink-0 border border-[var(--border)]">{group.count} rows</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]">{group.count} rows</span>
+                                    {group.items.length > 3 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleGroup(gKey)}
+                                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-violet-50 hover:bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:hover:bg-violet-900/60 dark:text-violet-300 border border-violet-200 dark:border-violet-800 transition-colors cursor-pointer"
+                                        title={isExp ? "Collapse to 3 rows" : `View all ${group.count} rows`}
+                                      >
+                                        {isExp ? (
+                                          <>
+                                            <span>Collapse</span>
+                                            <ChevronUp className="w-3 h-3" />
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span>See all</span>
+                                            <ChevronDown className="w-3 h-3" />
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 {group.field && <div className="text-[10px] text-[var(--text-tertiary)] font-mono mb-2">Field: <strong className="text-[var(--text-primary)]">{group.field}</strong></div>}
-                                <div className="space-y-1 font-mono text-[10px]">
+                                <div className={`space-y-1 font-mono text-[10px] ${isExp ? 'max-h-[360px] overflow-y-auto scrollbar-thin pr-1 border border-[var(--border)] rounded-md p-1.5 bg-[var(--bg-tertiary)]/20' : ''}`}>
                                   {itemsDisp.map((item, idx) => (
                                     <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-[var(--bg-tertiary)]/60 gap-1.5">
                                       <span className="text-[var(--text-tertiary)] shrink-0 font-bold">Row #{item.row}</span>
@@ -1456,8 +1478,22 @@ export function Step6Cleanse() {
                                 </div>
                               </div>
                               {group.items.length > 3 && (
-                                <button onClick={() => toggleGroup(gKey)} className="w-full text-center text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1 cursor-pointer">
-                                  {isExp ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>+ {group.items.length - 3} more <ChevronDown className="w-3 h-3" /></>}
+                                <button 
+                                  type="button"
+                                  onClick={() => toggleGroup(gKey)} 
+                                  className={`w-full text-center text-[10px] font-bold text-violet-600 dark:text-violet-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1.5 cursor-pointer py-1 ${isExp ? 'bg-violet-50/40 dark:bg-violet-950/20 rounded-b mt-1' : ''}`}
+                                >
+                                  {isExp ? (
+                                    <>
+                                      <ChevronUp className="w-3 h-3" />
+                                      <span>Collapse records (Show less)</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>+ {group.items.length - 3} more (See all {group.items.length} records)</span>
+                                      <ChevronDown className="w-3 h-3" />
+                                    </>
+                                  )}
                                 </button>
                               )}
                             </div>
@@ -1489,10 +1525,32 @@ export function Step6Cleanse() {
                               <div>
                                 <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--border)] mb-2">
                                   <div className="font-mono text-[11px] font-bold text-[var(--text-primary)] truncate">{group.rule_code}</div>
-                                  <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] shrink-0 border border-[var(--border)]">{group.count} rows</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]">{group.count} rows</span>
+                                    {group.items.length > 3 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleGroup(gKey)}
+                                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 hover:bg-teal-100 text-teal-700 dark:bg-teal-950/50 dark:hover:bg-teal-900/60 dark:text-teal-300 border border-teal-200 dark:border-teal-800 transition-colors cursor-pointer"
+                                        title={isExp ? "Collapse to 3 rows" : `View all ${group.count} rows`}
+                                      >
+                                        {isExp ? (
+                                          <>
+                                            <span>Collapse</span>
+                                            <ChevronUp className="w-3 h-3" />
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span>See all</span>
+                                            <ChevronDown className="w-3 h-3" />
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 {group.field && <div className="text-[10px] text-[var(--text-tertiary)] font-mono mb-2">Field: <strong className="text-[var(--text-primary)]">{group.field}</strong></div>}
-                                <div className="space-y-1 font-mono text-[10px]">
+                                <div className={`space-y-1 font-mono text-[10px] ${isExp ? 'max-h-[360px] overflow-y-auto scrollbar-thin pr-1 border border-[var(--border)] rounded-md p-1.5 bg-[var(--bg-tertiary)]/20' : ''}`}>
                                   {itemsDisp.map((item, idx) => (
                                     <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-[var(--bg-tertiary)]/60 gap-1.5">
                                       <span className="text-[var(--text-tertiary)] shrink-0 font-bold">Row #{item.row}</span>
@@ -1506,8 +1564,22 @@ export function Step6Cleanse() {
                                 </div>
                               </div>
                               {group.items.length > 3 && (
-                                <button onClick={() => toggleGroup(gKey)} className="w-full text-center text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1 cursor-pointer">
-                                  {isExp ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>+ {group.items.length - 3} more <ChevronDown className="w-3 h-3" /></>}
+                                <button 
+                                  type="button"
+                                  onClick={() => toggleGroup(gKey)} 
+                                  className={`w-full text-center text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1.5 cursor-pointer py-1 ${isExp ? 'bg-teal-50/40 dark:bg-teal-950/20 rounded-b mt-1' : ''}`}
+                                >
+                                  {isExp ? (
+                                    <>
+                                      <ChevronUp className="w-3 h-3" />
+                                      <span>Collapse records (Show less)</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>+ {group.items.length - 3} more (See all {group.items.length} records)</span>
+                                      <ChevronDown className="w-3 h-3" />
+                                    </>
+                                  )}
                                 </button>
                               )}
                             </div>
@@ -1539,10 +1611,32 @@ export function Step6Cleanse() {
                               <div>
                                 <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--border)] mb-2">
                                   <div className="font-mono text-[11px] font-bold text-[var(--text-primary)] truncate">{group.rule_code}</div>
-                                  <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] shrink-0 border border-[var(--border)]">{group.count} rows</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[9.5px] px-1.5 py-0.5 rounded font-mono font-bold bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border border-[var(--border)]">{group.count} rows</span>
+                                    {group.items.length > 3 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleGroup(gKey)}
+                                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition-colors cursor-pointer"
+                                        title={isExp ? "Collapse to 3 rows" : `View all ${group.count} rows`}
+                                      >
+                                        {isExp ? (
+                                          <>
+                                            <span>Collapse</span>
+                                            <ChevronUp className="w-3 h-3" />
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span>See all</span>
+                                            <ChevronDown className="w-3 h-3" />
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                                 {group.field && <div className="text-[10px] text-[var(--text-tertiary)] font-mono mb-2">Field: <strong className="text-[var(--text-primary)]">{group.field}</strong></div>}
-                                <div className="space-y-1 font-mono text-[10px]">
+                                <div className={`space-y-1 font-mono text-[10px] ${isExp ? 'max-h-[360px] overflow-y-auto scrollbar-thin pr-1 border border-[var(--border)] rounded-md p-1.5 bg-[var(--bg-tertiary)]/20' : ''}`}>
                                   {itemsDisp.map((item, idx) => (
                                     <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-[var(--bg-tertiary)]/60 gap-1.5">
                                       <span className="text-[var(--text-tertiary)] shrink-0 font-bold">Row #{item.row}</span>
@@ -1556,8 +1650,22 @@ export function Step6Cleanse() {
                                 </div>
                               </div>
                               {group.items.length > 3 && (
-                                <button onClick={() => toggleGroup(gKey)} className="w-full text-center text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1 cursor-pointer">
-                                  {isExp ? <>Show less <ChevronUp className="w-3 h-3" /></> : <>+ {group.items.length - 3} more <ChevronDown className="w-3 h-3" /></>}
+                                <button 
+                                  type="button"
+                                  onClick={() => toggleGroup(gKey)} 
+                                  className={`w-full text-center text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline pt-2 border-t border-[var(--border)] flex items-center justify-center gap-1.5 cursor-pointer py-1 ${isExp ? 'bg-emerald-50/40 dark:bg-emerald-950/20 rounded-b mt-1' : ''}`}
+                                >
+                                  {isExp ? (
+                                    <>
+                                      <ChevronUp className="w-3 h-3" />
+                                      <span>Collapse records (Show less)</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>+ {group.items.length - 3} more (See all {group.items.length} records)</span>
+                                      <ChevronDown className="w-3 h-3" />
+                                    </>
+                                  )}
                                 </button>
                               )}
                             </div>

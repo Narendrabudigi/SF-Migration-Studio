@@ -1,4 +1,4 @@
-# Logs
+# Logs & Diagnostics
 logs
 *.log
 npm-debug.log*
@@ -6,31 +6,56 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+Output.txt
+chat.txt
 
+# Dependencies & Build Outputs
 node_modules
 dist
 dist-ssr
 *.local
+
+# Environment Variables & Sensitive Credentials
 .env
+.env.*
+!.env.example
+manifest.yml
+manifest.*.yml
+!manifest.example.yml
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
+# Python Environments & Cache
 backend/venv/
 venv/
-.env
+.venv/
+env/
 *.pyc
 backend/*.pyc
 __pycache__/
 **/__pycache__/
 *.pyo
 *.pyd
+.pytest_cache/
+.ruff_cache/
 
+# Editor & OS Artifacts
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary / Scratch Scripts & Files
+*.tmp
+et --hard*
+fix_layout.cjs
+refactor_layout.cjs
+replace_fetch.cjs
+
+# Test Datasets & Output Reports
+backend/output/dataset_*
+backend/output/*_validation_report.json

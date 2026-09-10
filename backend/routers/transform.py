@@ -216,3 +216,105 @@ def apply_batch_transform_rules(req: BatchTransformRequest):
         "summary": summary
     }
 
+
+class SaveTransformRulesRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: list
+
+
+@router.post("/rules/save")
+def save_transform_rules(req: SaveTransformRulesRequest):
+    try:
+        client = supabase_service.get_client()
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+        if not res_obj.data:
+            res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+        if not res_obj.data:
+            raise HTTPException(400, f"SuccessFactors object '{req.target_object}' not found")
+        object_id = res_obj.data[0]["id"]
+
+        tagged_rules = []
+        for r in req.rules:
+            if isinstance(r, dict):
+                r_copy = dict(r)
+                r_copy["source"] = "transform_dynamic_rule"
+                r_copy["phase"] = "transform"
+                if not r_copy.get("id"):
+                    import uuid
+                    r_copy["id"] = f"DYNAMIC_TRF_{uuid.uuid4().hex[:8]}"
+                tagged_rules.append(r_copy)
+            else:
+                tagged_rules.append(r)
+
+        existing_rules = []
+        try:
+            res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+            if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                existing_rules = res_dr.data[0]["payload"]
+        except Exception:
+            pass
+
+        other_rules = [
+            r for r in existing_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("validation_dynamic_rule", "cleanser_dynamic_rule", "harmonization_dynamic_rule")
+                or r.get("phase") in ("validate", "cleanser", "harmonize")
+                or str(r.get("id", "")).startswith("DYNAMIC_VAL_")
+                or str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+                or str(r.get("id", "")).startswith("DYNAMIC_HARM_")
+            )
+        ]
+
+        combined = other_rules + tagged_rules
+        client.table("dynamic_rules").delete().eq("project_id", req.project_id).eq("object_id", object_id).execute()
+        if combined:
+            client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": combined
+            }).execute()
+
+        return {"status": "success", "message": "Transform dynamic rules saved successfully."}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to save transform rules: {e}")
+
+
+@router.get("/load/{project_id}")
+def load_saved_transform(project_id: str, target_object: Optional[str] = None):
+    try:
+        client = supabase_service.get_client()
+        res_obj = None
+        if target_object:
+            res_obj = client.table("sf_objects").select("id").ilike("name", target_object).execute()
+            
+        object_id = res_obj.data[0]["id"] if (res_obj and res_obj.data) else None
+
+        dynamic_rules = []
+        try:
+            dr_query = client.table("dynamic_rules").select("payload").eq("project_id", project_id)
+            if object_id:
+                dr_query = dr_query.eq("object_id", object_id)
+            res_dr = dr_query.order("created_at", desc=True).limit(1).execute()
+            if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                dynamic_rules = res_dr.data[0]["payload"]
+        except Exception:
+            pass
+
+        trf_rules = [
+            r for r in dynamic_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("transform_dynamic_rule", "transform")
+                or r.get("phase") == "transform"
+                or str(r.get("id", "")).startswith("DYNAMIC_TRF_")
+            )
+        ]
+
+        return {
+            "status": "success",
+            "dynamic_rules": trf_rules,
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load transform rules: {e}")
+
+

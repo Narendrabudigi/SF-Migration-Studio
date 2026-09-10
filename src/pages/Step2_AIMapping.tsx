@@ -364,11 +364,11 @@ export function Step2AIMapping() {
 
           {/* Target Fields Card */}
           <Card className="flex flex-col flex-1 min-h-0">
-            <CardHeader title={`SAP Target (${sapFields.length})`} subtitle={obj?.label || state.obj} />
+            <CardHeader title={`SF Target (${sapFields.length})`} subtitle={obj?.label || state.obj} />
             <div className="px-3 pt-2">
               <input
                 type="text"
-                placeholder="Search SAP fields..."
+                placeholder="Search SF fields..."
                 value={targetSearch}
                 onChange={(e) => setTargetSearch(e.target.value)}
                 className="w-full rounded-md border border-[var(--border-light)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-[10.5px] text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
@@ -397,7 +397,7 @@ export function Step2AIMapping() {
 
         {/* Middle Column */}
         <GridCol span={9}>
-          <PageHeader title="Step 2 — AI-Powered Field Mapping" subtitle="AI Engine semantically maps source fields to SAP S/4HANA fields with confidence scoring">
+          <PageHeader title="Step 2 — AI-Powered Field Mapping" subtitle="AI Engine semantically maps source fields to SuccessFactors fields with confidence scoring">
             <Button variant="secondary" icon={<ArrowLeft className="w-3.5 h-3.5" />} onClick={() => navigate('/')}>Back</Button>
             <div title={state.headers.length === 0 ? "You must load Source Fields in Step 1 before generating an AI Mapping." : ""}>
               <Button variant="cyan" icon={<Bot className="w-3.5 h-3.5" />} onClick={doAIMap} disabled={state.headers.length === 0}>Generate AI Mapping</Button>
@@ -435,7 +435,7 @@ export function Step2AIMapping() {
             <div className="px-3 pt-2">
               <input
                 type="text"
-                placeholder="Search mapped fields (Source or SAP)..."
+                placeholder="Search mapped fields (Source or SF)..."
                 value={mappingSearch}
                 onChange={(e) => setMappingSearch(e.target.value)}
                 className="w-full rounded-md border border-[var(--border-light)] bg-[var(--bg-tertiary)] px-2.5 py-1.5 text-[10.5px] text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
@@ -446,7 +446,7 @@ export function Step2AIMapping() {
                 <>
                   {/* Header */}
                   <div className="grid grid-cols-[1fr_30px_1fr_70px_140px_28px] gap-2 px-2 pb-2 mb-2 border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-wider text-[var(--text-tertiary)]">
-                    <span>Source</span><span></span><span>SAP Field</span><span>Conf</span><span>Transform</span><span></span>
+                    <span>Source</span><span></span><span>SF Field</span><span>Conf</span><span>Transform</span><span></span>
                   </div>
                   {/* Rows */}
                   <div className="space-y-1.5 max-h-[calc(100vh-250px)] overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent pr-2">
@@ -585,7 +585,7 @@ export function Step2AIMapping() {
                   </div>
                 </>
               ) : (
-                <EmptyState icon={<Bot className="w-10 h-10" />} message={`Click Generate AI Mapping — The AI Engine will semantically match your ${state.headers.length} source fields to SAP ${obj?.label || 'Customer Master (XD01)'} field definitions`} />
+                <EmptyState icon={<Bot className="w-10 h-10" />} message={`Click Generate AI Mapping — The AI Engine will semantically match your ${state.headers.length} source fields to SF ${obj?.label || 'Biographical Info'} field definitions`} />
               )}
             </CardBody>
           </Card>

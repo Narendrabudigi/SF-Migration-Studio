@@ -706,12 +706,12 @@ Return a JSON array where each element has:
   "id": "DYNAMIC_HARM_<N>",
   "label": "<short descriptive title of the rule>",
   "description": "<detailed rule description>",
-  "target_field": "<target column name from the dataset or object>",
-  "python_code": "def transform(value, row):\\n    ..."
+  "target_field": "<EXACT column name selected from dataset columns>",
+  "python_code": "def transform(value, row):\n    ..."
 }}
 
 CRITICAL RULES:
-1. `target_field` MUST be a relevant field name from the dataset columns or target object.
+1. `target_field` MUST be selected directly from the exact dataset columns above (e.g. use `firstName` instead of `Given Name`, `lastName` instead of `Family Name`).
 2. `python_code` must be a COMPLETE, VALID Python function starting with `def transform(value, row):`.
 3. Return ONLY the JSON array, no markdown wrappers."""
 
@@ -726,6 +726,41 @@ CRITICAL RULES:
             rules = [rules] if isinstance(rules, dict) else []
 
         cleaned_rules = []
+        field_aliases_map = {
+            "givenname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+            "given name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+            "firstname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+            "first name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+            "familyname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+            "family name": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+            "lastname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+            "last name": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+            "surname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+            "userid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "user id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "employee reference": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number"],
+            "employeereference": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number"],
+            "worker number": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "workernumber": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "worker id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "workerid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+            "employee id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr"],
+            "employeeid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr"],
+            "pernr": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id"],
+            "personidexternal": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+            "person id": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+            "person id external": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+            "preferredname": ["preferredname", "preferred_name", "preferred-name", "dispname", "displayname", "nickname"],
+            "preferred name": ["preferredname", "preferred_name", "preferred-name", "dispname", "displayname", "nickname"],
+            "preferredlanguage": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
+            "preferred language": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
+            "country": ["country", "countryofbirth", "country_of_birth", "nationality", "land1"],
+            "country of birth": ["countryofbirth", "country_of_birth", "country", "nationality", "land1"],
+            "date of birth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+            "dateofbirth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+            "dob": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+        }
+
         for idx, r in enumerate(rules, 1):
             if not isinstance(r, dict):
                 continue
@@ -735,6 +770,44 @@ CRITICAL RULES:
             prompt_str = prompts[min(idx - 1, len(prompts) - 1)] if prompts else ""
 
             tf = str(r.get("target_field") or "").strip()
+
+            matched_col = None
+            if actual_columns and tf:
+                tf_norm = tf.lower().replace("-", "").replace("_", "").replace(" ", "")
+                # 1. Direct or normalized match against actual_columns
+                for col in actual_columns:
+                    col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
+                    if col_norm == tf_norm or str(col).upper() == tf.upper():
+                        matched_col = col
+                        break
+
+                # 2. Field Synonym / Alias match against actual_columns
+                if not matched_col:
+                    aliases = field_aliases_map.get(tf.lower()) or field_aliases_map.get(tf_norm) or []
+                    for alias in aliases:
+                        alias_norm = alias.lower().replace("-", "").replace("_", "").replace(" ", "")
+                        for col in actual_columns:
+                            col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
+                            if col_norm == alias_norm:
+                                matched_col = col
+                                break
+                        if matched_col:
+                            break
+
+            # 3. Whole-word token search in prompt string ONLY if target_field was not resolved yet
+            if not matched_col and actual_columns and prompt_str:
+                import re
+                prompt_words = set(re.findall(r'\b[a-zA-Z0-9_-]+\b', prompt_str.lower()))
+                for col in actual_columns:
+                    c_str = str(col)
+                    c_norm = c_str.lower().replace("-", "").replace("_", "")
+                    if c_norm in prompt_words or c_str.lower() in prompt_words:
+                        matched_col = c_str
+                        break
+
+            if matched_col:
+                tf = matched_col
+
             if not tf and actual_columns:
                 tf = actual_columns[0]
             elif not tf:
@@ -1019,29 +1092,25 @@ def load_harmonized_data(project_id: str, target_object: Optional[str] = None):
             rows = raw_payload.get("rows", [])
             tables = raw_payload.get("tables", [])
             custom_prompts = raw_payload.get("custom_prompts", [])
-            dynamic_rules = raw_payload.get("dynamic_rules")
         elif isinstance(raw_payload, list):
             rows = raw_payload
 
-        # Only fallback to dynamic_rules table if not explicitly present in harmonized_data payload
-        if dynamic_rules is None:
-            try:
-                obj_id = res.data[0].get("object_id")
-                if obj_id:
-                    res_dr = client.table("dynamic_rules").select("payload").eq("project_id", project_id).eq("object_id", obj_id).order("created_at", desc=True).limit(1).execute()
-                    if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
-                        dynamic_rules = res_dr.data[0]["payload"]
-            except Exception:
-                pass
-
-        if not dynamic_rules:
-            dynamic_rules = []
+        # Always fetch real-time dynamic rules directly from dynamic_rules table as sole source of truth
+        dynamic_rules = []
+        try:
+            obj_id = res.data[0].get("object_id")
+            if obj_id:
+                res_dr = client.table("dynamic_rules").select("payload").eq("project_id", project_id).eq("object_id", obj_id).order("created_at", desc=True).limit(1).execute()
+                if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                    dynamic_rules = res_dr.data[0]["payload"]
+        except Exception as e:
+            logger.warning(f"Could not load dynamic_rules table in load_harmonized_data: {e}")
 
         # Filter strictly for harmonization dynamic rules
         harmonize_rules = [
             r for r in dynamic_rules
             if isinstance(r, dict) and (
-                r.get("source") == "harmonization_dynamic_rule"
+                r.get("source") in ("harmonization_dynamic_rule", "harmonize")
                 or r.get("phase") == "harmonize"
                 or str(r.get("id", "")).startswith("DYNAMIC_HARM_")
             )
@@ -1058,3 +1127,67 @@ def load_harmonized_data(project_id: str, target_object: Optional[str] = None):
     except Exception as e:
         logger.error(f"Failed to load harmonized data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load harmonized data: {str(e)}")
+
+
+class SaveHarmonizeRulesRequest(BaseModel):
+    project_id: str
+    target_object: str
+    rules: list
+
+
+@router.post("/harmonize/rules/save")
+def save_harmonize_rules(req: SaveHarmonizeRulesRequest):
+    try:
+        client = supabase_service.get_client()
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+        if not res_obj.data:
+            res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+        if not res_obj.data:
+            raise HTTPException(400, f"SuccessFactors object '{req.target_object}' not found")
+        object_id = res_obj.data[0]["id"]
+
+        tagged_rules = []
+        for r in req.rules:
+            if isinstance(r, dict):
+                r_copy = dict(r)
+                r_copy["source"] = "harmonization_dynamic_rule"
+                r_copy["phase"] = "harmonize"
+                if not r_copy.get("id"):
+                    r_copy["id"] = f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}"
+                tagged_rules.append(r_copy)
+            else:
+                tagged_rules.append(r)
+
+        existing_rules = []
+        try:
+            res_dr = client.table("dynamic_rules").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+            if res_dr.data and isinstance(res_dr.data[0].get("payload"), list):
+                existing_rules = res_dr.data[0]["payload"]
+        except Exception:
+            pass
+
+        other_rules = [
+            r for r in existing_rules
+            if isinstance(r, dict) and (
+                r.get("source") in ("validation_dynamic_rule", "cleanser_dynamic_rule", "transform_dynamic_rule")
+                or r.get("phase") in ("validate", "cleanser", "transform")
+                or str(r.get("id", "")).startswith("DYNAMIC_VAL_")
+                or str(r.get("id", "")).startswith("DYNAMIC_CLS_")
+                or str(r.get("id", "")).startswith("DYNAMIC_TRF_")
+            )
+        ]
+
+        combined = other_rules + tagged_rules
+        client.table("dynamic_rules").delete().eq("project_id", req.project_id).eq("object_id", object_id).execute()
+        if combined:
+            client.table("dynamic_rules").insert({
+                "project_id": req.project_id,
+                "object_id": object_id,
+                "payload": combined
+            }).execute()
+
+        return {"status": "success", "message": "Harmonization dynamic rules saved successfully."}
+    except Exception as e:
+        logger.error(f"Failed to save harmonize dynamic rules: {e}")
+        raise HTTPException(500, f"Failed to save harmonize dynamic rules: {e}")
+

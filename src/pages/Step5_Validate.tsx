@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
@@ -6,7 +6,7 @@ import { useLoading } from '@/components/ui/loading-overlay';
 import { OBJS } from '@/data/sap-schemas';
 import { dl } from '@/lib/utils';
 import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge, StatBox, StatsGrid, EmptyState } from '@/components/shared';
-import { ArrowLeft, ArrowRight, Search, Download, Upload, ListChecks, Save, Sparkles, Plus, Trash2, Zap, FileText, Pencil, Check, X, ChevronDown, ChevronUp, Key } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Search, Download, Upload, ListChecks, Save, Sparkles, Plus, Trash2, Zap, FileText, Pencil, Check, X, ChevronDown, ChevronUp, Key, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 
 const VALIDATE_API = import.meta.env.VITE_BACKEND_URL;
 
@@ -43,7 +43,40 @@ export function Step5Validate() {
   const report = (state.validationReport || []) as RuleReport[];
   const [uploadMeta, setUploadMeta] = useState<{ rows: number; cols: number } | null>(null);
   const [openActiveRulesAccordion, setOpenActiveRulesAccordion] = useState(false);
-  const [openResultsAccordion, setOpenResultsAccordion] = useState(false);
+  const [openResultsAccordion, setOpenResultsAccordion] = useState(true);
+
+  // Pagination & Filtering State for Validation Results
+  const [resultFilterStatus, setResultFilterStatus] = useState<'ALL' | 'ERROR' | 'WARN' | 'PASS'>('ALL');
+  const [resultSearchQuery, setResultSearchQuery] = useState('');
+  const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState<number>(50); // 50, 100, 250, 500, or 999999 for All
+
+  const filteredValidated = useMemo(() => {
+    return state.validated.filter((v) => {
+      if (resultFilterStatus !== 'ALL' && v.st !== resultFilterStatus) return false;
+      if (resultSearchQuery.trim()) {
+        const q = resultSearchQuery.toLowerCase();
+        const matchPk = (v.primary_key || '').toLowerCase().includes(q);
+        const matchIdx = String(v.idx + 1).includes(q);
+        const matchErrs = v.errs.some((e) => (e.f || '').toLowerCase().includes(q) || (e.m || '').toLowerCase().includes(q));
+        const matchWarns = v.warns.some((w) => (w.f || '').toLowerCase().includes(q) || (w.m || '').toLowerCase().includes(q));
+        const matchRow = Object.values(v.row || {}).some((val) => String(val || '').toLowerCase().includes(q));
+        return matchPk || matchIdx || matchErrs || matchWarns || matchRow;
+      }
+      return true;
+    });
+  }, [state.validated, resultFilterStatus, resultSearchQuery]);
+
+  const totalFiltered = filteredValidated.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / resultPageSize));
+  const safePage = Math.min(Math.max(1, resultPage), totalPages);
+
+  const displayedResults = useMemo(() => {
+    if (resultPageSize >= 99999) return filteredValidated;
+    const start = (safePage - 1) * resultPageSize;
+    return filteredValidated.slice(start, start + resultPageSize);
+  }, [filteredValidated, safePage, resultPageSize]);
+
 
   // Dynamic Rules State (Isolated to Validate)
   const [customPrompts, setCustomPrompts] = useState<string[]>(state.validationCustomPrompts || state.customPrompts || []);
@@ -685,17 +718,16 @@ export function Step5Validate() {
                       </div>
                     </div>
                     {r.failures.length > 0 && (
-                      <div className="mt-1.5 space-y-0.5">
-                        {r.failures.slice(0, 4).map((f, i) => (
-                          <div key={i} className="text-[10.5px] text-[var(--text-secondary)] font-mono">
-                            #{f.idx + 1} {state.validated[f.idx]?.primary_key ? `[PK: ${state.validated[f.idx].primary_key}]` : ''} <strong>{f.field}</strong>="{String(f.value).slice(0, 24)}" — {f.message}
+                      <div className="mt-2 space-y-1 max-h-[220px] overflow-y-auto pr-1 font-mono border-t border-[var(--border)] pt-2 scrollbar-thin">
+                        {r.failures.map((f, i) => (
+                          <div key={i} className="text-[10.5px] text-[var(--text-secondary)] font-mono flex items-start gap-1 py-0.5">
+                            <span className="text-red-500 font-bold">#{f.idx + 1}</span>
+                            {state.validated[f.idx]?.primary_key && (
+                              <span className="text-amber-600 dark:text-amber-400 font-bold">[PK: {state.validated[f.idx].primary_key}]</span>
+                            )}
+                            <span><strong className="text-red-500">{f.field}</strong>="{String(f.value).slice(0, 30)}" — {f.message}</span>
                           </div>
                         ))}
-                        {r.failures.length > 4 && (
-                          <div className="text-[10px] text-[var(--text-tertiary)]">
-                            +{r.failures.length - 4} more — see exported report
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
@@ -706,7 +738,7 @@ export function Step5Validate() {
         )}
 
         <Card>
-          <CardHeader title="Validation Results">
+          <CardHeader title={`Validation Results (${has ? state.validated.length : 0} total records)`}>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setOpenResultsAccordion(!openResultsAccordion)}
@@ -718,43 +750,168 @@ export function Step5Validate() {
             </div>
           </CardHeader>
           {openResultsAccordion && (
-            <CardBody>
+            <CardBody className="space-y-4">
               {has ? (
-                <div className="space-y-1.5">
-                  {state.validated.slice(0, 12).map((v, i) => (
-                    <div key={i} className="grid grid-cols-[80px_1fr_70px] gap-3 items-start px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/30">
-                      <div>
-                        <div className="font-mono text-[11px] text-primary-600 dark:text-primary-400">#{v.idx + 1}</div>
-                        <div className="text-[9.5px] text-[var(--text-tertiary)] mt-0.5 truncate flex items-center gap-0.5">
-                          {v.primary_key ? (
-                            <>
-                              <span title="Primary Key" className="inline-flex items-center">
-                                <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" />
-                              </span>
-                              <span className="font-semibold text-amber-600 dark:text-amber-400">PK: {v.primary_key}</span>
-                            </>
-                          ) : Object.values(v.row || {}).filter(Boolean).slice(0, 2).map(String).join(' · ').slice(0, 28)}
-                        </div>
-                      </div>
-                      <div className="space-y-0.5">
-                        {v.errs.slice(0, 2).map((e, ei) => (
-                          <div key={ei} className="text-[11px] text-red-600 dark:text-red-400">✗ <strong>{e.f}</strong>: {e.m}</div>
-                        ))}
-                        {v.warns.slice(0, 1).map((w, wi) => (
-                          <div key={wi} className="text-[11px] text-amber-600 dark:text-amber-400">⚠ <strong>{w.f}</strong>: {w.m}</div>
-                        ))}
-                        {v.st === 'PASS' && <div className="text-[11px] text-emerald-600 dark:text-emerald-400">✓ All rules passed</div>}
-                      </div>
-                      <Badge variant={v.st === 'ERROR' ? 'red' : v.st === 'WARN' ? 'amber' : 'green'} className="justify-self-end">{v.st}</Badge>
+                <>
+                  {/* Toolbar: Search, Status Filter Tabs, Page Size Selector */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border)]">
+                    {/* Status Filters */}
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                      {[
+                        { id: 'ALL', label: `All (${state.validated.length})`, variant: 'secondary' },
+                        { id: 'ERROR', label: `Errors (${eR})`, variant: 'red' },
+                        { id: 'WARN', label: `Warnings (${wR})`, variant: 'amber' },
+                        { id: 'PASS', label: `Passed (${pR})`, variant: 'green' },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            setResultFilterStatus(t.id as any);
+                            setResultPage(1);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all whitespace-nowrap ${
+                            resultFilterStatus === t.id
+                              ? t.id === 'ERROR'
+                                ? 'bg-red-600 text-white shadow-sm'
+                                : t.id === 'WARN'
+                                ? 'bg-amber-600 text-white shadow-sm'
+                                : t.id === 'PASS'
+                                ? 'bg-emerald-600 text-white shadow-sm'
+                                : 'bg-violet-600 text-white shadow-sm'
+                              : 'text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)]'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
                     </div>
-                  ))}
-                </div>
+
+                    {/* Search & Page Size controls */}
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1 sm:w-56">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                        <input
+                          type="text"
+                          value={resultSearchQuery}
+                          onChange={(e) => {
+                            setResultSearchQuery(e.target.value);
+                            setResultPage(1);
+                          }}
+                          placeholder="Search PK, row #, field or message..."
+                          className="w-full pl-8 pr-2.5 py-1 rounded-lg text-[10.5px] bg-[var(--bg-primary)] border border-[var(--border)] text-[var(--text-primary)] focus:outline-none focus:ring-1 focus:ring-violet-500"
+                        />
+                      </div>
+
+                      <select
+                        value={resultPageSize}
+                        onChange={(e) => {
+                          setResultPageSize(Number(e.target.value));
+                          setResultPage(1);
+                        }}
+                        className="px-2 py-1 text-[10.5px] rounded-lg bg-[var(--bg-primary)] border border-[var(--border)] text-[var(--text-secondary)] font-mono focus:outline-none"
+                      >
+                        <option value={25}>25 / page</option>
+                        <option value={50}>50 / page</option>
+                        <option value={100}>100 / page</option>
+                        <option value={250}>250 / page</option>
+                        <option value={500}>500 / page</option>
+                        <option value={999999}>All Records ({totalFiltered})</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Results Count Header */}
+                  <div className="flex items-center justify-between px-1 text-[11px] text-[var(--text-tertiary)] font-mono">
+                    <div>
+                      Showing <strong className="text-[var(--text-primary)]">{totalFiltered === 0 ? 0 : (safePage - 1) * resultPageSize + 1}</strong> – <strong className="text-[var(--text-primary)]">{Math.min(safePage * resultPageSize, totalFiltered)}</strong> of <strong className="text-[var(--text-primary)]">{totalFiltered}</strong> matching records
+                    </div>
+                    {totalPages > 1 && resultPageSize < 99999 && (
+                      <div>Page {safePage} of {totalPages}</div>
+                    )}
+                  </div>
+
+                  {/* Complete Results List (No 12-row hardcoded cap!) */}
+                  {displayedResults.length > 0 ? (
+                    <div className="space-y-1.5 max-h-[600px] overflow-y-auto pr-1 scrollbar-thin">
+                      {displayedResults.map((v, i) => (
+                        <div key={i} className="grid grid-cols-[90px_1fr_75px] gap-3 items-start px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/30 hover:bg-[var(--bg-tertiary)]/60 transition-colors">
+                          <div>
+                            <div className="font-mono text-[11px] font-bold text-primary-600 dark:text-primary-400">Row #{v.idx + 1}</div>
+                            <div className="text-[9.5px] text-[var(--text-tertiary)] mt-0.5 truncate flex items-center gap-0.5">
+                              {v.primary_key ? (
+                                <>
+                                  <span title="Primary Key" className="inline-flex items-center">
+                                    <Key className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                  </span>
+                                  <span className="font-semibold text-amber-600 dark:text-amber-400 truncate">PK: {v.primary_key}</span>
+                                </>
+                              ) : Object.values(v.row || {}).filter(Boolean).slice(0, 2).map(String).join(' · ').slice(0, 28)}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            {/* Render ALL errors without truncating to 2 */}
+                            {v.errs.map((e, ei) => (
+                              <div key={ei} className="text-[11px] text-red-600 dark:text-red-400 font-medium flex items-start gap-1">
+                                <span className="text-red-500 font-bold shrink-0">✗</span>
+                                <span><strong>{e.f}</strong>: {e.m}</span>
+                              </div>
+                            ))}
+                            {/* Render ALL warnings */}
+                            {v.warns.map((w, wi) => (
+                              <div key={wi} className="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-start gap-1">
+                                <span className="text-amber-500 font-bold shrink-0">⚠</span>
+                                <span><strong>{w.f}</strong>: {w.m}</span>
+                              </div>
+                            ))}
+                            {v.st === 'PASS' && <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">✓ All field validation rules passed cleanly</div>}
+                          </div>
+                          <Badge variant={v.st === 'ERROR' ? 'red' : v.st === 'WARN' ? 'amber' : 'green'} className="justify-self-end">{v.st}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-6 text-center text-[12px] text-[var(--text-tertiary)] font-mono">
+                      No validation records match your search or filter criteria.
+                    </div>
+                  )}
+
+                  {/* Pagination Footer Controls */}
+                  {totalPages > 1 && resultPageSize < 99999 && (
+                    <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-[11px]">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<ChevronLeft className="w-3.5 h-3.5" />}
+                        disabled={safePage <= 1}
+                        onClick={() => setResultPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+
+                      <div className="flex items-center gap-1 font-mono">
+                        <span>Page {safePage} of {totalPages}</span>
+                        <span className="text-[var(--text-tertiary)]">({totalFiltered} total)</span>
+                      </div>
+
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<ChevronRight className="w-3.5 h-3.5" />}
+                        disabled={safePage >= totalPages}
+                        onClick={() => setResultPage((p) => Math.min(totalPages, p + 1))}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <EmptyState icon={<Search className="w-10 h-10 text-primary-500" />} message="Run validation to check field rules" />
               )}
             </CardBody>
           )}
         </Card>
+
       </GridCol>
 
       {/* Right Column */}

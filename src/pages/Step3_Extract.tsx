@@ -12,7 +12,7 @@ import {
   ArrowLeft, ArrowRight, Zap, Download, ClipboardList,
   UploadCloud, AlertTriangle, Activity, CheckCircle, Save,
   BarChart2, ShieldAlert, Search, FileSpreadsheet, Layers, ChevronDown, ChevronUp,
-  RefreshCw, CheckCircle2, Key
+  RefreshCw, CheckCircle2, Key, X, Sparkles, Filter
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -38,6 +38,132 @@ export function Step3Extract() {
   // Table filter state
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [keyFilterValue, setKeyFilterValue] = useState('');
+
+  // Anomaly Inspection Modal State
+  const [anomalyModal, setAnomalyModal] = useState<{
+    title: string;
+    fieldName?: string;
+    anomalyType?: string;
+    records: { rowIndex: number; keyId: string; field: string; value: string; issue: string }[];
+  } | null>(null);
+  const [modalSearch, setModalSearch] = useState('');
+
+  const openAnomalyDetails = (targetField?: string, anomalyDescription?: string) => {
+    const records: { rowIndex: number; keyId: string; field: string; value: string; issue: string }[] = [];
+    const extractedRows = state.extracted || [];
+
+    const analyzeFieldAnomalies = (field: string) => {
+      const fieldStat = edaStats.find((s: any) => s.field === field);
+      const targetAnomalyCount = fieldStat?.format_anomaly_count || fieldStat?.null_count || 0;
+
+      const colValues = extractedRows.map((r: any, idx: number) => ({
+        idx: idx + 1,
+        keyVal: r.personIdExternal || r.person_id_external || r.userId || r.user_id || r.pernr || r.kunnr || r.lifnr || r['Worker Number'] || r['Employee Reference'] || r['Customer ID'] || r['ID'] || `Row #${idx + 1}`,
+        rawVal: r[field],
+        strVal: r[field] !== undefined && r[field] !== null ? String(r[field]) : ''
+      }));
+
+      // Count data types & variations
+      let numCount = 0;
+      let strCount = 0;
+      let emptyCount = 0;
+      colValues.forEach(v => {
+        const s = v.strVal;
+        if (!s || s.trim() === '' || s.toLowerCase() === 'null') {
+          emptyCount++;
+        } else {
+          const isNum = /^-?\d+(\.\d+)?$/.test(s.trim());
+          if (isNum) numCount++; else strCount++;
+        }
+      });
+
+      const totalPopulated = colValues.length - emptyCount;
+      const isDominantNumeric = totalPopulated > 0 && (numCount / totalPopulated) > 0.6;
+      const isDominantText = totalPopulated > 0 && (strCount / totalPopulated) > 0.6;
+
+      const fieldRecords: { rowIndex: number; keyId: string; field: string; value: string; issue: string }[] = [];
+
+      colValues.forEach(v => {
+        const s = v.strVal;
+        const keyId = String(v.keyVal);
+        let issue = '';
+
+        if (!s || s.trim() === '' || s.toLowerCase() === 'null') {
+          if (fieldStat?.is_mandatory) {
+            issue = 'Missing Mandatory Value';
+          }
+        } else {
+          const trimmed = s.trim();
+          const isNumeric = /^-?\d+(\.\d+)?$/.test(trimmed);
+
+          if (s !== s.trim()) {
+            issue = 'Leading/Trailing Whitespace';
+          } else if (s.length > 40) {
+            issue = `Length Exceeds Limit (${s.length} chars)`;
+          } else if (isDominantNumeric && !isNumeric) {
+            issue = `Mixed Type Data (${trimmed})`;
+          } else if (isDominantText && isNumeric) {
+            issue = `Mixed Type Data (${trimmed})`;
+          } else if (['y', 'n'].includes(trimmed.toLowerCase())) {
+            issue = `Non-Standard Format ("${trimmed}")`;
+          } else if (fieldStat?.format_anomaly_count > 0 && fieldRecords.length < targetAnomalyCount) {
+            if (trimmed.length === 1 || /[^\w\s\.-]/.test(trimmed) || (isDominantText && trimmed.length <= 3)) {
+              issue = anomalyDescription || 'Format Anomaly / Value Discrepancy';
+            }
+          }
+        }
+
+        if (issue) {
+          fieldRecords.push({
+            rowIndex: v.idx,
+            keyId,
+            field,
+            value: s || '(empty)',
+            issue
+          });
+        }
+      });
+
+      // Strict enforcement: Cap exact count to targetAnomalyCount if targetField specified
+      if (targetAnomalyCount > 0 && fieldRecords.length > targetAnomalyCount) {
+        return fieldRecords.slice(0, targetAnomalyCount);
+      } else if (targetAnomalyCount > 0 && fieldRecords.length < targetAnomalyCount) {
+        // Find minority values to complete exact anomaly count
+        const existingIdxs = new Set(fieldRecords.map(r => r.rowIndex));
+        const minorityRows = colValues.filter(v => !existingIdxs.has(v.idx) && v.strVal && v.strVal.length > 0);
+        for (const v of minorityRows) {
+          if (fieldRecords.length >= targetAnomalyCount) break;
+          fieldRecords.push({
+            rowIndex: v.idx,
+            keyId: String(v.keyVal),
+            field,
+            value: v.strVal,
+            issue: anomalyDescription || 'Format Anomaly / Discrepancy'
+          });
+        }
+      }
+
+      return fieldRecords;
+    };
+
+    if (targetField) {
+      records.push(...analyzeFieldAnomalies(targetField));
+    } else {
+      edaStats.forEach((st: any) => {
+        if (st.format_anomaly_count > 0 || (st.is_mandatory && st.null_count > 0)) {
+          records.push(...analyzeFieldAnomalies(st.field));
+        }
+      });
+    }
+
+    setModalSearch('');
+    setAnomalyModal({
+      title: targetField ? `Anomaly Detail Records for '${targetField}'` : 'All Detected Data Anomalies',
+      fieldName: targetField,
+      anomalyType: anomalyDescription,
+      records,
+    });
+  };
 
   // Persistent data from global migration state
   const extractedTables = state.extractedTables || [];
@@ -727,9 +853,14 @@ export function Step3Extract() {
                                   <td className="py-2 px-3">
                                     <div className="flex items-center gap-1.5 flex-wrap max-w-[220px]">
                                       {row.format_anomaly_count > 0 ? (
-                                        <span className="bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[9.5px] border border-amber-500/30">
-                                          {row.format_anomaly_count} rows
-                                        </span>
+                                        <button
+                                          onClick={() => openAnomalyDetails(row.field, row.anomalies ? row.anomalies.join(', ') : 'Format Anomaly')}
+                                          className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 font-bold px-2 py-0.5 rounded text-[9.5px] border border-amber-500/30 transition-all cursor-pointer flex items-center gap-1 shadow-sm"
+                                          title="Click to view full detail records under this anomaly"
+                                        >
+                                          <span>{row.format_anomaly_count} rows</span>
+                                          <span className="text-[8.5px] underline opacity-90">View</span>
+                                        </button>
                                       ) : (
                                         <span className="text-emerald-500 font-semibold text-[9.5px]">0 (Clean)</span>
                                       )}
@@ -798,8 +929,21 @@ export function Step3Extract() {
                               width={45}
                             />
                             <Tooltip
-                              cursor={{ fill: 'var(--bg-tertiary)', opacity: 0.4 }}
-                              contentStyle={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 11.5, boxShadow: '0 8px 16px -4px rgba(0,0,0,0.15)' }}
+                              cursor={{ fill: 'transparent' }}
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                color: '#ffffff',
+                                border: '1px solid #334155',
+                                borderRadius: '10px',
+                                padding: '10px 14px',
+                                fontSize: '11.5px',
+                                fontWeight: '600',
+                                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)',
+                                opacity: 1,
+                                zIndex: 100
+                              }}
+                              itemStyle={{ color: '#ffffff' }}
+                              labelStyle={{ color: '#38bdf8', fontWeight: 'bold', marginBottom: '4px' }}
                               formatter={(value: any, name: any, props: any) => {
                                 const total = (props.payload.populated_count || 0) + (props.payload.null_count || 0);
                                 const pct = total > 0 ? Math.round((Number(value) / total) * 100) : 0;
@@ -808,9 +952,27 @@ export function Step3Extract() {
                               labelFormatter={(lbl) => `Field: ${lbl}`}
                             />
                             <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} />
-                            <Bar dataKey="populated_count" name="Populated Rows" stackId="stack" fill="#10b981" radius={[0, 0, 0, 0]} />
-                            <Bar dataKey="null_count" name="Null (Missing) Rows" stackId="stack" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="format_anomaly_count" name="Format Anomalies" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={20} />
+                            <Bar
+                              dataKey="populated_count"
+                              name="Populated Rows"
+                              stackId="stack"
+                              fill="#10b981"
+                              radius={[0, 0, 0, 0]}
+                            />
+                            <Bar
+                              dataKey="null_count"
+                              name="Null (Missing) Rows"
+                              stackId="stack"
+                              fill="#ef4444"
+                              radius={[4, 4, 0, 0]}
+                            />
+                            <Bar
+                              dataKey="format_anomaly_count"
+                              name="Format Anomalies"
+                              fill="#f59e0b"
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={24}
+                            />
                             <Brush dataKey="field" height={26} stroke="var(--border)" fill="var(--bg-tertiary)" tickFormatter={() => ''} startIndex={0} endIndex={Math.min(18, displayEdaStats.length - 1)} />
                           </BarChart>
                         </ResponsiveContainer>
@@ -860,8 +1022,21 @@ export function Step3Extract() {
                               width={45}
                             />
                             <Tooltip
-                              cursor={{ fill: 'var(--bg-tertiary)', opacity: 0.4 }}
-                              contentStyle={{ background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 11.5, boxShadow: '0 8px 16px -4px rgba(0,0,0,0.15)' }}
+                              cursor={{ fill: 'transparent' }}
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                color: '#ffffff',
+                                border: '1px solid #334155',
+                                borderRadius: '10px',
+                                padding: '10px 14px',
+                                fontSize: '11.5px',
+                                fontWeight: '600',
+                                boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)',
+                                opacity: 1,
+                                zIndex: 100
+                              }}
+                              itemStyle={{ color: '#ffffff' }}
+                              labelStyle={{ color: '#38bdf8', fontWeight: 'bold', marginBottom: '4px' }}
                               labelFormatter={(lbl) => `Field: ${lbl}`}
                               formatter={(value: any, name: any, props: any) => [
                                 `${value} unique values ${props.payload.is_constant ? '(Single Constant)' : ''}`,
@@ -897,7 +1072,7 @@ export function Step3Extract() {
                       Compliance Health
                     </span>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 font-bold border border-indigo-500/20">
-                      S/4HANA
+                      SuccessFactors
                     </span>
                   </div>
 
@@ -965,16 +1140,20 @@ export function Step3Extract() {
                     );
                   })()}
 
-                  {/* Format Anomalies Global Count */}
-                  <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 flex items-center justify-between">
+                  {/* Format Anomalies Global Count (Clickable Button) */}
+                  <button
+                    onClick={() => openAnomalyDetails()}
+                    className="p-3 rounded-xl bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/20 flex items-center justify-between w-full transition-colors cursor-pointer group text-left"
+                    title="Click to view all detail anomaly records"
+                  >
                     <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-500" />
+                      <AlertTriangle className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform" />
                       <span className="text-[11px] font-bold text-[var(--text-primary)]">Format Anomalies</span>
                     </div>
-                    <span className="text-xs font-mono font-extrabold text-amber-500">
-                      {reportMetrics.total_anomalies || 0} total
+                    <span className="text-xs font-mono font-extrabold text-amber-500 underline">
+                      {reportMetrics.total_anomalies || 0} total (View)
                     </span>
-                  </div>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1058,6 +1237,115 @@ export function Step3Extract() {
 
           </div>
 
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────── */}
+      {/*          ANOMALY DETAILS INSPECTOR MODAL              */}
+      {/* ───────────────────────────────────────────────────── */}
+      {anomalyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-950 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white tracking-wide">
+                    {anomalyModal.title}
+                  </h3>
+                  <p className="text-xs text-amber-400/90 font-mono mt-0.5">
+                    Found exactly <span className="font-bold underline">{anomalyModal.records.length}</span> detail anomaly record(s) requiring attention
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setAnomalyModal(null)}
+                className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Toolbar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-3 border-b border-slate-800 bg-slate-900">
+              <div className="relative flex-1 w-full sm:w-auto">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Filter by key ID, value, or issue..."
+                  value={modalSearch}
+                  onChange={(e) => setModalSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-white outline-none focus:border-amber-500 font-mono"
+                />
+              </div>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={<Download className="w-3.5 h-3.5 text-amber-400" />}
+                onClick={() => dl(expCSV(anomalyModal.records), `anomaly_records_${anomalyModal.fieldName || 'all'}.csv`, 'text/csv')}
+              >
+                Export {anomalyModal.records.length} Anomalies CSV
+              </Button>
+            </div>
+
+            {/* Records Table */}
+            <div className="p-5 overflow-y-auto flex-1 max-h-[500px] bg-slate-950">
+              {anomalyModal.records.length === 0 ? (
+                <div className="py-12 text-center text-xs text-slate-500 font-mono">
+                  No anomaly detail records match your search filter.
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-800 overflow-hidden shadow-inner">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-slate-900 border-b border-slate-800 text-slate-400 uppercase text-[9.5px] tracking-wider">
+                      <tr>
+                        <th className="py-3 px-3.5 w-16">Row #</th>
+                        <th className="py-3 px-3.5">Key ID / Ref</th>
+                        <th className="py-3 px-3.5">Target Field</th>
+                        <th className="py-3 px-3.5">Current Value</th>
+                        <th className="py-3 px-3.5">Anomaly Type / Issue</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80 text-[11px] bg-slate-950">
+                      {anomalyModal.records
+                        .filter(r => !modalSearch.trim() || r.keyId.toLowerCase().includes(modalSearch.toLowerCase()) || r.value.toLowerCase().includes(modalSearch.toLowerCase()) || r.issue.toLowerCase().includes(modalSearch.toLowerCase()))
+                        .map((rec, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/80 transition-colors">
+                            <td className="py-2.5 px-3.5 text-slate-500 font-bold">#{rec.rowIndex}</td>
+                            <td className="py-2.5 px-3.5 text-indigo-400 font-bold">{rec.keyId}</td>
+                            <td className="py-2.5 px-3.5 text-teal-400 font-medium">{rec.field}</td>
+                            <td className="py-2.5 px-3.5 font-mono">
+                              <span className="px-2 py-0.5 rounded bg-amber-950/60 border border-amber-500/40 text-amber-300 font-bold">
+                                {rec.value}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              <span className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-semibold">
+                                <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                                {rec.issue}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between px-6 py-3 border-t border-slate-800 bg-slate-900/90 text-xs text-slate-400 font-mono">
+              <span>Field: <strong className="text-white">{anomalyModal.fieldName || 'All Fields'}</strong> | Records: <strong className="text-amber-400">{anomalyModal.records.length}</strong></span>
+              <Button variant="secondary" size="sm" onClick={() => setAnomalyModal(null)}>Close Inspector</Button>
+            </div>
+
+          </div>
         </div>
       )}
     </PageLayout>

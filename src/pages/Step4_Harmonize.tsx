@@ -697,6 +697,31 @@ export function Step4Harmonize() {
     Object.fromEntries((state.harmonizeDynamicRules || []).map((r: any) => [r.id, true]))
   );
 
+  // Load saved dynamic rules for current project and target object on mount
+  useEffect(() => {
+    if (!state.projectId) return;
+
+    const loadSavedHarmonizationRules = async () => {
+      try {
+        const objName = state.obj || 'Biographical Info';
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
+        if (res.ok) {
+          const json = await res.json();
+          const loadedRules = Array.isArray(json.dynamic_rules) ? json.dynamic_rules : [];
+          setSavedDynamicRules(loadedRules);
+          dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: loadedRules });
+          setSelectedDynamicRules(
+            Object.fromEntries(loadedRules.map((r: any) => [r.id, r.enabled !== false]))
+          );
+        }
+      } catch (err) {
+        console.error('Failed to load saved harmonization dynamic rules:', err);
+      }
+    };
+
+    loadSavedHarmonizationRules();
+  }, [state.projectId, state.obj, dispatch]);
+
   const dedupeRules = (rules: any[]) => {
     const seenIds = new Set<string>();
     return rules.map((r, idx) => {
@@ -705,9 +730,12 @@ export function Step4Harmonize() {
         ruleId = `DYNAMIC_HARM_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
       }
       seenIds.add(ruleId);
-      return { ...r, id: ruleId };
+      const label = r.label || r.title || r.name || r.description || `Custom Rule ${idx + 1}`;
+      const description = r.description || r.label || `Dynamic harmonization rule`;
+      return { ...r, id: ruleId, label, description };
     });
   };
+
 
   // Dynamic Rule Editing States (matched with Step 5 Validate)
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -764,20 +792,53 @@ export function Step4Harmonize() {
     }));
   };
 
-  const deleteDynamicRule = (ruleId: string) => {
+  const deleteDynamicRule = async (ruleId: string) => {
     const remaining = savedDynamicRules.filter((r) => r.id !== ruleId);
     setSavedDynamicRules(remaining);
     dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: remaining });
-    toast('Dynamic rule removed', 'info');
+
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: remaining
+          })
+        });
+      } catch (err) {
+        console.error('Failed to sync harmonization rule deletion with database:', err);
+      }
+    }
+    toast('Dynamic rule removed and updated in database', 'info');
   };
 
-  const handleClearAllDynamicRules = () => {
+  const handleClearAllDynamicRules = async () => {
     setSavedDynamicRules([]);
     setCustomPrompts([]);
     dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: [] });
     dispatch({ type: 'SET_FIELD', field: 'harmonizeCustomPrompts', value: [] });
-    toast('All dynamic rules cleared', 'info');
+
+    if (state.projectId) {
+      try {
+        await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: state.projectId,
+            target_object: state.obj || 'Biographical Info',
+            rules: []
+          })
+        });
+      } catch (err) {
+        console.error('Failed to clear harmonization rules in database:', err);
+      }
+    }
+    toast('All dynamic rules cleared from database', 'info');
   };
+
 
   const saveRulesToDB = async () => {
     if (!state.projectId) {
@@ -813,8 +874,11 @@ export function Step4Harmonize() {
         ...deduupedCompiled
       ].map((r: any) => ({
         ...r,
+        label: r.label || r.title || r.description || r.rule || 'Custom Harmonization Rule',
+        description: r.description || r.label || '',
         enabled: selectedDynamicRules[r.id] !== false
       }));
+
 
       const res2 = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/rules/save`, {
         method: 'POST',

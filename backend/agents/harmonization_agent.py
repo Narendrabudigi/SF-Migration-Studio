@@ -1240,6 +1240,17 @@ class HarmonizationAgent:
             target_field = str(rule.get("target_field", "")).strip()
             python_code = rule.get("python_code", "")
 
+            # Sanity check: If rule's label or description explicitly names a dataset column (e.g. "gender")
+            # but target_field is mismatched (e.g. "userId"), auto-correct target_field to the intended column.
+            rule_text = f"{label} {rule.get('description', '')}".lower()
+            if target_field.lower() not in rule_text:
+                for col in df.columns:
+                    c_str = str(col)
+                    c_norm = c_str.lower().replace("-", "").replace("_", "")
+                    if re.search(rf'\b{re.escape(c_norm)}\b', rule_text) or re.search(rf'\b{re.escape(c_str.lower())}\b', rule_text):
+                        target_field = c_str
+                        break
+
             if not python_code or not target_field:
                 self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — missing code or target field")
                 continue
@@ -1248,9 +1259,11 @@ class HarmonizationAgent:
             python_code = re.sub(r"^```(?:python|py)?\s*", "", python_code.strip(), flags=re.IGNORECASE)
             python_code = re.sub(r"```$", "", python_code).strip()
 
-            # Find the actual column in df (exact, suffix, or normalized matching)
+            # Find the actual column in df (exact, suffix, normalized, or alias matching)
             actual_col = None
             target_norm = target_field.lower().replace("-", "").replace("_", "").replace(" ", "")
+            
+            # 1. Direct / Normalized match
             for col in df.columns:
                 col_str = str(col)
                 col_norm = col_str.lower().replace("-", "").replace("_", "").replace(" ", "")
@@ -1259,6 +1272,62 @@ class HarmonizationAgent:
                     col_norm == target_norm):
                     actual_col = col
                     break
+
+            # 2. Field Synonym / Alias match (e.g. Employee Reference / PERNR -> userId, Given Name -> firstName)
+            if actual_col is None:
+                field_aliases_map = {
+                    "givenname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+                    "given name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+                    "firstname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+                    "first name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
+                    "familyname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+                    "family name": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+                    "lastname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+                    "last name": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+                    "surname": ["lastname", "last_name", "last-name", "familyname", "family_name", "surname", "lname", "nachn"],
+                    "userid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "user id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "employee reference": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number"],
+                    "employeereference": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number"],
+                    "worker number": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "workernumber": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "worker id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "workerid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr", "workernumber", "worker_number", "workerid", "worker_id"],
+                    "employee id": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr"],
+                    "employeeid": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id", "pernr"],
+                    "pernr": ["userid", "user_id", "user-id", "personidexternal", "person_id_external", "person-id-external", "employeereference", "employee_reference", "employeeid", "employee_id"],
+                    "personidexternal": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+                    "person id": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+                    "person id external": ["personidexternal", "person_id_external", "person-id-external", "userid", "user_id", "user-id", "employeereference", "employee_reference", "pernr"],
+                    "preferredname": ["preferredname", "preferred_name", "preferred-name", "dispname", "displayname", "nickname"],
+                    "preferred name": ["preferredname", "preferred_name", "preferred-name", "dispname", "displayname", "nickname"],
+                    "preferredlanguage": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
+                    "preferred language": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
+                    "country": ["country", "countryofbirth", "country_of_birth", "nationality", "land1"],
+                    "country of birth": ["countryofbirth", "country_of_birth", "country", "nationality", "land1"],
+                    "date of birth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+                    "dateofbirth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+                    "dob": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
+                }
+                aliases = field_aliases_map.get(target_field.lower()) or field_aliases_map.get(target_norm) or []
+                for alias in aliases:
+                    alias_norm = alias.lower().replace("-", "").replace("_", "").replace(" ", "")
+                    for col in df.columns:
+                        col_str = str(col)
+                        col_norm = col_str.lower().replace("-", "").replace("_", "").replace(" ", "")
+                        if col_norm == alias_norm:
+                            actual_col = col
+                            break
+                    if actual_col is not None:
+                        break
+
+            # 3. Substring / partial match if still not found
+            if actual_col is None:
+                for col in df.columns:
+                    col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
+                    if target_norm in col_norm or col_norm in target_norm:
+                        actual_col = col
+                        break
 
             if actual_col is None:
                 self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — field '{target_field}' not found in dataset columns: {list(df.columns)}")
