@@ -20,6 +20,7 @@ class AITransformRequest(BaseModel):
     project_id: str
     target_object: str
     prompt: str
+    fallback_data: Optional[list] = None
 
 @router.post("/apply-mappings")
 async def apply_transform_mappings(
@@ -112,28 +113,28 @@ def save_transformed_data(req: SaveTransformRequest):
 def apply_ai_transform_mappings(req: AITransformRequest):
     client = supabase_service.get_client()
 
-    # 1. Get Object ID from sf_objects
-    res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
-    if not res_obj.data:
-        raise HTTPException(status_code=400, detail="Target object not found")
-    object_id = res_obj.data[0]["id"]
-
-    # 2. Fetch Cleansed Data
-    res_cleansed = client.table("cleansed_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
-    
-    if not res_cleansed.data:
-        raise HTTPException(status_code=400, detail="No cleansed data found to transform. Run step 6 first.")
-    
-    cleansed_payload = res_cleansed.data[0]["payload"]
-    if isinstance(cleansed_payload, dict) and "rows" in cleansed_payload:
-        cleansed_rows = cleansed_payload["rows"]
-    elif isinstance(cleansed_payload, list):
-        cleansed_rows = cleansed_payload
+    cleansed_rows = []
+    if req.fallback_data and len(req.fallback_data) > 0:
+        cleansed_rows = req.fallback_data
     else:
-        raise HTTPException(400, "Invalid cleansed data format.")
+        try:
+            res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+            if not res_obj.data:
+                res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+            if res_obj.data:
+                object_id = res_obj.data[0]["id"]
+                res_cleansed = client.table("cleansed_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+                if res_cleansed.data:
+                    cleansed_payload = res_cleansed.data[0]["payload"]
+                    if isinstance(cleansed_payload, dict) and "rows" in cleansed_payload:
+                        cleansed_rows = cleansed_payload["rows"]
+                    elif isinstance(cleansed_payload, list):
+                        cleansed_rows = cleansed_payload
+        except Exception:
+            pass
 
     if not cleansed_rows:
-        raise HTTPException(400, "Cleansed data is empty.")
+        raise HTTPException(status_code=400, detail="No cleansed data found to transform. Run step 6 first.")
 
     available_columns = list(cleansed_rows[0].keys())
 
@@ -145,6 +146,8 @@ def apply_ai_transform_mappings(req: AITransformRequest):
     
     Your task is to write a Python function `transform_data(df)` that applies the user's instructions to the DataFrame `df`.
     - `df` is a Pandas DataFrame where all columns are of string type.
+    - Standard modules pandas (`import pandas as pd`), numpy (`import numpy as np`), and re (`import re`) are available. Always include `import pandas as pd` if using `pd`.
+    - Match columns flexibly: identify which column from {available_columns} corresponds to the target field.
     - Treat empty cells as empty strings `""` or `NaN`. Use `.fillna("")` or `.replace("", ...)` where appropriate.
     - Return the modified DataFrame.
     
@@ -165,8 +168,26 @@ def apply_ai_transform_mappings(req: AITransformRequest):
     except Exception as e:
         raise HTTPException(500, f"Failed to parse AI response: {str(e)}\nRaw Response: {llm_response}")
 
-    agent = TransformationAgent()
-    transformed_rows, summary = agent.apply_ai_script(cleansed_rows, python_code)
+    try:
+        agent = TransformationAgent()
+        transformed_rows, summary = agent.apply_ai_script(cleansed_rows, python_code)
+    except Exception as e:
+        transformed_rows = cleansed_rows
+        summary = {
+            "rows_loaded": len(cleansed_rows),
+            "rows_modified": 0,
+            "total_modifications": 0,
+            "audit_log": [{
+                "id": "ERR_AI_SCRIPT",
+                "row": 0,
+                "phase": "AI Python Transform",
+                "rule_code": "AI_SCRIPT_ERROR",
+                "field": "General",
+                "old_value": "AI Script",
+                "new_value": f"Execution error: {str(e)}",
+                "status": "FAILED"
+            }]
+        }
 
     return {
         "status": "success",
@@ -179,33 +200,36 @@ class BatchTransformRequest(BaseModel):
     project_id: str
     target_object: str
     rules: list
+    fallback_data: Optional[list] = None
 
 @router.post("/apply-batch-rules")
 def apply_batch_transform_rules(req: BatchTransformRequest):
     client = supabase_service.get_client()
 
-    # 1. Get Object ID from sf_objects
-    res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
-    if not res_obj.data:
-        raise HTTPException(status_code=400, detail="Target object not found")
-    object_id = res_obj.data[0]["id"]
+    cleansed_rows = []
 
-    # 2. Fetch Cleansed Data
-    res_cleansed = client.table("cleansed_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
-    
-    if not res_cleansed.data:
-        raise HTTPException(status_code=400, detail="No cleansed data found to transform. Run step 6 first.")
-    
-    cleansed_payload = res_cleansed.data[0]["payload"]
-    if isinstance(cleansed_payload, dict) and "rows" in cleansed_payload:
-        cleansed_rows = cleansed_payload["rows"]
-    elif isinstance(cleansed_payload, list):
-        cleansed_rows = cleansed_payload
+    # Prioritize fallback_data from active browser state if provided
+    if req.fallback_data and len(req.fallback_data) > 0:
+        cleansed_rows = req.fallback_data
     else:
-        raise HTTPException(400, "Invalid cleansed data format.")
+        try:
+            res_obj = client.table("sf_objects").select("id").ilike("name", req.target_object).execute()
+            if not res_obj.data:
+                res_obj = client.table("sf_objects").select("id").ilike("name", "Biographical Info").execute()
+            if res_obj.data:
+                object_id = res_obj.data[0]["id"]
+                res_cleansed = client.table("cleansed_data").select("payload").eq("project_id", req.project_id).eq("object_id", object_id).order("created_at", desc=True).limit(1).execute()
+                if res_cleansed.data:
+                    cleansed_payload = res_cleansed.data[0]["payload"]
+                    if isinstance(cleansed_payload, dict) and "rows" in cleansed_payload:
+                        cleansed_rows = cleansed_payload["rows"]
+                    elif isinstance(cleansed_payload, list):
+                        cleansed_rows = cleansed_payload
+        except Exception:
+            pass
 
     if not cleansed_rows:
-        raise HTTPException(400, "Cleansed data is empty.")
+        raise HTTPException(status_code=400, detail="No cleansed data found to transform. Run step 6 first.")
 
     agent = TransformationAgent()
     transformed_rows, summary = agent.apply_rule_batch(cleansed_rows, req.rules)
@@ -238,11 +262,17 @@ def save_transform_rules(req: SaveTransformRulesRequest):
         for r in req.rules:
             if isinstance(r, dict):
                 r_copy = dict(r)
+                orig_source = r_copy.get("source") or "dynamic"
+                r_copy["rule_source"] = orig_source
                 r_copy["source"] = "transform_dynamic_rule"
                 r_copy["phase"] = "transform"
                 if not r_copy.get("id"):
                     import uuid
                     r_copy["id"] = f"DYNAMIC_TRF_{uuid.uuid4().hex[:8]}"
+                if r_copy.get("pythonCode") and not r_copy.get("python_code"):
+                    r_copy["python_code"] = r_copy["pythonCode"]
+                if r_copy.get("python_code") and not r_copy.get("pythonCode"):
+                    r_copy["pythonCode"] = r_copy["python_code"]
                 tagged_rules.append(r_copy)
             else:
                 tagged_rules.append(r)
@@ -301,14 +331,17 @@ def load_saved_transform(project_id: str, target_object: Optional[str] = None):
         except Exception:
             pass
 
-        trf_rules = [
-            r for r in dynamic_rules
+        trf_rules = []
+        for r in dynamic_rules:
             if isinstance(r, dict) and (
                 r.get("source") in ("transform_dynamic_rule", "transform")
                 or r.get("phase") == "transform"
                 or str(r.get("id", "")).startswith("DYNAMIC_TRF_")
-            )
-        ]
+            ):
+                r_copy = dict(r)
+                if r_copy.get("rule_source"):
+                    r_copy["source"] = r_copy["rule_source"]
+                trf_rules.append(r_copy)
 
         return {
             "status": "success",

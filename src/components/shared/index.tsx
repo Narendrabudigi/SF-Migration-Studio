@@ -1,7 +1,7 @@
 import React, { type ReactNode, useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn, isPrimaryKeyField } from '@/lib/utils';
-import { ChevronDown, Check, Key } from 'lucide-react';
+import { ChevronDown, Check, Key, Pencil, Sparkles } from 'lucide-react';
 
 /* ── Card ── */
 interface CardProps {
@@ -201,7 +201,23 @@ export function CodeBlock({ children, className }: { children: ReactNode; classN
 }
 
 /* ── DataTable ── */
-export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; cols: string[] }) {
+export interface DataTableProps {
+  rows: Record<string, unknown>[];
+  cols: string[];
+  editable?: boolean;
+  onCellEdit?: (col: string, val: unknown, row: Record<string, unknown>, rowIndex: number) => void;
+  onColumnEdit?: (col: string) => void;
+  getRowNumber?: (row: Record<string, unknown>, index: number) => number;
+}
+
+export function DataTable({
+  rows,
+  cols,
+  editable = false,
+  onCellEdit,
+  onColumnEdit,
+  getRowNumber,
+}: DataTableProps) {
   if (!rows?.length) return <div className="py-6 text-center text-[var(--text-tertiary)] text-sm">No data</div>;
   const c = cols.length ? cols : Object.keys(rows[0] || {});
   return (
@@ -215,17 +231,32 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
                 <th
                   key={col}
                   className={cn(
-                    "px-3.5 py-2.5 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-white dark:bg-gray-900 border-b border-[var(--border)] sticky top-0 z-10",
+                    "group/th px-3.5 py-2.5 text-left font-mono text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] bg-white dark:bg-gray-900 border-b border-[var(--border)] sticky top-0 z-10",
                     isPk && "text-amber-600 dark:text-amber-400 font-bold"
                   )}
                 >
-                  <div className="inline-flex items-center gap-1.5">
-                    {isPk && (
-                      <span title="Primary Key Field" className="inline-flex items-center">
-                        <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" />
-                      </span>
+                  <div className="inline-flex items-center justify-between w-full gap-1.5">
+                    <div className="inline-flex items-center gap-1.5">
+                      {isPk && (
+                        <span title="Primary Key Field" className="inline-flex items-center">
+                          <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" />
+                        </span>
+                      )}
+                      <span>{col}</span>
+                    </div>
+                    {editable && onColumnEdit && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onColumnEdit(col);
+                        }}
+                        title={`Transform column ${col}`}
+                        className="p-1 rounded bg-violet-50 dark:bg-violet-950/50 hover:bg-violet-100 dark:hover:bg-violet-900/70 text-violet-600 dark:text-violet-300 transition-all cursor-pointer shrink-0 border border-violet-200/70 dark:border-violet-800/50"
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                      </button>
                     )}
-                    <span>{col}</span>
                   </div>
                 </th>
               );
@@ -239,6 +270,7 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
                 const v = row[col] !== undefined ? String(row[col]) : '';
                 const empty = !v.trim();
                 const isPk = isPrimaryKeyField(col);
+                const actualRowNum = getRowNumber ? getRowNumber(row, ri) : ri + 1;
                 return (
                   <td
                     key={col}
@@ -247,7 +279,7 @@ export function DataTable({ rows, cols }: { rows: Record<string, unknown>[]; col
                       empty ? 'text-red-400 dark:text-red-500 italic' : isPk ? 'text-[var(--text-primary)] font-semibold' : 'text-[var(--text-secondary)]'
                     )}
                   >
-                    {empty ? '(empty)' : v}
+                    <span className="truncate">{empty ? '(empty)' : v}</span>
                   </td>
                 );
               })}
@@ -538,3 +570,7 @@ export function ConfirmModal({
     </AnimatePresence>
   );
 }
+
+export { DynamicTransformModal } from './DynamicTransformModal';
+export type { DynamicTransformModalProps } from './DynamicTransformModal';
+

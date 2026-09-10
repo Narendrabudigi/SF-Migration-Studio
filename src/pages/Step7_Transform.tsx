@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { dl, expCSV, isPrimaryKeyField } from '@/lib/utils';
-import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, StatBox, StatsGrid, DataTable, PageHeader, EmptyState } from '@/components/shared';
+import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, StatBox, StatsGrid, DataTable, PageHeader, EmptyState, DynamicTransformModal } from '@/components/shared';
 import { ArrowLeft, ArrowRight, Cog, Download, Upload, FileText, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileSpreadsheet, Save, Check, Bot, Sparkles, X, Key, Trash2, CheckSquare, Square, Plus, RotateCcw, ListFilter, Layers } from 'lucide-react';
 import { TableFilterToolbar, filterRowsByKey, detectKeyColumns, getTableDisplayData } from '@/components/shared/TableFilterToolbar';
 import type { TableInfo } from '@/components/shared/TableFilterToolbar';
@@ -346,13 +346,19 @@ function TransformationReportCard({
 
 export interface TransformRuleItem {
   id: string;
-  source: 'file' | 'nlp';
+  source: 'file' | 'nlp' | 'dynamic' | string;
   field: string;
   oldValue?: string;
   newValue?: string;
   pythonCode?: string;
   description: string;
   enabled: boolean;
+  scope?: 'value' | 'row' | 'column';
+  rowIndex?: number;
+  rowNumber?: number;
+  operation?: string;
+  prefix?: string;
+  suffix?: string;
 }
 
 export function Step7Transform() {
@@ -366,6 +372,21 @@ export function Step7Transform() {
   const [rules, setRules] = useState<TransformRuleItem[]>([]);
   const [isParsingFile, setIsParsingFile] = useState(false);
   const [isGeneratingAIRule, setIsGeneratingAIRule] = useState(false);
+
+  // Dynamic Rule Spot Modal State
+  const [dynamicModalState, setDynamicModalState] = useState<{
+    isOpen: boolean;
+    tableName: string;
+    allFields: string[];
+    initialField?: string;
+    initialValue?: string;
+    rowNumber?: number;
+    rowIndex?: number;
+  }>({
+    isOpen: false,
+    tableName: '',
+    allFields: [],
+  });
   
   const summary = state.transformSummary;
   
@@ -384,6 +405,55 @@ export function Step7Transform() {
   const [tablePages, setTablePages] = useState<Record<string, number>>({});
   const extractedTables = state.extractedTables || [];
 
+  const handleApplyDynamicRule = (newRule: TransformRuleItem) => {
+    const updatedRules = [...rules, newRule];
+    setRules(updatedRules);
+    applyRulesBatch(updatedRules);
+    toast(`Dynamic rule applied to ${newRule.field}! Added to Active Rules.`, 'ok');
+  };
+
+  // Computed all available display fields across extracted tables or dataset
+  const allAvailableFields = useMemo(() => {
+    const fieldSet = new Set<string>();
+    const rows = transformedRows.length > 0 ? transformedRows : (state.cleaned || []);
+    if (extractedTables && extractedTables.length > 0) {
+      extractedTables.forEach((t: any) => {
+        if (Array.isArray(t.columns)) {
+          const { columns: tableCols } = getTableDisplayData(t, rows, state.mapping);
+          tableCols.forEach((col: string) => fieldSet.add(col));
+        }
+      });
+    }
+    if (fieldSet.size === 0 && rows.length > 0) {
+      Object.keys(rows[0] || {}).forEach((col) => fieldSet.add(col));
+    }
+    return Array.from(fieldSet);
+  }, [extractedTables, transformedRows, state.cleaned, state.mapping]);
+
+  const openCommonDynamicModal = () => {
+    const rows = transformedRows.length > 0 ? transformedRows : (state.cleaned || []);
+    const fields = allAvailableFields.length > 0
+      ? allAvailableFields
+      : (rows[0] ? Object.keys(rows[0]) : []);
+    const defaultTable = extractedTables[0]?.table_name || 'Transformed Output';
+    setDynamicModalState({
+      isOpen: true,
+      tableName: defaultTable,
+      allFields: fields,
+      initialField: fields[0] || '',
+      initialValue: '',
+    });
+  };
+
+
+  const cleanRule = (r: TransformRuleItem): TransformRuleItem => {
+    if (r.source === 'dynamic' && (r.oldValue !== undefined || r.operation || r.scope)) {
+      const { pythonCode, ...rest } = r;
+      return rest as TransformRuleItem;
+    }
+    return r;
+  };
+
   // Load saved transform rules for current project and target object on mount
   useEffect(() => {
     if (!state.projectId) return;
@@ -394,7 +464,7 @@ export function Step7Transform() {
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
         if (res.ok) {
           const json = await res.json();
-          const loadedRules = Array.isArray(json.dynamic_rules) ? json.dynamic_rules : [];
+          const loadedRules = (Array.isArray(json.dynamic_rules) ? json.dynamic_rules : []).map(cleanRule);
           setRules(loadedRules);
           dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: loadedRules });
         }
@@ -411,7 +481,7 @@ export function Step7Transform() {
       toast('No project selected to save rules', 'err');
       return;
     }
-    const targetRules = Array.isArray(rulesToSave) ? rulesToSave : rules;
+    const targetRules = (Array.isArray(rulesToSave) ? rulesToSave : rules).map(cleanRule);
     showLoad('Saving rules...', 'Persisting transform rules to database');
     try {
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/rules/save`, {
@@ -449,8 +519,14 @@ export function Step7Transform() {
   async function applyRulesBatch(targetRules: TransformRuleItem[]) {
     if (!state.projectId) return;
 
-    const activeRules = targetRules.filter(r => r.enabled);
+    const activeRules = targetRules.filter(r => r.enabled).map(cleanRule);
     showLoad('Updating Transformation...', `Applying ${activeRules.length} active rule(s)...`);
+
+    const baseData = (state.cleaned && state.cleaned.length > 0)
+      ? state.cleaned
+      : (state.harmonized && state.harmonized.length > 0)
+        ? state.harmonized
+        : transformedRows;
 
     try {
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/transform/apply-batch-rules`, {
@@ -460,6 +536,7 @@ export function Step7Transform() {
           project_id: state.projectId,
           target_object: state.obj,
           rules: activeRules,
+          fallback_data: baseData && baseData.length > 0 ? baseData : undefined,
         }),
       });
 
@@ -470,13 +547,10 @@ export function Step7Transform() {
 
       const data = await res.json();
       
-      const aiRulesSummary = targetRules
-        .filter(r => r.enabled && r.pythonCode)
-        .map(r => ({ Source_Field: "Python Script", Source_Data: "", Target_Data: r.pythonCode }));
-
+      const cleanAiRules = (data.summary?.ai_rules || []).filter((r: any) => r.Source_Field !== "Python Script");
       const updatedSummary = {
         ...data.summary,
-        ai_rules: aiRulesSummary.length > 0 ? aiRulesSummary : data.summary?.ai_rules
+        ai_rules: cleanAiRules
       };
 
       dispatch({ type: 'SET_FIELD', field: 'transformed', value: data.data });
@@ -854,6 +928,16 @@ export function Step7Transform() {
                 >
                   <div className="ml-auto flex items-center gap-2">
                     <Button
+                      variant="cyan"
+                      size="sm"
+                      icon={<RotateCcw className="w-3.5 h-3.5" />}
+                      onClick={() => applyRulesBatch(rules)}
+                      disabled={rules.length === 0}
+                      title="Re-run all active transformation rules on dataset"
+                    >
+                      Apply Rules
+                    </Button>
+                    <Button
                       variant="secondary"
                       size="sm"
                       icon={<Save className="w-3.5 h-3.5 text-violet-500" />}
@@ -938,14 +1022,32 @@ export function Step7Transform() {
                               <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-extrabold uppercase tracking-wider ${
                                 rule.source === 'nlp'
                                   ? 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800'
+                                  : (rule.source === 'dynamic' || rule.source === 'transform_dynamic_rule')
+                                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
                                   : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
                               }`}>
-                                {rule.source === 'nlp' ? 'AI NLP' : 'FILE'}
+                                {rule.source === 'nlp' ? 'AI NLP' : (rule.source === 'dynamic' || rule.source === 'transform_dynamic_rule') ? 'DYNAMIC' : 'FILE'}
                               </span>
+                              {rule.rowNumber !== undefined && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                  Row #{rule.rowNumber}
+                                </span>
+                              )}
+                              {rule.scope === 'column' && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                  Entire Column
+                                </span>
+                              )}
+                              {rule.operation && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800 uppercase">
+                                  {rule.operation}
+                                </span>
+                              )}
                               <span className="text-[11.5px] font-bold text-[var(--text-primary)] font-mono truncate">
                                 {rule.field}
                               </span>
                             </div>
+
 
                             <div className="text-[11px] text-[var(--text-secondary)] leading-snug font-mono">
                               {rule.oldValue !== undefined || rule.newValue !== undefined ? (
@@ -998,7 +1100,7 @@ export function Step7Transform() {
                 </StatsGrid>
               </div>
 
-              {summary.ai_rules && summary.ai_rules.length > 0 && (
+              {summary.ai_rules && summary.ai_rules.filter((r: any) => r.Source_Field !== "Python Script").length > 0 && (
                 <Card>
                   <CardHeader 
                     title="Interpreted AI Rules" 
@@ -1007,32 +1109,19 @@ export function Step7Transform() {
                   />
                   <CardBody>
                     <div className="flex flex-col gap-3">
-                      {summary.ai_rules.map((rule: any, i: number) => {
-                        if (rule.Source_Field === "Python Script") {
-                          return (
-                            <div key={i} className="flex flex-col gap-2 p-3 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)]/50 text-[11px] font-mono">
-                              <span className="text-violet-500 font-bold">Generated Pandas Script Execution:</span>
-                              <pre className="whitespace-pre-wrap text-[var(--text-secondary)] bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-md overflow-x-auto">
-                                {rule.Target_Data.replace(/```python/g, '').replace(/```/g, '').trim()}
-                              </pre>
-                            </div>
-                          );
-                        }
-                        
-                        return (
-                          <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)]/50 text-[11px] font-mono w-fit">
-                            <span className="text-violet-500 font-bold">{rule.Source_Field}</span>
-                            <span className="text-[var(--text-tertiary)]">:</span>
-                            <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through">
-                              {rule.Source_Data || '(empty)'}
-                            </span>
-                            <span className="text-[var(--text-tertiary)]">→</span>
-                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
-                              {rule.Target_Data}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      {summary.ai_rules.filter((r: any) => r.Source_Field !== "Python Script").map((rule: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)]/50 text-[11px] font-mono w-fit">
+                          <span className="text-violet-500 font-bold">{rule.Source_Field}</span>
+                          <span className="text-[var(--text-tertiary)]">:</span>
+                          <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through">
+                            {rule.Source_Data || '(empty)'}
+                          </span>
+                          <span className="text-[var(--text-tertiary)]">→</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
+                            {rule.Target_Data}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </CardBody>
                 </Card>
@@ -1123,20 +1212,31 @@ export function Step7Transform() {
                               title={`Transformed: ${t.table_name}`}
                               subtitle={`${tableRows.length} rows × ${tableCols.length} columns${outputKeyFilter ? ' (filtered)' : ''}`}
                             >
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                icon={<Download className="w-3 h-3" />}
-                                onClick={() => dl(expCSV(tableRows), `${t.table_name.replace(/[\s/]+/g, '_').toLowerCase()}_transformed.csv`, 'text/csv')}
-                                className="ml-auto"
-                              >
-                                Export {t.table_name}
-                              </Button>
+                              <div className="ml-auto flex items-center gap-2">
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  icon={<Download className="w-3 h-3" />}
+                                  onClick={() => dl(expCSV(tableRows), `${t.table_name.replace(/[\s/]+/g, '_').toLowerCase()}_transformed.csv`, 'text/csv')}
+                                >
+                                  Export {t.table_name}
+                                </Button>
+                              </div>
                             </CardHeader>
                             <CardBody className="p-0 overflow-hidden">
                               <DataTable
                                 rows={paginatedRows}
                                 cols={tableCols}
+                                editable={true}
+                                onColumnEdit={(col) => {
+                                  setDynamicModalState({
+                                    isOpen: true,
+                                    tableName: t.table_name,
+                                    allFields: tableCols,
+                                    initialField: col,
+                                    initialValue: '',
+                                  });
+                                }}
                               />
                               <TablePaginationFooter
                                 currentPage={currentPage}
@@ -1164,6 +1264,38 @@ export function Step7Transform() {
           )}
         </GridCol>
       </PageGrid>
+
+      {/* Dynamic Rule Spot Modal */}
+      <DynamicTransformModal
+        isOpen={dynamicModalState.isOpen}
+        onClose={() => setDynamicModalState((prev) => ({ ...prev, isOpen: false }))}
+        tableName={dynamicModalState.tableName}
+        allFields={dynamicModalState.allFields}
+        initialField={dynamicModalState.initialField}
+        initialValue={dynamicModalState.initialValue}
+        rowNumber={dynamicModalState.rowNumber}
+        rowIndex={dynamicModalState.rowIndex}
+        projectId={state.projectId}
+        targetObject={state.obj}
+        currentRows={transformedRows.length > 0 ? transformedRows : (state.cleaned || [])}
+        onRunTransform={handleApplyDynamicRule}
+      />
+
+      {/* Floating Bottom-Right Add Dynamic Rule Button */}
+      {(has || (state.cleaned && state.cleaned.length > 0)) && (
+        <button
+          type="button"
+          onClick={openCommonDynamicModal}
+          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-xs font-extrabold shadow-lg shadow-violet-500/30 hover:shadow-xl hover:shadow-violet-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer border border-violet-400/30 backdrop-blur-xs"
+          title="Add a dynamic transformation rule across any field"
+        >
+          <div className="p-1 rounded-full bg-white/20">
+            <Plus className="w-3.5 h-3.5 text-white" strokeWidth={3} />
+          </div>
+          <span>Add Dynamic Rule</span>
+          <Sparkles className="w-3.5 h-3.5 text-violet-200 animate-pulse" />
+        </button>
+      )}
     </PageLayout>
   );
 }
