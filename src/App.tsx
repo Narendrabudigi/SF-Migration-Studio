@@ -17,11 +17,13 @@ import { Step9TechDocs } from '@/pages/Step9_TechDocs';
 import { InsertMapping } from '@/pages/InsertMapping';
 
 function AppLayout({ children }: { children: React.ReactNode }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+
   return (
     <div className="h-full flex overflow-hidden" style={{ background: 'var(--bg)' }}>
-      <StepNavigation />
+      <StepNavigation mobileOpen={mobileMenuOpen} onCloseMobile={() => setMobileMenuOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-        <Header />
+        <Header onOpenMobileMenu={() => setMobileMenuOpen((prev) => !prev)} />
         <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
           {children}
         </main>

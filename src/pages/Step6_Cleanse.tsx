@@ -2005,28 +2005,6 @@ export function Step6Cleanse() {
             )}
           </Card>
 
-          {/* Status Notes */}
-          <Card>
-            <CardBody className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-              {has ? (
-                <>
-                  <InfoBox variant="success">
-                    <strong>✓ Auto-Fixed Standard Items:</strong><br />
-                    Country codes & currencies normalized<br />
-                    IDs padded to SAP 10-digit standard<br />
-                    Whitespace trimmed & special chars cleaned
-                  </InfoBox>
-                  <InfoBox variant="warning">
-                    <strong>⚠ Manual Review Guidance:</strong><br />
-                    Review empty required fields<br />
-                    Verify customer email formats & overlength strings
-                  </InfoBox>
-                </>
-              ) : (
-                <InfoBox variant="info">Select rules on the left and click <strong>Auto-Fix with AI</strong> to cleanse data.</InfoBox>
-              )}
-            </CardBody>
-          </Card>
       </div>
     </PageLayout>
   );

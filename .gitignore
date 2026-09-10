@@ -23,6 +23,12 @@ manifest.yml
 manifest.*.yml
 !manifest.example.yml
 
+# Cloud Foundry Deployment Files
+.cfignore
+Staticfile
+public/Staticfile
+backend/runtime.txt
+
 # Python Environments & Cache
 backend/venv/
 venv/

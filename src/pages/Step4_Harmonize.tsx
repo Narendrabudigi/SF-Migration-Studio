@@ -576,10 +576,10 @@ function PreviewCard({
               <div
                 key={grp.id}
                 className={`rounded-lg border transition-all ${isDynamic
-                    ? 'border-purple-200 dark:border-purple-900/40 bg-purple-50/50 dark:bg-purple-950/20 text-purple-800 dark:text-purple-300'
-                    : isInit
-                      ? 'border-gray-200 dark:border-gray-800 bg-[var(--bg-tertiary)]/50 text-[var(--text-tertiary)]'
-                      : 'border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/15 text-[var(--text-primary)]'
+                  ? 'border-purple-200 dark:border-purple-900/40 bg-purple-50/50 dark:bg-purple-950/20 text-purple-800 dark:text-purple-300'
+                  : isInit
+                    ? 'border-gray-200 dark:border-gray-800 bg-[var(--bg-tertiary)]/50 text-[var(--text-tertiary)]'
+                    : 'border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/15 text-[var(--text-primary)]'
                   }`}
               >
                 <div className="flex items-center justify-between px-3 py-1.5 text-[11px] font-mono">
@@ -1246,6 +1246,9 @@ export function Step4Harmonize() {
             if (data.tables && data.tables.length > 0) {
               dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
             }
+            if (data.fix_log && data.fix_log.length > 0) {
+              dispatch({ type: 'SET_FIELD', field: 'fixLog', value: data.fix_log });
+            }
 
             const returnedDynRules = data.dynamic_rules || [];
             const existingIds = new Set(savedDynamicRules.map((r: any) => r.id));
@@ -1317,6 +1320,9 @@ export function Step4Harmonize() {
       dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: currentTables });
       dispatch({ type: 'SET_FIELD', field: 'harmonized', value: result.final_table });
       dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: currentDynRules });
+      if ((result as any)?.fix_log && (result as any).fix_log.length > 0) {
+        dispatch({ type: 'SET_FIELD', field: 'fixLog', value: (result as any).fix_log });
+      }
       dispatch({ type: 'SET_FIELD', field: 'isHarmonizedSaved', value: true });
       toast('Harmonized data saved to database successfully!', 'ok');
     } catch (err: any) {
@@ -1698,76 +1704,76 @@ export function Step4Harmonize() {
                                   )}
 
                                   <div className="flex items-center gap-3">
-                                     {/* Left Dropdown (Parent Key) */}
-                                     <div className="flex-1 min-w-0 space-y-1">
-                                       <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
-                                         {parentName} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Key'}
-                                       </label>
-                                       <select
-                                         value={cond.left_key || ''}
-                                         onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'left_key', e.target.value)}
-                                         className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
-                                       >
-                                         <option value="">Select {parentName} Key...</option>
-                                         {parentHeaders.map((h) => (
-                                           <option key={h} value={h}>{h}</option>
-                                         ))}
-                                       </select>
-                                     </div>
+                                    {/* Left Dropdown (Parent Key) */}
+                                    <div className="flex-1 min-w-0 space-y-1">
+                                      <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                        {parentName} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Key'}
+                                      </label>
+                                      <select
+                                        value={cond.left_key || ''}
+                                        onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'left_key', e.target.value)}
+                                        className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                      >
+                                        <option value="">Select {parentName} Key...</option>
+                                        {parentHeaders.map((h) => (
+                                          <option key={h} value={h}>{h}</option>
+                                        ))}
+                                      </select>
+                                    </div>
 
-                                     {/* Arrow */}
-                                     <div className="shrink-0 pt-4 text-emerald-500 font-bold text-base">
-                                       ➔
-                                     </div>
+                                    {/* Arrow */}
+                                    <div className="shrink-0 pt-4 text-emerald-500 font-bold text-base">
+                                      ➔
+                                    </div>
 
-                                     {/* Right Dropdown (Foreign Key) */}
-                                     <div className="flex-1 min-w-0 space-y-1">
-                                       <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
-                                          {sec.filename} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Foreign Key'}
-                                       </label>
-                                       <select
-                                         value={cond.right_key || ''}
-                                         onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'right_key', e.target.value)}
-                                         className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
-                                       >
-                                         <option value="">Select {sec.filename} Key...</option>
-                                         {secHeaders.map((h) => (
-                                           <option key={h} value={h}>{h}</option>
-                                         ))}
-                                       </select>
-                                     </div>
+                                    {/* Right Dropdown (Foreign Key) */}
+                                    <div className="flex-1 min-w-0 space-y-1">
+                                      <label className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 block truncate">
+                                        {sec.filename} {keyConditions.length > 1 ? `Key #${condIdx + 1}` : 'Foreign Key'}
+                                      </label>
+                                      <select
+                                        value={cond.right_key || ''}
+                                        onChange={(e) => updateKeyCondition(sec.filename, condIdx, 'right_key', e.target.value)}
+                                        className="w-full px-3 py-2 rounded-lg text-[12px] font-semibold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:border-emerald-500 cursor-pointer shadow-xs"
+                                      >
+                                        <option value="">Select {sec.filename} Key...</option>
+                                        {secHeaders.map((h) => (
+                                          <option key={h} value={h}>{h}</option>
+                                        ))}
+                                      </select>
+                                    </div>
 
-                                     {/* Delete Condition Button / Spacer */}
-                                     {keyConditions.length > 1 && condIdx > 0 ? (
-                                       <div className="shrink-0 pt-4">
-                                         <button
-                                           type="button"
-                                           onClick={() => removeCompositeKeyCondition(sec.filename, condIdx)}
-                                           className="p-1.5 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
-                                           title="Remove key condition"
-                                         >
-                                           <Trash2 className="w-4 h-4 text-red-500" />
-                                         </button>
-                                       </div>
-                                     ) : keyConditions.length > 1 ? (
-                                       <div className="shrink-0 pt-4 w-7" />
-                                     ) : null}
-                                   </div>
+                                    {/* Delete Condition Button / Spacer */}
+                                    {keyConditions.length > 1 && condIdx > 0 ? (
+                                      <div className="shrink-0 pt-4">
+                                        <button
+                                          type="button"
+                                          onClick={() => removeCompositeKeyCondition(sec.filename, condIdx)}
+                                          className="p-1.5 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                                          title="Remove key condition"
+                                        >
+                                          <Trash2 className="w-4 h-4 text-red-500" />
+                                        </button>
+                                      </div>
+                                    ) : keyConditions.length > 1 ? (
+                                      <div className="shrink-0 pt-4 w-7" />
+                                    ) : null}
+                                  </div>
                                 </React.Fragment>
                               ))}
                             </div>
 
                             {/* Add Composite Key Button */}
-                              <div>
-                                <button
-                                  type="button"
-                                  onClick={() => addCompositeKeyCondition(sec.filename)}
-                                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>Add Composite Key Condition</span>
-                                </button>
-                              </div>
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => addCompositeKeyCondition(sec.filename)}
+                                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/80 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Add Composite Key Condition</span>
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -1813,9 +1819,9 @@ export function Step4Harmonize() {
 
             const allTables: TableInfo[] = tablesSource.length > 0
               ? tablesSource.map((t: any) => ({
-                  table_name: t.table_name,
-                  columns: (t.columns && t.columns.length > 0) ? t.columns : targetCols,
-                }))
+                table_name: t.table_name,
+                columns: (t.columns && t.columns.length > 0) ? t.columns : targetCols,
+              }))
               : [{ table_name: 'Harmonized Output', columns: targetCols }];
 
             const visibleTables = allTables.filter((t: any) => selectedOutputTables.has(t.table_name));
@@ -1952,8 +1958,8 @@ export function Step4Harmonize() {
                         onClick={() => setExpandedRuleKey(isExpanded ? null : rule.key)}
                         title={`Configure parameters for ${rule.title}`}
                         className={`p-1.5 rounded-lg transition-colors ml-2 cursor-pointer shrink-0 ${isExpanded
-                            ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'
-                            : 'hover:bg-purple-100 dark:hover:bg-purple-900/40 text-gray-400 hover:text-purple-600'
+                          ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'
+                          : 'hover:bg-purple-100 dark:hover:bg-purple-900/40 text-gray-400 hover:text-purple-600'
                           }`}
                       >
                         <Pencil className="w-3.5 h-3.5" />

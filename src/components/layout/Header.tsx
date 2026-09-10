@@ -4,7 +4,11 @@ import { useMigration } from '@/store/migration-store';
 import { Sun, Moon, Settings, Bell, Search, Menu } from 'lucide-react';
 import { STEPS } from '@/config/steps';
 
-export function Header() {
+interface HeaderProps {
+  onOpenMobileMenu?: () => void;
+}
+
+export function Header({ onOpenMobileMenu }: HeaderProps = {}) {
   const { state, dispatch } = useMigration();
   const location = useLocation();
 
@@ -18,10 +22,14 @@ export function Header() {
   const currentStepLabel = currentStepObj.label;
 
   return (
-    <header className="shrink-0 relative z-50 h-16 flex items-center px-6 gap-4">
+    <header className="shrink-0 relative z-20 h-16 flex items-center px-4 sm:px-6 gap-3 sm:gap-4 border-b border-[var(--border)] bg-[var(--bg-secondary)]/90 backdrop-blur-sm">
       {/* Breadcrumb / Title */}
       <div className="flex items-center gap-3">
-        <button className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] transition-colors">
+        <button
+          onClick={onOpenMobileMenu}
+          className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+          title="Toggle Navigation Menu"
+        >
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex flex-col">
