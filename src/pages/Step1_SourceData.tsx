@@ -4,10 +4,10 @@ import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { SAMPLE } from '@/data/sample-data';
-import { OBJS } from '@/data/sap-schemas';
+import { getSAPObjectDefinition } from '@/data/sap-schemas';
 import {
   Card, CardHeader, CardBody, Button, InfoBox, Badge, DataTable,
-  PageLayout, PageGrid, GridCol, PageHeader, Divider, SidebarItem, Select, ConfirmModal
+  PageLayout, PageGrid, GridCol, PageHeader, Divider, SidebarItem, Select, ConfirmModal, TargetObjectImportModal
 } from '@/components/shared';
 import { Zap, ArrowRight, Link2, Database, LayoutTemplate, FileSpreadsheet, Layers, Cloud, HardDrive, Users, Building2, Package, Cable, Settings2, Download, FolderGit2, Plus, Edit3, Save, Trash2, CheckCircle2, X } from 'lucide-react';
 
@@ -56,15 +56,36 @@ export function Step1SourceData() {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Dynamic Target Objects & Import Modal State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [backendObjects, setBackendObjects] = useState<{ id?: string; name: string; description?: string }[]>([]);
+  const [isLoadingObjects, setIsLoadingObjects] = useState(false);
+
+  const fetchBackendObjects = React.useCallback(async () => {
+    setIsLoadingObjects(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/objects`);
+      if (res.ok) {
+        const data = await res.json();
+        setBackendObjects(data.objects || []);
+      }
+    } catch (err) {
+      console.warn('Failed to load target objects from backend:', err);
+    } finally {
+      setIsLoadingObjects(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchProjects();
+    fetchBackendObjects();
     if (state.src === 'EXCEL_CSV' && stagedFiles.length === 0) {
       dispatch({
         type: 'BATCH_UPDATE',
         updates: { rawData: [], headers: [], uploadedData: [], uploadedFileName: '' }
       });
     }
-  }, []);
+  }, [fetchBackendObjects]);
 
   const fetchProjects = async () => {
     try {
@@ -732,10 +753,19 @@ interface SecondaryJoinConfig {
   return (
     <PageLayout>
       <PageHeader title="Step 1 — Source & Data Connect" subtitle="Upload legacy ECC extracts or connect to source databases">
-        <div title={nextDisabled ? "Complete all connection fields, select a project, and load sample data to proceed." : ""}>
-          <Button variant="primary" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => navigate('/mapping')} disabled={nextDisabled}>
-            Next: AI Mapping
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Button
+            variant="secondary"
+            icon={<FileSpreadsheet className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />}
+            onClick={() => setIsImportModalOpen(true)}
+          >
+            Upload Target Object Fields
           </Button>
+          <div title={nextDisabled ? "Complete all connection fields, select a project, and load sample data to proceed." : ""}>
+            <Button variant="primary" icon={<ArrowRight className="w-3.5 h-3.5" />} onClick={() => navigate('/mapping')} disabled={nextDisabled}>
+              Next: AI Mapping
+            </Button>
+          </div>
         </div>
       </PageHeader>
 
@@ -1167,15 +1197,26 @@ interface SecondaryJoinConfig {
               <CardHeader icon={<FolderGit2 className="w-4 h-4" />} title="Project Workspace" subtitle="Required for mapping" />
               <CardBody className="space-y-4">
                 <div>
-                  <label className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] mb-1.5 block">Target Object</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] block">Target Object</label>
+                    <button
+                      type="button"
+                      onClick={() => fetchBackendObjects()}
+                      className="text-[10.5px] font-medium text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Reload target objects from backend database"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                   <Select
                     value={state.obj || ''}
                     onChange={(val) => pickObj(val)}
                     options={[
-                      { value: '', label: '— Select a target object —' },
-                      ...Object.entries(OBJS)
-                        .filter(([k]) => !['BIOGRAPHICAL INFO', 'PERSONAL INFO', 'EMPLOYMENT DETAILS', 'JOB INFO', 'COMPENSATION INFO', 'PAY COMPONENT RECURRING', 'PAY COMPONENT NON RECURRING'].includes(k))
-                        .map(([k, v]) => ({ value: k, label: `${v.label} (${v.module})` }))
+                      { value: '', label: isLoadingObjects ? 'Loading target objects from backend...' : '— Select a target object —' },
+                      ...backendObjects.map((o) => ({
+                        value: o.name,
+                        label: o.name,
+                      }))
                     ]}
                   />
                 </div>
@@ -1279,7 +1320,7 @@ interface SecondaryJoinConfig {
 
           {has && (
             <Card>
-              <CardHeader title="Source Data Preview" subtitle={`${state.src} → ${OBJS[state.obj]?.label} | ${state.headers.length} columns`}>
+              <CardHeader title="Source Data Preview" subtitle={`${state.src} → ${getSAPObjectDefinition(state.obj)?.label || state.obj} | ${state.headers.length} columns`}>
                 <Badge variant="neutral">{state.rawData.length} records</Badge>
                 <Button variant="secondary" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={() => {
                   import('@/lib/utils').then(({ expCSV, dl }) => {
@@ -1302,6 +1343,14 @@ interface SecondaryJoinConfig {
         onConfirm={handleDeleteProject}
         onCancel={() => setShowDeleteConfirm(false)}
         isDestructive={true}
+      />
+      <TargetObjectImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onSuccess={(newObj) => {
+          fetchBackendObjects();
+          pickObj(newObj);
+        }}
       />
     </PageLayout>
   );

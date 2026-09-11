@@ -11,22 +11,8 @@ class AIMappingAgent:
             system_prompt = f"""You are an expert HR & ERP Data Migration Architect with deep knowledge of {source_system} and SuccessFactors.
 You need to accurately map a specific list of Source Fields from {source_system} to a provided dictionary of SuccessFactors target fields for the object {target_object}.
 
-CRITICAL REQUIREMENT: Try to map EVERY source field in `known_source_fields` to its best semantic target field in `target_fields`.
-Analyze both the target technical field names (e.g. `first-name`, `last-name`, `date-of-birth`, `country-of-birth`, `gender`, `marital-status`, `nationality`, `person-id-external`) and human-readable field descriptions.
-
-COMMON SEMANTIC MATCHES TO APPLY:
-- "Given Name" / "First Name" -> `first-name` or `firstName`
-- "Family Name" / "Last Name" / "Surname" -> `last-name` or `lastName`
-- "Birth Date" / "DOB" -> `date-of-birth` or `dateOfBirth`
-- "Birth Country" / "Country of Birth" -> `country-of-birth` or `countryOfBirth`
-- "Gender Description" / "Gender" / "Sex" -> `gender`
-- "Citizenship" / "Nationality" -> `nationality`
-- "Marital Status" -> `marital-status` or `maritalStatus`
-- "Person ID" / "Employee ID" / "PERNR" -> `person-id-external` or `user-id`
-- "Hire Date" / "Start Date" -> `hire-date` or `start-date`
-- "Phone" / "Mobile" -> `phone-number`
-- "Email" -> `email-address`
-- "Zip" / "Postal Code" -> `zip-code`
+CRITICAL REQUIREMENT: Map source fields in `known_source_fields` to their best semantic target field in `target_fields`.
+STRICT BOUNDARY: You MUST choose `target_field` EXCLUSIVELY from the provided `Target Fields Dictionary`. NEVER invent, assume, or output any target field that is not explicitly present in the `Target Fields Dictionary`.
 
 Output MUST be a JSON array of objects with the following keys for all successfully mapped fields:
 - source_field: The EXACT field name from the `known_source_fields` array.

@@ -41,8 +41,7 @@ export function Step2AIMapping() {
     async function fetchSchema() {
       setIsLoadingSchema(true);
       try {
-        // Map frontend key to backend DB name
-        const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+        const objName = state.obj || 'Biographical Info';
         const res = await getSAPSchema(objName);
         const fields = (res && res.fields ? res.fields : []).map((f: any) => ({
           ...f,
@@ -68,7 +67,7 @@ export function Step2AIMapping() {
                 username: state.connUser,
                 password: state.connPass,
                 system_type: state.src,
-                target_object: state.obj || 'CUSTOMER'
+                target_object: state.obj || 'Biographical Info'
               })
             });
             if (schemaRes.ok) {
@@ -143,7 +142,7 @@ export function Step2AIMapping() {
     setTimeout(() => tick(0, 'Connected'), 300);
 
     try {
-      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+      const objName = state.obj || 'Biographical Info';
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/map/save_all`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -176,7 +175,7 @@ export function Step2AIMapping() {
     setTimeout(() => tick(0, 'Connected'), 300);
 
     try {
-      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+      const objName = state.obj || 'Biographical Info';
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/map/history?project_id=${state.projectId}&source_system=${state.src}&target_object=${objName}`);
       if (!res.ok) throw new Error('Failed to fetch history');
 
@@ -420,7 +419,7 @@ export function Step2AIMapping() {
     return rows;
   }
 
-  const obj = OBJS[state.obj];
+  const obj = OBJS[state.obj] || { label: state.obj };
   const validMappings = state.mapping.filter(m => m.sap && m.sap.trim() !== "");
   const invalidTargetMappings = state.mapping.filter(m => !isTargetValid(m.sap));
   const invalidTargetCount = invalidTargetMappings.length;
@@ -466,8 +465,12 @@ export function Step2AIMapping() {
       'GEWEI': ['GEWEI', 'WEIGHT_UNIT'],
     };
     const res: MappingEntry[] = [];
-    if (OBJS[state.obj] && OBJS[state.obj].fields) {
-      OBJS[state.obj].fields.forEach((f) => {
+    const fieldsToMap = sapFields.length > 0
+      ? sapFields.map(f => ({ n: f.field_name, l: f.field_description || f.field_name, t: f.type || 'STRING', req: f.is_mandatory }))
+      : (OBJS[state.obj]?.fields || []);
+
+    if (fieldsToMap.length > 0) {
+      fieldsToMap.forEach((f) => {
         const syns = sem[f.n] || [f.n];
         let best: string | null = null, bs = 0;
         state.headers.forEach((h) => {
@@ -510,7 +513,7 @@ export function Step2AIMapping() {
     setTimeout(() => tick(2, 'Known source matches applied'), 1300);
     setTimeout(() => tick(3, 'Cache & Overrides applied'), 1600);
     try {
-      const objName = state.obj === 'CUSTOMER' ? 'Customer' : state.obj === 'VENDOR' ? 'Vendor' : state.obj === 'MATERIAL' ? 'Material' : (state.obj || 'Customer');
+      const objName = state.obj || 'Biographical Info';
       const data = await generateMapping(state.src || 'SAP_ECC', objName, state.headers);
       const mapping = data.mappings || [];
 

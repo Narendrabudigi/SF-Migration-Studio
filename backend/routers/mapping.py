@@ -66,18 +66,21 @@ def get_systems():
 def get_objects():
     try:
         client = supabase_service.get_client()
-        res = client.table("sf_objects").select("*").execute()
-        return {"objects": res.data}
+        res = client.table("sf_objects").select("*").order("name").execute()
+        objects = res.data or []
+        for obj in objects:
+            desc = obj.get("description") or ""
+            if "master" in desc.lower():
+                clean_desc = obj.get("name", "")
+                try:
+                    client.table("sf_objects").update({"description": clean_desc}).eq("id", obj["id"]).execute()
+                    obj["description"] = clean_desc
+                except Exception:
+                    obj["description"] = clean_desc
+        return {"objects": objects}
     except Exception as e:
-        logger.warning(f"Failed to fetch SF objects from Supabase: {e}")
-        return {"objects": [
-            {"id": "bio-info", "name": "Biographical Info"},
-            {"id": "personal-info", "name": "Personal Info"},
-            {"id": "emp-details", "name": "Employment Details"},
-            {"id": "job-info", "name": "Job Info"},
-            {"id": "customer", "name": "CUSTOMER"},
-            {"id": "vendor", "name": "VENDOR"}
-        ]}
+        logger.error(f"Failed to fetch SF objects from Supabase: {e}")
+        return {"objects": []}
 
 
 @router.post("/source_fields")
@@ -209,13 +212,13 @@ def generate_mapping(req: MapRequest):
             "description": f.get("field_description", "")
         })
     
-    # Merge default rich target fields so cross-object fields (First Name, Gender, Citizenship, etc.) can be matched
-    target_fields_to_pass = list(minimal_target_fields)
-    existing_sap_names = {tf["sap_field"] for tf in target_fields_to_pass}
-    for def_tf in ALL_DEFAULT_TARGET_FIELDS:
-        if def_tf["sap_field"] not in existing_sap_names:
-            target_fields_to_pass.append(def_tf)
-            existing_sap_names.add(def_tf["sap_field"])
+    # STRICT DATABASE SCHEMA RULE:
+    # Only map to the exact target fields that exist in the database for this object.
+    # Never inject foreign target fields from other objects (e.g. PerPerson into EmpEmployment).
+    if minimal_target_fields:
+        target_fields_to_pass = minimal_target_fields
+    else:
+        target_fields_to_pass = ALL_DEFAULT_TARGET_FIELDS
     
     sf_mandatory_map = {}
     for tf in target_fields:

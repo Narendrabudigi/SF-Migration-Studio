@@ -15,10 +15,12 @@ export interface SAPField {
 
 export interface SAPObject {
   label: string;
-  icon: string;
-  module: string;
-  tcode: string;
-  dmc: string;
+  icon?: string;
+  module?: string;
+  tcode?: string;
+  dmc?: string;
+  desc?: string;
+  key?: string;
   fields: SAPField[];
 }
 
@@ -159,3 +161,24 @@ export const DMC_COLS: Record<string, string[]> = {
   'Pay Component Recurring': ['user-id', 'pay-component', 'paycompvalue', 'currency-code', 'start-date'],
   'Pay Component Non Recurring': ['user-id', 'pay-component', 'value', 'currency-code', 'pay-date'],
 };
+
+export function getSAPObjectDefinition(key: string): SAPObject {
+  if (!key) {
+    return BIOGRAPHICAL_INFO;
+  }
+  if (OBJS[key]) {
+    return OBJS[key];
+  }
+  const matchKey = Object.keys(OBJS).find(k => k.toLowerCase() === key.toLowerCase());
+  if (matchKey && OBJS[matchKey]) {
+    return OBJS[matchKey];
+  }
+  return {
+    key: key,
+    label: key,
+    module: 'Employee Central',
+    desc: `SuccessFactors ${key} Target Object`,
+    fields: []
+  };
+}
+

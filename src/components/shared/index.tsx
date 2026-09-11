@@ -584,4 +584,6 @@ export function ConfirmModal({
 
 export { DynamicTransformModal } from './DynamicTransformModal';
 export type { DynamicTransformModalProps } from './DynamicTransformModal';
+export { TargetObjectImportModal } from './TargetObjectImportModal';
+
 
