@@ -109,8 +109,6 @@ OBJS: Dict[str, List[Dict[str, Any]]] = {
 RULES = [
     {"id": "REQUIRED_FIELDS", "label": "Required Fields", "description": "Must not be empty"},
     {"id": "FIELD_LENGTH", "label": "Field Length", "description": "Max char enforcement"},
-    {"id": "COUNTRY_ISO", "label": "Country ISO", "description": "2-3 letter format"},
-    {"id": "CURRENCY_ISO", "label": "Currency ISO", "description": "3-letter ISO 4217"},
     {"id": "NUMERIC_ID", "label": "Numeric IDs", "description": "KUNNR/LIFNR/ID digits"},
     {"id": "EMAIL_FORMAT", "label": "Email Format", "description": "Valid @ format"},
     {"id": "DATE_FORMAT", "label": "Date Format", "description": "YYYYMMDD 8 digits"},
@@ -350,15 +348,6 @@ class ValidationAgent:
                 errs.append({"f": actual_field_name, "m": f"Exceeds max length {f['len']} (actual {len(sv)})", "sev": "ERROR", "rule": "FIELD_LENGTH"})
 
             std_norm = _norm_k(std_field_name)
-
-            # Country ISO
-            if std_norm in ("LAND1", "COUNTRYKEY", "COUNTRYOFBIRTH", "NATIONALITY", "CITIZENSHIP", "COUNTRY"):
-                if not COUNTRY_RE.match(sv):
-                    errs.append({"f": actual_field_name, "m": "Country must be ISO 2-3 chars", "sev": "ERROR", "rule": "COUNTRY_ISO"})
-
-            # Currency ISO
-            if (f.get("t") == "CUKY" or std_norm in ("WAERS", "CURRENCY", "CURRENCYCODE", "CUKY")) and not CURRENCY_RE.match(sv):
-                warns.append({"f": actual_field_name, "m": "Must be 3-letter ISO currency", "sev": "WARN", "rule": "CURRENCY_ISO"})
 
             # Numeric ID
             if std_norm in ("KUNNR", "LIFNR") and not NUMERIC_ID_RE.match(sv):

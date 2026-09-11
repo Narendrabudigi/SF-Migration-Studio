@@ -1,0 +1,11 @@
+Source Field,SF Target Field,Transform,Confidence,Label
+Worker Number,PerPerson.personIdExternal,trim,95,Person ID External
+Employee Reference,EmpEmployment.userId,trim,90,User ID
+Given Name,PerPersonal.firstName,trim,100,First Name
+Family Name,PerPersonal.lastName,trim,100,Last Name
+Birth Date,PerPerson.dateOfBirth,trim,100,Date Of Birth
+Birth Country,PerPerson.countryOfBirth,country,100,Country Of Birth
+Gender Description,PerPersonal.gender,trim,100,Gender
+Citizenship,PerPersonal.nationality,country,100,Nationality
+Marital Status,PerPersonal.maritalStatus,trim,100,Marital Status
+Preferred Language,PerPersonal.nativePreferredLang,trim,95,Native Preferred Language

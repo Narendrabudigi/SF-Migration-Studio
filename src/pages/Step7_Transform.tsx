@@ -21,6 +21,18 @@ function resolveTargetTables(fieldName: string, extractedTables: TableInfo[] = [
 
   const matchedTables: string[] = [];
 
+  // 1. Direct schema prefix match if field is like "PerPerson.personIdExternal"
+  if (cleanField.includes('.')) {
+    const prefixSchema = cleanField.split('.')[0].trim();
+    for (const t of extractedTables) {
+      if (t.table_name.toLowerCase() === prefixSchema.toLowerCase()) {
+        if (!matchedTables.includes(t.table_name)) {
+          matchedTables.push(t.table_name);
+        }
+      }
+    }
+  }
+
   for (const t of extractedTables) {
     for (const col of t.columns) {
       const cleanCol = col.replace(/^\[\d+\]\s*/, '').trim();
@@ -1202,7 +1214,7 @@ export function Step7Transform() {
                       </div>
                     ) : (
                       visibleTables.map((t: any) => {
-                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping);
+                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
                         const currentPage = tablePages[t.table_name] || 1;
                         const paginatedRows = tableRows.slice((currentPage - 1) * 15, currentPage * 15);
 

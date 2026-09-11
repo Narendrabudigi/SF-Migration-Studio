@@ -1262,8 +1262,6 @@ VALIDATION_FIXERS.update({
 
 CLEANSER_RULES: list[tuple[str, CleanserRule]] = [
     ("CL_TRIM_WHITESPACE", apply_trim_whitespace),
-    ("CL_COUNTRY_TO_ISO", apply_country_to_iso),
-    ("CL_CURRENCY_TO_ISO", apply_currency_to_iso),
     ("CL_PAYMENT_TERMS_TO_SF", apply_payment_terms_to_sf),
     ("CL_MATERIAL_TYPE_TO_SF", apply_material_type_to_sf),
     ("CL_PAYMENT_TERMS_TO_SAP", apply_payment_terms_to_sap),

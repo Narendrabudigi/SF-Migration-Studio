@@ -88,8 +88,6 @@ export function Step5Validate() {
   const STANDARD_RULES = [
     { id: 'REQUIRED_FIELDS', label: 'Required Fields', description: 'Must not be empty' },
     { id: 'FIELD_LENGTH', label: 'Field Length', description: 'Max char enforcement' },
-    { id: 'COUNTRY_ISO', label: 'Country ISO', description: '2-3 letter format' },
-    { id: 'CURRENCY_ISO', label: 'Currency ISO', description: '3-letter ISO 4217' },
     { id: 'NUMERIC_ID', label: 'Numeric IDs', description: 'KUNNR/LIFNR digits' },
     { id: 'EMAIL_FORMAT', label: 'Email Format', description: 'Valid @ format' },
     { id: 'DATE_FORMAT', label: 'Date Format', description: 'YYYYMMDD 8 digits' }

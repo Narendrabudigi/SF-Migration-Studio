@@ -763,8 +763,6 @@ VALIDATION_FIXERS: dict[str, ValidationFixer] = {
 
 CLEANSER_RULES: list[tuple[str, CleanserRule]] = [
     ("CL_TRIM_WHITESPACE", apply_trim_whitespace),
-    ("CL_COUNTRY_TO_ISO", apply_country_to_iso),
-    ("CL_CURRENCY_TO_ISO", apply_currency_to_iso),
     ("CL_PAYMENT_TERMS_TO_SAP", apply_payment_terms_to_sap),
     ("CL_MATERIAL_TYPE_TO_SAP", apply_material_type_to_sap),
     ("CL_PAD_NUMERIC_IDENTIFIER", apply_pad_numeric_identifier),

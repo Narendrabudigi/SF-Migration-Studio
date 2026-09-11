@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
@@ -9,7 +9,7 @@ import { generateMapping, correctMapping, getSAPSchema } from '@/services/ai-ser
 import { dl, expCSV } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import { PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge, StatBox, StatsGrid, PageHeader, EmptyState, AIResponse, Select } from '@/components/shared';
-import { ArrowRight, Download, Bot, ArrowLeft, Edit3, Save, X, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Download, Bot, ArrowLeft, Edit3, Save, X, CheckCircle2, Upload, AlertTriangle, Check, Search, FileSpreadsheet } from 'lucide-react';
 import type { MappingEntry } from '@/store/migration-store';
 
 export function Step2AIMapping() {
@@ -23,6 +23,16 @@ export function Step2AIMapping() {
   const [mappingSearch, setMappingSearch] = useState('');
   const [editingMapSrc, setEditingMapSrc] = useState<{ index: number; value: string } | null>(null);
   const [stagedMaps, setStagedMaps] = useState<{ src: string; sap: string }[]>([]);
+
+  // Manual Mapping Upload & Edit State
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [editingMapping, setEditingMapping] = useState<{
+    index: number;
+    src: string;
+    sap: string;
+    tr: string;
+    note?: string;
+  } | null>(null);
 
   const [sapFields, setSapFields] = useState<any[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
@@ -191,10 +201,217 @@ export function Step2AIMapping() {
     }
   };
 
+  const isTargetValid = useCallback((targetField: string) => {
+    if (!targetField || !targetField.trim()) return false;
+    const clean = targetField.trim().toLowerCase();
+    const base = clean.split('.').pop() || clean;
+    return sapFields.some(f => {
+      const fName = (f.field_name || '').toLowerCase();
+      const fBase = fName.split('.').pop() || fName;
+      return fName === clean || fBase === base || fBase === clean;
+    });
+  }, [sapFields]);
+
+  const handleUploadMapping = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    showLoad('Uploading Mapping Sheet...', `Reading ${file.name} and parsing mapping rows...`, [
+      'Reading file...',
+      'Matching schema fields...',
+      'Assigning mappings...'
+    ]);
+    setTimeout(() => tick(0, 'Reading file...'), 200);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      let parsedMappings: any[] = [];
+
+      // Try backend endpoint first
+      try {
+        const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/upload_mapping`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (res.ok) {
+          const json = await res.json();
+          parsedMappings = json.mappings || [];
+        }
+      } catch (backendErr) {
+        console.warn('Backend upload_mapping failed, using local parse fallback:', backendErr);
+      }
+
+      // Fallback for CSV if backend not available
+      if (parsedMappings.length === 0 && (file.name.endsWith('.csv') || file.name.endsWith('.txt'))) {
+        const text = await file.text();
+        parsedMappings = parseCSVMapping(text);
+      }
+
+      if (parsedMappings.length === 0) {
+        throw new Error('No valid mapping rows found in the uploaded file.');
+      }
+
+      setTimeout(() => tick(1, 'Matching SF target fields...'), 500);
+
+      // Enrich mappings with SF schema definitions
+      const enriched = parsedMappings.map(m => {
+        const sapClean = (m.sap || '').trim();
+        const matchedDef = sapFields.find(f => {
+          const fn = (f.field_name || '').toLowerCase();
+          const base = fn.split('.').pop() || fn;
+          const targetClean = sapClean.toLowerCase();
+          const targetBase = targetClean.split('.').pop() || targetClean;
+          return fn === targetClean || base === targetBase || base === targetClean;
+        });
+
+        return {
+          src: m.src || '',
+          sap: m.sap || '',
+          tr: m.tr || 'trim',
+          conf: m.conf || 100,
+          req: matchedDef ? matchedDef.is_mandatory : false,
+          sapLabel: matchedDef ? (matchedDef.field_description || matchedDef.sap_structure) : (m.sapLabel || ''),
+          note: m.note || 'Uploaded from sheet'
+        };
+      });
+
+      // Update source headers
+      const newHeaders = new Set(state.headers);
+      enriched.forEach(m => {
+        if (m.src && m.src.trim()) newHeaders.add(m.src.trim());
+      });
+
+      setTimeout(() => tick(2, 'Finalizing...'), 800);
+
+      setTimeout(() => {
+        hideLoad();
+        dispatch({ type: 'SET_FIELD', field: 'headers', value: Array.from(newHeaders) });
+        dispatch({ type: 'SET_FIELD', field: 'mapping', value: enriched });
+        dispatch({ type: 'SET_FIELD', field: 'isMappingSaved', value: false });
+
+        const invalidCount = enriched.filter(m => !isTargetValid(m.sap)).length;
+        if (invalidCount > 0) {
+          toast(`Uploaded ${enriched.length} mappings. ⚠️ ${invalidCount} target field(s) not in schema (highlighted in red).`, 'warning');
+        } else {
+          toast(`Successfully uploaded ${enriched.length} mappings!`, 'ok');
+        }
+      }, 1000);
+
+    } catch (err: any) {
+      hideLoad();
+      toast(err.message || 'Failed to upload mapping file', 'err');
+    } finally {
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    }
+  };
+
+  const handleSaveMappingEdit = () => {
+    if (!editingMapping) return;
+    const { index, src, sap, tr, note } = editingMapping;
+    if (!src.trim() && !sap.trim()) {
+      toast('Both source and target fields cannot be empty.', 'err');
+      return;
+    }
+
+    const matchedDef = sapFields.find(f => {
+      const fn = (f.field_name || '').toLowerCase();
+      const base = fn.split('.').pop() || fn;
+      const targetClean = (sap || '').trim().toLowerCase();
+      const targetBase = targetClean.split('.').pop() || targetClean;
+      return fn === targetClean || base === targetBase || base === targetClean;
+    });
+
+    const updated = [...state.mapping];
+    const targetValid = isTargetValid(sap);
+    updated[index] = {
+      ...updated[index],
+      src: src.trim(),
+      sap: sap.trim(),
+      tr: tr || 'trim',
+      req: matchedDef ? matchedDef.is_mandatory : false,
+      sapLabel: matchedDef ? (matchedDef.field_description || matchedDef.sap_structure) : (updated[index]?.sapLabel || ''),
+      conf: targetValid ? Math.max(updated[index]?.conf || 0, 95) : 0,
+      note: note || updated[index]?.note || 'Edited'
+    };
+
+    // Ensure source field is in headers
+    if (src.trim() && !state.headers.includes(src.trim())) {
+      dispatch({ type: 'SET_FIELD', field: 'headers', value: [...state.headers, src.trim()] });
+    }
+
+    dispatch({ type: 'SET_FIELD', field: 'mapping', value: updated });
+    dispatch({ type: 'SET_FIELD', field: 'isMappingSaved', value: false });
+    setEditingMapping(null);
+    toast('Mapping updated successfully!', 'ok');
+  };
+
+  function parseCSVMapping(csvText: string): any[] {
+    const lines = csvText.split(/\r?\n/).filter(line => line.trim().length > 0);
+    if (lines.length < 2) return [];
+
+    const parseRow = (line: string) => {
+      const result: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (char === ',' && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+
+    const headers = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[\s_\-]+/g, ''));
+    let srcIdx = headers.findIndex(h => h.includes('src') || h.includes('source') || h.includes('legacy'));
+    let tgtIdx = headers.findIndex(h => h.includes('target') || h.includes('sap') || h.includes('sf') || h.includes('destination'));
+    let trIdx = headers.findIndex(h => h.includes('tr') || h.includes('transform') || h.includes('rule'));
+    let lblIdx = headers.findIndex(h => h.includes('label') || h.includes('desc'));
+
+    if (srcIdx === -1) srcIdx = 0;
+    if (tgtIdx === -1) tgtIdx = 1;
+
+    const rows: any[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseRow(lines[i]);
+      const src = cols[srcIdx] || '';
+      const tgt = cols[tgtIdx] || '';
+      const tr = (trIdx !== -1 && cols[trIdx]) ? cols[trIdx].toLowerCase() : 'trim';
+      const label = (lblIdx !== -1 && cols[lblIdx]) ? cols[lblIdx] : '';
+
+      if (src || tgt) {
+        rows.push({
+          src,
+          sap: tgt,
+          tr: tr || 'trim',
+          conf: 100,
+          sapLabel: label,
+          note: 'Uploaded from CSV'
+        });
+      }
+    }
+    return rows;
+  }
+
   const obj = OBJS[state.obj];
   const validMappings = state.mapping.filter(m => m.sap && m.sap.trim() !== "");
-  const hi = validMappings.filter((m) => m.conf >= 80).length;
-  const needsReview = validMappings.length - hi;
+  const invalidTargetMappings = state.mapping.filter(m => !isTargetValid(m.sap));
+  const invalidTargetCount = invalidTargetMappings.length;
+  const hi = validMappings.filter((m) => m.conf >= 80 && isTargetValid(m.sap)).length;
+  const needsReview = validMappings.filter((m) => isTargetValid(m.sap) && m.conf < 80).length;
 
   const mappedSources = state.mapping.map(m => m.src);
   const mappedSaps = state.mapping.map(m => m.sap);
@@ -402,6 +619,16 @@ export function Step2AIMapping() {
             <div title={state.headers.length === 0 ? "You must load Source Fields in Step 1 before generating an AI Mapping." : ""}>
               <Button variant="cyan" icon={<Bot className="w-3.5 h-3.5" />} onClick={doAIMap} disabled={state.headers.length === 0}>Generate AI Mapping</Button>
             </div>
+            <Button variant="secondary" icon={<Upload className="w-3.5 h-3.5" />} onClick={() => uploadInputRef.current?.click()}>
+              Upload Mapping
+            </Button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              className="hidden"
+              onChange={handleUploadMapping}
+            />
             <div title={!state.mapping.length ? "Generate an AI Mapping first before saving." : ""}>
               <Button variant="secondary" icon={<Save className="w-3.5 h-3.5" />} onClick={saveMappings} disabled={!state.mapping.length}>Save Mappings</Button>
             </div>
@@ -413,10 +640,13 @@ export function Step2AIMapping() {
 
           {validMappings.length > 0 && (
             <StatsGrid>
-              <StatBox value={validMappings.length} label="Fields Mapped" color="var(--color-primary-500)" />
+              <StatBox value={state.mapping.length} label="Total Mapped" color="var(--color-primary-500)" />
               <StatBox value={hi} label="High Conf ≥80%" color="var(--color-success)" />
               <StatBox value={needsReview} label="Needs Review <80%" color="var(--color-warning)" />
-              <StatBox value={unmappedSource} label="Unmapped Source" color="var(--color-danger)" />
+              {invalidTargetCount > 0 && (
+                <StatBox value={invalidTargetCount} label="Invalid Target Fields" subtitle="Highlighted in red" color="var(--color-danger)" />
+              )}
+              <StatBox value={unmappedSource} label="Unmapped Source" color="var(--color-teal)" />
             </StatsGrid>
           )}
 
@@ -445,22 +675,33 @@ export function Step2AIMapping() {
               {state.mapping.length > 0 ? (
                 <>
                   {/* Header */}
-                  <div className="grid grid-cols-[1fr_30px_1fr_70px_140px_28px] gap-2 px-2 pb-2 mb-2 border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-wider text-[var(--text-tertiary)]">
-                    <span>Source</span><span></span><span>SF Field</span><span>Conf</span><span>Transform</span><span></span>
+                  <div className="grid grid-cols-[1fr_24px_1.2fr_65px_120px_70px] gap-2 px-2 pb-2 mb-2 border-b border-[var(--border)] font-mono text-[9px] uppercase tracking-wider text-[var(--text-tertiary)]">
+                    <span>Source</span><span></span><span>SF Target Field</span><span>Conf</span><span>Transform</span><span className="text-right pr-2">Actions</span>
                   </div>
                   {/* Rows */}
                   <div className="space-y-1.5 max-h-[calc(100vh-250px)] overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent pr-2">
                     {[...state.mapping]
                       .filter(m => (m.src && m.src.toLowerCase().includes(mappingSearch.toLowerCase())) || (m.sap && m.sap.toLowerCase().includes(mappingSearch.toLowerCase())) || (m.sapLabel && m.sapLabel.toLowerCase().includes(mappingSearch.toLowerCase())))
                       .sort((a, b) => {
+                        const aValid = isTargetValid(a.sap);
+                        const bValid = isTargetValid(b.sap);
+                        if (!aValid && bValid) return -1;
+                        if (aValid && !bValid) return 1;
                         if (a.req === b.req) return 0;
                         return a.req ? -1 : 1;
                       }).map((m, i) => {
+                        const targetValid = isTargetValid(m.sap);
                         const c = m.conf || 0;
-                        const cc = c >= 80 ? '#10b981' : c >= 60 ? '#f59e0b' : '#ef4444'; // emerald-500, amber-500, red-500
-                        const borderCls = c >= 80 ? 'border-emerald-200 dark:border-emerald-800/30' : c >= 60 ? 'border-amber-200 dark:border-amber-800/30' : 'border-red-200 dark:border-red-800/30';
+                        const cc = !targetValid ? '#ef4444' : c >= 80 ? '#10b981' : c >= 60 ? '#f59e0b' : '#ef4444';
+                        const borderCls = !targetValid
+                          ? 'border-red-500/90 dark:border-red-500/80 bg-red-50/80 dark:bg-red-950/40 shadow-xs shadow-red-500/10'
+                          : c >= 80
+                            ? 'border-emerald-200 dark:border-emerald-800/30'
+                            : c >= 60
+                              ? 'border-amber-200 dark:border-amber-800/30'
+                              : 'border-red-200 dark:border-red-800/30';
                         return (
-                          <div key={i} className={cn('grid grid-cols-[1fr_30px_1fr_70px_140px_28px] gap-2 items-center px-3 py-2 rounded-xl border bg-[var(--bg-tertiary)]/30 group', borderCls)}>
+                          <div key={i} className={cn('grid grid-cols-[1fr_24px_1.2fr_65px_120px_70px] gap-2 items-center px-3 py-2 rounded-xl border bg-[var(--bg-tertiary)]/30 group transition-all', borderCls)}>
                             <div className="min-w-0">
                               {editingMapSrc?.index === state.mapping.indexOf(m) ? (
                                 <input
@@ -483,19 +724,28 @@ export function Step2AIMapping() {
                               <div className="text-[9.5px] text-[var(--text-tertiary)] truncate">{m.srcType || 'source'}</div>
                             </div>
                             <div className="text-center text-[var(--text-tertiary)]">→</div>
-                            <div>
-                              <div className="font-mono text-[11px] text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
-                                {m.sap}
+                            <div className="min-w-0">
+                              <div className={cn("font-mono text-[11px] flex items-center gap-1.5 flex-wrap", !targetValid ? "text-red-600 dark:text-red-400 font-bold" : "text-teal-600 dark:text-teal-400")}>
+                                <span className="truncate">{m.sap || <i className="text-red-500 font-bold">(Target Field Missing)</i>}</span>
                                 {m.req && <Badge variant="red" className="text-[8px] px-1 font-bold">M</Badge>}
+                                {!targetValid && (
+                                  <Badge variant="red" className="text-[8px] px-1.5 py-0.2 font-bold flex items-center gap-0.5 shrink-0">
+                                    <AlertTriangle className="w-2.5 h-2.5" /> Not in Schema
+                                  </Badge>
+                                )}
                               </div>
-                              <div className="text-[9.5px] text-[var(--text-tertiary)]">{m.sapLabel}</div>
+                              <div className={cn("text-[9.5px] truncate", !targetValid ? "text-red-500 font-semibold" : "text-[var(--text-tertiary)]")}>
+                                {!targetValid ? "Target field not in SF schema. Click Edit to assign." : m.sapLabel}
+                              </div>
                             </div>
                             <div>
                               <div className="flex items-center gap-1.5">
                                 <div className="flex-1 h-1 rounded-full bg-[var(--border)] overflow-hidden">
-                                  <div className="h-full rounded-full" style={{ width: `${c}%`, background: cc }} />
+                                  <div className="h-full rounded-full" style={{ width: `${!targetValid ? 100 : c}%`, background: cc }} />
                                 </div>
-                                <span className="font-mono text-[10px] font-bold" style={{ color: cc }}>{c}%</span>
+                                <span className="font-mono text-[10px] font-bold" style={{ color: cc }}>
+                                  {!targetValid ? 'ERR' : `${c}%`}
+                                </span>
                               </div>
                             </div>
                             <Select
@@ -505,18 +755,34 @@ export function Step2AIMapping() {
                               className="w-[110px]"
                               options={Object.entries(TRANSFORMS).map(([k, v]) => ({ value: k, label: v.label }))}
                             />
-                            <button
-                              onClick={() => removeMapping(i)}
-                              className="w-6 h-6 flex items-center justify-center rounded-lg border border-[var(--border)] hover:border-red-300 text-[var(--text-tertiary)] hover:text-red-500 transition-colors cursor-pointer"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center gap-1 justify-end">
+                              <button
+                                onClick={() => setEditingMapping({
+                                  index: state.mapping.indexOf(m),
+                                  src: m.src || '',
+                                  sap: m.sap || '',
+                                  tr: m.tr || 'trim',
+                                  note: m.note || ''
+                                })}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg border border-[var(--border)] hover:border-primary-400 text-[var(--text-secondary)] hover:text-primary-500 hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer shrink-0"
+                                title="Edit Mapping"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => removeMapping(state.mapping.indexOf(m))}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg border border-[var(--border)] hover:border-red-300 text-[var(--text-tertiary)] hover:text-red-500 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
+                                title="Remove Mapping"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
 
                     {stagedMaps.map((staged, idx) => (
-                      <div key={idx} className="grid grid-cols-[1fr_30px_1fr_70px_140px_28px] gap-2 items-center px-3 py-2 rounded-xl border border-primary-500 bg-[var(--bg-tertiary)]/50 mb-2">
+                      <div key={idx} className="grid grid-cols-[1fr_24px_1.2fr_65px_120px_70px] gap-2 items-center px-3 py-2 rounded-xl border border-primary-500 bg-[var(--bg-tertiary)]/50 mb-2">
                         <Select
                           size="sm"
                           searchable
@@ -542,12 +808,12 @@ export function Step2AIMapping() {
                         />
                         <div className="text-center font-mono text-[10px] text-emerald-500">100%</div>
                         <div className="text-center text-[10px] text-[var(--text-tertiary)]">none</div>
-                        <div className="flex items-center gap-1 justify-center">
+                        <div className="flex items-center gap-1 justify-end">
                           <button onClick={() => {
                             const updated = [...stagedMaps];
                             updated.splice(idx, 1);
                             setStagedMaps(updated);
-                          }} className="text-red-500 hover:text-red-400 transition-colors"><X className="w-4 h-4" /></button>
+                          }} className="w-7 h-7 flex items-center justify-center text-red-500 hover:text-red-400 transition-colors"><X className="w-4 h-4" /></button>
                         </div>
                       </div>
                     ))}
@@ -599,6 +865,145 @@ export function Step2AIMapping() {
         </GridCol>
 
       </PageGrid>
+
+      {/* Edit Mapping Modal */}
+      {editingMapping && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--text-primary)] flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-primary-500" />
+                  Edit Field Mapping
+                </h3>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Update source and target SuccessFactors schema assignment
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingMapping(null)}
+                className="p-1.5 rounded-lg text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* Source Field */}
+              <div>
+                <label className="block text-[10.5px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
+                  Source Field Name
+                </label>
+                <div className="space-y-1.5">
+                  <Select
+                    size="sm"
+                    searchable
+                    value={state.headers.includes(editingMapping.src) ? editingMapping.src : ''}
+                    onChange={(v) => { if (v) setEditingMapping({ ...editingMapping, src: v }); }}
+                    options={[
+                      { value: '', label: 'Select from available source headers...' },
+                      ...state.headers.map(h => ({ value: h, label: h }))
+                    ]}
+                  />
+                  <input
+                    type="text"
+                    value={editingMapping.src}
+                    onChange={(e) => setEditingMapping({ ...editingMapping, src: e.target.value })}
+                    placeholder="Or type custom source field name..."
+                    className="w-full text-[11px] font-mono rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              {/* Target SF Field */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[10.5px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
+                    SuccessFactors Target Field
+                  </label>
+                  {isTargetValid(editingMapping.sap) ? (
+                    <Badge variant="green" className="text-[9px] font-bold flex items-center gap-1">
+                      <Check className="w-2.5 h-2.5" /> Target in Schema
+                    </Badge>
+                  ) : (
+                    <Badge variant="red" className="text-[9px] font-bold flex items-center gap-1">
+                      <AlertTriangle className="w-2.5 h-2.5" /> Not in Schema
+                    </Badge>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Select
+                    size="sm"
+                    searchable
+                    value={editingMapping.sap}
+                    onChange={(v) => setEditingMapping({ ...editingMapping, sap: v })}
+                    options={[
+                      { value: '', label: 'Select valid target schema field...' },
+                      ...sapFields.map(f => ({
+                        value: f.field_name,
+                        label: `${f.field_name} ${f.field_description ? `(${f.field_description})` : ''} ${f.is_mandatory ? '[REQ]' : ''}`
+                      }))
+                    ]}
+                  />
+                  <input
+                    type="text"
+                    value={editingMapping.sap}
+                    onChange={(e) => setEditingMapping({ ...editingMapping, sap: e.target.value })}
+                    placeholder="Or type target field name (e.g. PerPerson.personIdExternal)..."
+                    className={cn(
+                      "w-full text-[11px] font-mono rounded-lg border px-3 py-2 text-[var(--text-primary)] outline-none transition-colors",
+                      isTargetValid(editingMapping.sap)
+                        ? "border-[var(--border)] bg-[var(--bg-primary)] focus:border-primary-500"
+                        : "border-red-500 bg-red-50/20 dark:bg-red-950/20 focus:border-red-500 text-red-600 dark:text-red-400"
+                    )}
+                  />
+                  {!isTargetValid(editingMapping.sap) && (
+                    <p className="text-[10px] text-red-500 font-sans">
+                      ⚠️ This field does not match any field in the target schema. Select from the dropdown above to resolve.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Transform Rule */}
+              <div>
+                <label className="block text-[10.5px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
+                  Transformation Rule
+                </label>
+                <Select
+                  size="sm"
+                  value={editingMapping.tr || 'none'}
+                  onChange={(v) => setEditingMapping({ ...editingMapping, tr: v })}
+                  options={Object.entries(TRANSFORMS).map(([k, v]) => ({ value: k, label: `${v.label} (${k})` }))}
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-[10.5px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider mb-1.5">
+                  Mapping Notes / Description
+                </label>
+                <input
+                  type="text"
+                  value={editingMapping.note || ''}
+                  onChange={(e) => setEditingMapping({ ...editingMapping, note: e.target.value })}
+                  placeholder="Optional notes or documentation..."
+                  className="w-full text-[11px] rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-[var(--text-primary)] outline-none focus:border-primary-500 transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-[var(--border)] bg-[var(--bg-tertiary)]/40">
+              <Button variant="secondary" size="sm" onClick={() => setEditingMapping(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="sm" icon={<Check className="w-3.5 h-3.5" />} onClick={handleSaveMappingEdit}>
+                Save Changes
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageLayout>
   );
 }

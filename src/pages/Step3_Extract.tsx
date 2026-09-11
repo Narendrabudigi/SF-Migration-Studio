@@ -584,10 +584,10 @@ export function Step3Extract() {
                       </div>
                     ) : (
                       visibleTables.map((t: any) => {
-                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping);
+                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
                         return (
                           <Card key={t.table_name}>
-                            <CardHeader title={`Extracted Records: ${t.table_name}`}>
+                            <CardHeader title={`Extracted: ${t.table_name}`}>
                               <div className="ml-auto flex items-center gap-2">
                                 <span className="text-[11px] text-[var(--text-secondary)] mr-2 font-mono">
                                   {tableCols.length} fields · {tableRows.length} rows{keyFilterValue ? ' (filtered)' : ''}

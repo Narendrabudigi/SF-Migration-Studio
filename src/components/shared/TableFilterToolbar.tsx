@@ -115,7 +115,7 @@ export function getTableDisplayData(
   table: TableInfo,
   rows: Record<string, any>[],
   mappings: any[] = [],
-  preferTargetFields: boolean = false
+  preferTargetFields: boolean = true
 ): { columns: string[]; rows: Record<string, any>[] } {
   if (!rows || rows.length === 0) {
     return { columns: table.columns, rows: [] };
@@ -324,12 +324,13 @@ export function getTableDisplayData(
       projected[col] = val !== undefined ? val : (r[col] ?? '');
     });
 
-    const rowSource = (r.SOURCE && String(r.SOURCE).trim() !== '' && r.SOURCE !== '(empty)') 
-      ? r.SOURCE 
-      : (r.source || r._source || r.SOURCE_FILE || 'EXCEL_CSV');
-
-    if (projected.SOURCE === undefined || projected.SOURCE === '' || projected.SOURCE === '(empty)') {
-      projected.SOURCE = rowSource;
+    if (finalColumns.some(c => c.toUpperCase() === 'SOURCE')) {
+      const rowSource = (r.SOURCE && String(r.SOURCE).trim() !== '' && r.SOURCE !== '(empty)') 
+        ? r.SOURCE 
+        : (r.source || r._source || r.SOURCE_FILE || 'EXCEL_CSV');
+      if (projected.SOURCE === undefined || projected.SOURCE === '' || projected.SOURCE === '(empty)') {
+        projected.SOURCE = rowSource;
+      }
     }
     return projected;
   });

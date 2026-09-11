@@ -450,185 +450,103 @@ You MUST return the output as a valid JSON object matching this exact schema:
             }
 
     def group_records_by_sap_structure(self, harmonized_results: list, target_object: str, mappings: list) -> list:
+        """
+        Dynamically partitions records into pure schema tables (e.g. PerPerson, PerPersonal, EmpEmployment)
+        based on the target schemas and field names defined in AI Mapping.
+        Strictly isolates columns belonging to each schema and includes the single parent join key in child tables.
+        """
         if not harmonized_results:
             return []
 
         all_cols = list(harmonized_results[0].keys())
-        tgt_upper = str(target_object).upper()
-        
-        # Determine fallback target object table name
-        if "BIOGRAPHICAL" in tgt_upper:
-            obj_name = "Biographical Info"
-        elif "PERSONAL" in tgt_upper:
-            obj_name = "Personal Info"
-        elif "EMPLOYMENT" in tgt_upper:
-            obj_name = "Employment Details"
-        elif "JOB" in tgt_upper:
-            obj_name = "Job Info"
-        elif "COMPENSATION" in tgt_upper:
-            obj_name = "Compensation Info"
-        elif "RECURRING" in tgt_upper:
-            obj_name = "Pay Component Recurring"
-        elif "NON RECURRING" in tgt_upper or "NON-RECURRING" in tgt_upper:
-            obj_name = "Pay Component Non Recurring"
-        else:
-            obj_name = target_object or "Biographical Info"
+        tgt_clean = str(target_object or "").replace(" Data", "").strip() or "Biographical Info"
 
-        primary_sheet = obj_name if obj_name.endswith("Data") else f"{obj_name} Data"
+        # 1. Parse mappings to group fields strictly by their pure schema prefix
+        schema_fields = {}   # schema -> list of dicts {src, target, full_sap}
+        schema_order = []
+        root_pk_target = None
+        root_pk_src = None
+        root_schema = None
 
-        # Structure Name to Table Display Name Mapping
-        STRUCTURE_TABLE_MAP = {
-            "PERPERSON": "Biographical Info Data",
-            "BIOGRAPHICAL": "Biographical Info Data",
-            "PERPERSONAL": "Personal Info Data",
-            "PERSONAL": "Personal Info Data",
-            "EMPEMPLOYMENT": "Employment Details Data",
-            "EMPLOYMENT": "Employment Details Data",
-            "EMPJOB": "Job Info Data",
-            "JOB": "Job Info Data",
-            "EMPCOMPENSATION": "Compensation Info Data",
-            "COMPENSATION": "Compensation Info Data",
-            "EMPPAYCOMPRECURRING": "Compensation Info Data",
-            "EMPPAYCOMPNONRECURRING": "Compensation Info Data",
-            "PEREMAIL": "Email Info Data",
-            "EMAIL": "Email Info Data",
-            "PERPHONE": "Phone Info Data",
-            "PHONE": "Phone Info Data",
-            "PERADDRESS": "Address Info Data",
-            "ADDRESS": "Address Info Data",
-            "PERNATIONALID": "National ID Info Data",
-            "NATIONALID": "National ID Info Data",
-        }
-
-        # Index column -> StructureName from AI Mappings
-        col_to_structure = {}
         for m in (mappings or []):
             if isinstance(m, dict):
-                m_src = str(m.get("src", ""))
-                m_sap = str(m.get("sap", ""))
+                m_src = str(m.get("src", "")).strip()
+                m_sap = str(m.get("sap", "")).strip()
             else:
-                m_src = str(getattr(m, "src", ""))
-                m_sap = str(getattr(m, "sap", ""))
+                m_src = str(getattr(m, "src", "")).strip()
+                m_sap = str(getattr(m, "sap", "")).strip()
 
-            src_clean = re.sub(r"^\[\d+\]\s*", "", m_src).strip()
-            src_base = src_clean.split(".")[-1].strip()
-
-            sap_clean = re.sub(r"^\[\d+\]\s*", "", m_sap).strip()
-            sap_struct = sap_clean.split(".")[0].strip() if "." in sap_clean else ""
-
-            if sap_struct:
-                col_to_structure[src_clean] = sap_struct
-                col_to_structure[src_base] = sap_struct
-                col_to_structure[m_src] = sap_struct
-                if m_sap:
-                    col_to_structure[m_sap] = sap_struct
-                    col_to_structure[sap_clean] = sap_struct
-                    col_to_structure[sap_clean.split(".")[-1]] = sap_struct
-
-        # Helper to get all sheets a column belongs to
-        def get_col_sheets(col_name: str) -> list:
-            clean_col = re.sub(r"^\[\d+\]\s*", "", str(col_name)).strip()
-            col_base = clean_col.split(".")[-1].strip()
-
-            # 1. STRICT AI MAPPING STRUCTURE CHECK (Primary Source of Truth)
-            sap_struct = col_to_structure.get(clean_col) or col_to_structure.get(col_base) or col_to_structure.get(col_name)
-            if not sap_struct and "." in clean_col:
-                sap_struct = clean_col.split(".")[0].strip()
-
-            if sap_struct:
-                st_upper = sap_struct.upper()
-                if st_upper in STRUCTURE_TABLE_MAP:
-                    return [STRUCTURE_TABLE_MAP[st_upper]]
-                for k, v in STRUCTURE_TABLE_MAP.items():
-                    if k in st_upper:
-                        return [v]
-                return [f"{sap_struct} Data"]
-
-            # 2. Fallback heuristic keyword check if unmapped
-            cn_upper = clean_col.upper()
-            if any(k in cn_upper for k in ["PERSON_ID", "PERSONID", "BIOGRAPHICAL", "BIRTH"]):
-                return ["Biographical Info Data"]
-            elif any(k in cn_upper for k in ["FIRST_NAME", "LAST_NAME", "GENDER", "MARITAL"]):
-                return ["Personal Info Data"]
-            elif any(k in cn_upper for k in ["USER_ID", "USERID", "HIRE_DATE", "EMPLOYMENT"]):
-                return ["Employment Details Data"]
-            elif any(k in cn_upper for k in ["JOB_CODE", "DEPARTMENT", "LOCATION", "DIVISION", "COMPANY"]):
-                return ["Job Info Data"]
-            elif any(k in cn_upper for k in ["PAY", "COMPENSATION", "SALARY", "CURRENCY"]):
-                return ["Compensation Info Data"]
-
-            return [primary_sheet]
-
-        # Helper to determine if column is a key column
-        def is_column_key(col_name: str) -> bool:
-            clean_col = re.sub(r"^\[\d+\]\s*", "", col_name).upper()
-            if any(k in clean_col for k in [
-                "PERSON_ID_EXTERNAL", "PERSONIDEXTERNAL", "USER_ID", "USERID", "WORKER",
-                "EMPLOYEE", "EMPLOYMENT", "ASSIGNMENT", "PERSON", "REFERENCE", "REF",
-                "SEQ_NUMBER", "SEQNUMBER", "START_DATE", "STARTDATE", "CODE",
-                "CUSTOMER_NUMBER", "LIFNR", "KUNNR", "MATNR", "PARTNER"
-            ]):
-                return True
-            
-            sap_full = ""
-            for m in (mappings or []):
-                if isinstance(m, dict):
-                    m_src = str(m.get("src", ""))
-                    m_sap = str(m.get("sap", ""))
-                else:
-                    m_src = str(getattr(m, "src", ""))
-                    m_sap = str(getattr(m, "sap", ""))
-                m_clean = re.sub(r"^\[\d+\]\s*", "", m_src)
-                if m_src == col_name or m_clean == clean_col or m_src.split(".")[-1] == clean_col:
-                    sap_full = m_sap
-                    break
-            
-            if sap_full:
-                sap_field = sap_full.split(".")[-1].upper()
-                if sap_field in ["PERSON-ID-EXTERNAL", "USER-ID", "START-DATE", "SEQ-NUMBER", "KUNNR", "LIFNR", "MATNR"] or "NUM" in sap_field or "ID" in sap_field or "REF" in sap_field:
-                    return True
-            return False
-
-        meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
-
-        from collections import defaultdict
-        sheets_map = defaultdict(list)
-        key_cols = [c for c in all_cols if is_column_key(c)]
-
-        for col in all_cols:
-            col_clean = re.sub(r"^\[\d+\]\s*", "", str(col)).strip()
-            col_lower = col_clean.lower()
-            if any(kw in col_lower for kw in meta_keywords):
+            if not m_src or not m_sap:
                 continue
 
-            sheets = get_col_sheets(col)
-            if not sheets:
-                sheets = [primary_sheet]
+            src_clean = re.sub(r"^\[\d+\]\s*", "", m_src).strip()
+            sap_clean = re.sub(r"^\[\d+\]\s*", "", m_sap).strip()
 
-            for s in sheets:
-                if col not in sheets_map[s]:
-                    sheets_map[s].append(col)
+            if "." in sap_clean:
+                parts = sap_clean.split(".", 1)
+                schema = parts[0].strip()
+                target_field = parts[1].strip()
+            else:
+                schema = tgt_clean
+                target_field = sap_clean.strip()
 
-        # Include primary key / ID columns across all generated structure tables
-        for s in sheets_map:
-            for kc in key_cols:
-                if kc not in sheets_map[s]:
-                    sheets_map[s].insert(0, kc)
+            # Identify the primary key of the primary entity (e.g., personIdExternal, userId, pernr)
+            field_upper = target_field.upper()
+            if root_pk_target is None:
+                if any(k in field_upper for k in ["PERSONIDEXTERNAL", "PERSON_ID_EXTERNAL", "USERID", "USER_ID", "PERNR", "KUNNR", "LIFNR"]):
+                    root_pk_target = target_field
+                    root_pk_src = src_clean
+                    root_schema = schema
+
+            if schema not in schema_fields:
+                schema_fields[schema] = []
+                schema_order.append(schema)
+
+            schema_fields[schema].append({
+                "src": src_clean,
+                "target": target_field,
+                "full_sap": sap_clean
+            })
+
+        # Fallback root PK if not matched by specific keyword
+        if root_pk_target is None and schema_order:
+            first_schema = schema_order[0]
+            if schema_fields[first_schema]:
+                root_pk_target = schema_fields[first_schema][0]["target"]
+                root_pk_src = schema_fields[first_schema][0]["src"]
+                root_schema = first_schema
+
+        # If no schema mappings were detected, fallback to single clean table
+        if not schema_fields:
+            meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
+            clean_cols = [c for c in all_cols if not any(kw in str(c).lower() for kw in meta_keywords) and str(c).upper() != "SOURCE"]
+            return [{
+                "table_name": tgt_clean,
+                "columns": clean_cols if clean_cols else all_cols,
+                "row_count": len(harmonized_results)
+            }]
 
         tables_list = []
-        for s_name, s_cols in sheets_map.items():
-            if s_cols:
-                tables_list.append({
-                    "table_name": s_name,
-                    "columns": s_cols,
-                    "row_count": len(harmonized_results)
-                })
+        for schema in schema_order:
+            fields = schema_fields[schema]
+            cols = [f["target"] for f in fields]
 
-        return tables_list if tables_list else [{
-            "table_name": primary_sheet,
-            "columns": [c for c in all_cols if not any(kw in str(c).lower() for kw in meta_keywords)],
-            "row_count": len(harmonized_results)
-        }]
+            # In child tables, ensure the parent entity primary key is present as join key
+            if root_pk_target and schema != root_schema:
+                has_pk = any(f["target"] == root_pk_target for f in fields)
+                if not has_pk:
+                    cols.insert(0, root_pk_target)
+
+            unique_cols = list(dict.fromkeys(cols))
+
+            tables_list.append({
+                "table_name": schema,  # Pure Schema Name (e.g., PerPerson, PerPersonal, EmpEmployment)
+                "columns": unique_cols,
+                "row_count": len(harmonized_results)
+            })
+
+        return tables_list
 
     group_records_by_sf_structure = group_records_by_sap_structure
+
 

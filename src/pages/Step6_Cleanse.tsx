@@ -95,8 +95,6 @@ const DEFAULT_CLEANSER_DYNAMIC_RULES: DynamicRuleItem[] = [];
 
 const DEFAULT_STANDARD_RULES: StandardRuleState[] = [
   { code: 'CL_TRIM_WHITESPACE', name: 'Trim Whitespace', description: 'Leading/trailing spaces', enabled: true },
-  { code: 'CL_COUNTRY_TO_ISO', name: 'Country→ISO', description: 'Full names to 2-3 char', enabled: true },
-  { code: 'CL_CURRENCY_TO_ISO', name: 'Currency→ISO', description: 'Map to ISO 4217', enabled: true },
   { code: 'CL_PAD_NUMERIC_IDENTIFIER', name: 'Pad Numeric IDs', description: 'KUNNR/LIFNR 10 digits', enabled: true },
   { code: 'CL_UPPERCASE_CODE_FIELDS', name: 'UPPERCASE Codes', description: 'Org & code fields', enabled: true },
   { code: 'CL_CLEAN_TAX_NUMBER', name: 'Clean Tax Numbers', description: 'Remove special chars', enabled: true },
@@ -1967,7 +1965,7 @@ export function Step6Cleanse() {
                         </div>
                       ) : (
                         visibleTables.map((t: any) => {
-                          const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping);
+                          const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
                           return (
                             <div key={t.table_name} className="rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] p-4 space-y-3 shadow-xs">
                               <div className="flex items-center justify-between">

@@ -250,8 +250,9 @@ async def run_harmonization(
             harmonized_tables = []
 
         if not harmonized_tables:
+            clean_name = str(sap_object or "").replace(" Data", "").strip() or "Harmonized"
             harmonized_tables = [{
-                "table_name": f"{sap_object} Data",
+                "table_name": clean_name,
                 "columns": columns if columns else actual_columns,
                 "row_count": len(final_rows)
             }]
@@ -399,8 +400,9 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
             harmonized_tables = []
 
         if not harmonized_tables:
+            clean_name = str(req.sap_object or "").replace(" Data", "").strip() or "Harmonized"
             harmonized_tables = [{
-                "table_name": f"{req.sap_object} Data",
+                "table_name": clean_name,
                 "columns": columns if columns else actual_columns,
                 "row_count": len(final_rows)
             }]
@@ -647,8 +649,9 @@ async def run_harmonization_multi_flow(
             harmonized_tables = []
 
         if not harmonized_tables:
+            clean_name = str(sap_object or "").replace(" Data", "").strip() or "Harmonized"
             harmonized_tables = [{
-                "table_name": f"{sap_object} Data",
+                "table_name": clean_name,
                 "columns": columns if columns else actual_columns,
                 "row_count": len(final_rows)
             }]

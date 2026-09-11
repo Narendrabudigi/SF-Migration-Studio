@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional, Any
 import logging
+import io
+import re
+import pandas as pd
 
 from services.supabase_client import supabase_service
 from agents.ai_mapping_agent import ai_mapping_agent
@@ -544,3 +547,102 @@ def generic_prompt(req: PromptRequest):
     from services.llm_orchestrator import llm_orchestrator
     result = llm_orchestrator.generate_generic(system_prompt, req.prompt)
     return {"content": result}
+
+@router.post("/upload_mapping")
+async def upload_mapping_file(file: UploadFile = File(...)):
+    filename = file.filename or ""
+    try:
+        content = await file.read()
+        if filename.lower().endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(io.BytesIO(content))
+        else:
+            try:
+                df = pd.read_csv(io.StringIO(content.decode('utf-8')))
+            except Exception:
+                try:
+                    df = pd.read_csv(io.StringIO(content.decode('latin1')))
+                except Exception:
+                    df = pd.read_csv(io.BytesIO(content), encoding_errors='ignore')
+        
+        # Normalize column headers
+        col_map = {}
+        for c in df.columns:
+            c_str = str(c).strip().lower().replace(" ", "_").replace("-", "_")
+            col_map[c] = c_str
+        
+        df = df.rename(columns=col_map)
+        cols = list(df.columns)
+        
+        # Identify source field column
+        src_col = None
+        for c in cols:
+            if any(k in c for k in ["source_field", "sourcefield", "source_col", "src", "legacy_field", "legacy"]):
+                src_col = c
+                break
+        if not src_col:
+            for c in cols:
+                if "source" in c:
+                    src_col = c
+                    break
+        if not src_col and len(cols) > 0:
+            src_col = cols[0]
+            
+        # Identify target field column
+        tgt_col = None
+        for c in cols:
+            if any(k in c for k in ["target_field", "targetfield", "sap_field", "sf_field", "sf_target", "target", "sap", "sf", "destination"]):
+                tgt_col = c
+                break
+        if not tgt_col and len(cols) > 1:
+            tgt_col = cols[1]
+            
+        # Identify transform column
+        tr_col = None
+        for c in cols:
+            if any(k in c for k in ["transform", "tr", "rule", "transformation"]):
+                tr_col = c
+                break
+                
+        # Identify label / description column
+        label_col = None
+        for c in cols:
+            if any(k in c for k in ["label", "description", "desc", "saplabel"]):
+                label_col = c
+                break
+
+        parsed_mappings = []
+        for _, row in df.iterrows():
+            src_val = str(row.get(src_col, "")).strip() if src_col and pd.notna(row.get(src_col)) else ""
+            tgt_val = str(row.get(tgt_col, "")).strip() if tgt_col and pd.notna(row.get(tgt_col)) else ""
+            tr_val = str(row.get(tr_col, "trim")).strip().lower() if tr_col and pd.notna(row.get(tr_col)) else "trim"
+            label_val = str(row.get(label_col, "")).strip() if label_col and pd.notna(row.get(label_col)) else ""
+            
+            # Clean 'nan' or empty
+            if src_val.lower() == 'nan': src_val = ""
+            if tgt_val.lower() == 'nan': tgt_val = ""
+            if tr_val.lower() == 'nan' or not tr_val: tr_val = "trim"
+            if label_val.lower() == 'nan': label_val = ""
+            
+            if not src_val and not tgt_val:
+                continue
+                
+            parsed_mappings.append({
+                "src": src_val,
+                "sap": tgt_val,
+                "tr": tr_val,
+                "conf": 100,
+                "req": False,
+                "sapLabel": label_val,
+                "note": "Uploaded from mapping sheet"
+            })
+            
+        return {
+            "status": "success",
+            "filename": filename,
+            "count": len(parsed_mappings),
+            "mappings": parsed_mappings
+        }
+    except Exception as e:
+        logger.error(f"Error parsing mapping file: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse mapping sheet: {str(e)}")
+
