@@ -417,6 +417,45 @@ export function Step7Transform() {
   const [tablePages, setTablePages] = useState<Record<string, number>>({});
   const extractedTables = state.extractedTables || [];
 
+  // Expand / collapse state for grouped transformation mapping sheet rules
+  const [isMappingRulesExpanded, setIsMappingRulesExpanded] = useState<boolean>(false);
+
+  const fileRules = useMemo(() => rules.filter(r => r.source === 'file'), [rules]);
+  const otherRules = useMemo(() => rules.filter(r => r.source !== 'file'), [rules]);
+
+  const allFileRulesEnabled = fileRules.length > 0 && fileRules.every(r => r.enabled);
+
+  const toggleAllFileRules = (enable: boolean) => {
+    const updated = rules.map(r => r.source === 'file' ? { ...r, enabled: enable } : r);
+    setRules(updated);
+    applyRulesBatch(updated);
+  };
+
+  const deleteAllFileRules = () => {
+    const updated = rules.filter(r => r.source !== 'file');
+    setRules(updated);
+    applyRulesBatch(updated);
+  };
+
+  useEffect(() => {
+    const activeMappingSchemas = new Set<string>();
+    (state.mapping || []).forEach((m: any) => {
+      const sapStr = String(m.sap || '').trim();
+      if (sapStr.includes('.')) {
+        activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+      }
+    });
+
+    const filtered = activeMappingSchemas.size > 0
+      ? extractedTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+      : extractedTables;
+    const finalTables = filtered.length > 0 ? filtered : extractedTables;
+
+    if (finalTables.length > 0) {
+      setSelectedOutputTables(new Set(finalTables.map((t: any) => t.table_name)));
+    }
+  }, [extractedTables.length, state.mapping]);
+
   const handleApplyDynamicRule = (newRule: TransformRuleItem) => {
     const updatedRules = [...rules, newRule];
     setRules(updatedRules);
@@ -477,8 +516,18 @@ export function Step7Transform() {
         if (res.ok) {
           const json = await res.json();
           const loadedRules = (Array.isArray(json.dynamic_rules) ? json.dynamic_rules : []).map(cleanRule);
-          setRules(loadedRules);
-          dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: loadedRules });
+          // Deduplicate loaded rules against identical Source_Field, Source_Data, Target_Data
+          const deduped: TransformRuleItem[] = [];
+          const seen = new Set<string>();
+          loadedRules.forEach(r => {
+            const key = `${String(r.field || '').trim().toLowerCase()}|||${String(r.oldValue ?? '').trim()}|||${String(r.newValue ?? '').trim()}|||${r.source || ''}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              deduped.push(r);
+            }
+          });
+          setRules(deduped);
+          dispatch({ type: 'SET_FIELD', field: 'transformDynamicRules', value: deduped });
         }
       } catch (err) {
         console.error('Failed to load saved transform dynamic rules:', err);
@@ -607,35 +656,64 @@ export function Step7Transform() {
 
       const data = await res.json();
       const auditLog: any[] = data.summary?.audit_log || [];
+      const parsedFileRules: any[] = data.summary?.mapping_rules || [];
       const newRules: TransformRuleItem[] = [];
 
-      // Extract unique field replacement rules from audit log / summary
+      // Existing rules key set for strict deduplication:
+      // If Source_Field, Source_Data and Target_Data are same, ignore it!
+      const existingKeys = new Set(
+        rules.map(r => `${String(r.field || '').trim().toLowerCase()}|||${String(r.oldValue ?? '').trim()}|||${String(r.newValue ?? '').trim()}`)
+      );
+
+      const candidateList: { field: string; old_value: string; new_value: string }[] = [];
+      if (parsedFileRules.length > 0) {
+        parsedFileRules.forEach((item: any) => {
+          candidateList.push({
+            field: item.Source_Field || item.field || 'General',
+            old_value: String(item.Source_Data ?? item.oldValue ?? ''),
+            new_value: String(item.Target_Data ?? item.newValue ?? '')
+          });
+        });
+      } else {
+        auditLog.forEach((item: any) => {
+          candidateList.push({
+            field: item.field || 'General',
+            old_value: String(item.old_value ?? ''),
+            new_value: String(item.new_value ?? '')
+          });
+        });
+      }
+
       const uniqueRuleMap = new Map<string, TransformRuleItem>();
-      auditLog.forEach((item: any) => {
-        const key = `${item.field}_${item.old_value}_${item.new_value}`;
+      candidateList.forEach((item) => {
+        const fieldClean = item.field.trim();
+        const oldVal = item.old_value.trim();
+        const newVal = item.new_value.trim();
+        const key = `${fieldClean.toLowerCase()}|||${oldVal}|||${newVal}`;
+
+        // If identical Source_Field, Source_Data, and Target_Data already exists, IGNORE IT!
+        if (existingKeys.has(key)) return;
+
         if (!uniqueRuleMap.has(key)) {
           uniqueRuleMap.set(key, {
             id: `rule_file_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             source: 'file',
-            field: item.field || 'General',
-            oldValue: item.old_value,
-            newValue: item.new_value,
-            description: `Replace '${item.old_value || '(empty)'}' → '${item.new_value}' in ${item.field}`,
+            field: fieldClean || 'General',
+            oldValue: oldVal,
+            newValue: newVal,
+            description: `Replace '${oldVal || '(empty)'}' → '${newVal}' in ${fieldClean}`,
             enabled: true,
+            fileName: mappingFile.name,
           });
         }
       });
 
-      if (uniqueRuleMap.size === 0) {
-        newRules.push({
-          id: `rule_file_${Date.now()}`,
-          source: 'file',
-          field: 'Mapping File',
-          description: `Apply rules from ${mappingFile.name}`,
-          enabled: true,
-        });
-      } else {
-        newRules.push(...Array.from(uniqueRuleMap.values()));
+      newRules.push(...Array.from(uniqueRuleMap.values()));
+
+      if (newRules.length === 0) {
+        toast('All rules in this mapping sheet already exist in active transformations. Ignored duplicates.', 'info');
+        applyRulesBatch(rules);
+        return;
       }
 
       const updatedRules = [...rules, ...newRules];
@@ -644,7 +722,7 @@ export function Step7Transform() {
       // Execute combined active batch
       applyRulesBatch(updatedRules);
 
-      toast(`Transformed data successfully! Parsed ${newRules.length} rule(s).`, 'ok');
+      toast(`Transformed data successfully! Added ${newRules.length} new rule(s).`, 'ok');
     } catch (err: any) {
       toast(err.message, 'err');
     } finally {
@@ -1005,92 +1083,202 @@ export function Step7Transform() {
                         <p className="text-[10px]">Upload a mapping file or enter an AI prompt and click Run Transform.</p>
                       </div>
                     ) : (
-                      rules.map((rule) => (
-                        <div
-                          key={rule.id}
-                          className={`p-2.5 rounded-xl border transition-all flex items-start gap-2.5 ${
-                            rule.enabled
-                              ? 'bg-white dark:bg-gray-900/80 border-violet-300 dark:border-violet-800 shadow-xs'
-                              : 'bg-[var(--bg-tertiary)]/40 border-[var(--border)] opacity-60'
-                          }`}
-                        >
-                          {/* Checkbox Tick/Untick */}
-                          <button
-                            type="button"
-                            onClick={() => toggleRule(rule.id)}
-                            className="mt-0.5 cursor-pointer text-violet-600 dark:text-violet-400 hover:opacity-80 transition-opacity shrink-0"
-                            title={rule.enabled ? "Untick to disable rule" : "Tick to enable rule"}
-                          >
-                            {rule.enabled ? (
-                              <CheckSquare className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                            ) : (
-                              <Square className="w-4 h-4 text-[var(--text-tertiary)]" />
+                      <>
+                        {/* Grouped Mapping Sheet Rules (Single Consolidated Entry with Expand/Collapse Arrow) */}
+                        {fileRules.length > 0 && (
+                          <div className="rounded-xl border border-emerald-300 dark:border-emerald-800/80 bg-emerald-50/20 dark:bg-emerald-950/20 overflow-hidden shadow-xs transition-all">
+                            {/* Consolidated Header Row */}
+                            <div className="p-2.5 flex items-center justify-between gap-2 bg-emerald-50/50 dark:bg-emerald-950/40">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                {/* Toggle All File Rules Checkbox */}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleAllFileRules(!allFileRulesEnabled)}
+                                  className="cursor-pointer text-emerald-600 dark:text-emerald-400 hover:opacity-80 transition-opacity shrink-0"
+                                  title={allFileRulesEnabled ? "Untick to disable all mapping rules" : "Tick to enable all mapping rules"}
+                                >
+                                  {allFileRulesEnabled ? (
+                                    <CheckSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                                  ) : (
+                                    <Square className="w-4 h-4 text-[var(--text-tertiary)]" />
+                                  )}
+                                </button>
+
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-extrabold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 shrink-0">
+                                  FILE
+                                </span>
+
+                                <span className="text-[11.5px] font-bold text-[var(--text-primary)] font-mono truncate">
+                                  Transformation Mapping Rules
+                                </span>
+
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                                  {fileRules.filter(r => r.enabled).length}/{fileRules.length} rules
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {/* Expand / Collapse Arrow Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setIsMappingRulesExpanded(!isMappingRulesExpanded)}
+                                  className="px-2 py-0.5 rounded-md hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 cursor-pointer transition-colors flex items-center gap-1 text-[10px] font-semibold border border-emerald-200 dark:border-emerald-800/60"
+                                  title={isMappingRulesExpanded ? "Collapse mapping rules" : "Expand mapping rules to view changing rules"}
+                                >
+                                  <span>{isMappingRulesExpanded ? "Collapse" : "Expand"}</span>
+                                  {isMappingRulesExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                </button>
+
+                                {/* Delete All File Rules */}
+                                <button
+                                  type="button"
+                                  onClick={deleteAllFileRules}
+                                  className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
+                                  title="Delete all mapping sheet rules"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Expanded Sub-List: Displays individual changing rules in mapping */}
+                            {isMappingRulesExpanded && (
+                              <div className="border-t border-emerald-200 dark:border-emerald-800/60 p-2 space-y-1.5 bg-white/70 dark:bg-gray-900/70 max-h-[180px] overflow-y-auto scrollbar-thin">
+                                {fileRules.map((rule) => (
+                                  <div
+                                    key={rule.id}
+                                    className={`flex items-center justify-between p-1.5 rounded-lg border transition-all text-[11px] ${
+                                      rule.enabled
+                                        ? 'bg-white dark:bg-gray-800 border-emerald-200 dark:border-emerald-900/60'
+                                        : 'bg-gray-50/50 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800 opacity-60'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRule(rule.id)}
+                                        className="cursor-pointer text-emerald-600 hover:opacity-80 shrink-0"
+                                        title={rule.enabled ? "Disable this rule" : "Enable this rule"}
+                                      >
+                                        {rule.enabled ? (
+                                          <CheckSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                        ) : (
+                                          <Square className="w-3.5 h-3.5 text-[var(--text-tertiary)]" />
+                                        )}
+                                      </button>
+                                      <span className="font-bold text-[var(--text-primary)] font-mono truncate max-w-[120px]" title={rule.field}>
+                                        {rule.field}
+                                      </span>
+                                      <div className="flex items-center gap-1 font-mono text-[10px] shrink-0">
+                                        <span className="px-1 py-0.2 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through max-w-[70px] truncate" title={rule.oldValue}>
+                                          {rule.oldValue || '(empty)'}
+                                        </span>
+                                        <span className="text-[var(--text-tertiary)]">→</span>
+                                        <span className="px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold max-w-[70px] truncate" title={rule.newValue}>
+                                          {rule.newValue}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteRule(rule.id)}
+                                      className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0 ml-1"
+                                      title="Delete rule"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
                             )}
-                          </button>
-
-                          {/* Rule Details */}
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-extrabold uppercase tracking-wider ${
-                                rule.source === 'nlp'
-                                  ? 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800'
-                                  : (rule.source === 'dynamic' || rule.source === 'transform_dynamic_rule')
-                                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
-                                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                              }`}>
-                                {rule.source === 'nlp' ? 'AI NLP' : (rule.source === 'dynamic' || rule.source === 'transform_dynamic_rule') ? 'DYNAMIC' : 'FILE'}
-                              </span>
-                              {rule.rowNumber !== undefined && (
-                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                                  Row #{rule.rowNumber}
-                                </span>
-                              )}
-                              {rule.scope === 'column' && (
-                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                  Entire Column
-                                </span>
-                              )}
-                              {rule.operation && (
-                                <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800 uppercase">
-                                  {rule.operation}
-                                </span>
-                              )}
-                              <span className="text-[11.5px] font-bold text-[var(--text-primary)] font-mono truncate">
-                                {rule.field}
-                              </span>
-                            </div>
-
-
-                            <div className="text-[11px] text-[var(--text-secondary)] leading-snug font-mono">
-                              {rule.oldValue !== undefined || rule.newValue !== undefined ? (
-                                <div className="flex items-center gap-1 flex-wrap text-[10px]">
-                                  <span className="px-1 py-0.2 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through">
-                                    {rule.oldValue || '(empty)'}
-                                  </span>
-                                  <span className="text-[var(--text-tertiary)]">→</span>
-                                  <span className="px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
-                                    {rule.newValue}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-[10.5px] font-sans text-[var(--text-secondary)] line-clamp-2">
-                                  {rule.description}
-                                </span>
-                              )}
-                            </div>
                           </div>
+                        )}
 
-                          {/* Delete Button */}
-                          <button
-                            type="button"
-                            onClick={() => deleteRule(rule.id)}
-                            className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
-                            title="Delete rule"
+                        {/* Other Rules (AI NLP, Dynamic, Custom) */}
+                        {otherRules.map((rule) => (
+                          <div
+                            key={rule.id}
+                            className={`p-2.5 rounded-xl border transition-all flex items-start gap-2.5 ${
+                              rule.enabled
+                                ? 'bg-white dark:bg-gray-900/80 border-violet-300 dark:border-violet-800 shadow-xs'
+                                : 'bg-[var(--bg-tertiary)]/40 border-[var(--border)] opacity-60'
+                            }`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))
+                            {/* Checkbox Tick/Untick */}
+                            <button
+                              type="button"
+                              onClick={() => toggleRule(rule.id)}
+                              className="mt-0.5 cursor-pointer text-violet-600 dark:text-violet-400 hover:opacity-80 transition-opacity shrink-0"
+                              title={rule.enabled ? "Untick to disable rule" : "Tick to enable rule"}
+                            >
+                              {rule.enabled ? (
+                                <CheckSquare className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                              ) : (
+                                <Square className="w-4 h-4 text-[var(--text-tertiary)]" />
+                              )}
+                            </button>
+
+                            {/* Rule Details */}
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-extrabold uppercase tracking-wider ${
+                                  rule.source === 'nlp'
+                                    ? 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800'
+                                    : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                                }`}>
+                                  {rule.source === 'nlp' ? 'AI NLP' : 'DYNAMIC'}
+                                </span>
+                                {rule.rowNumber !== undefined && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                                    Row #{rule.rowNumber}
+                                  </span>
+                                )}
+                                {rule.scope === 'column' && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                    Entire Column
+                                  </span>
+                                )}
+                                {rule.operation && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800 uppercase">
+                                    {rule.operation}
+                                  </span>
+                                )}
+                                <span className="text-[11.5px] font-bold text-[var(--text-primary)] font-mono truncate">
+                                  {rule.field}
+                                </span>
+                              </div>
+
+                              <div className="text-[11px] text-[var(--text-secondary)] leading-snug font-mono">
+                                {rule.oldValue !== undefined || rule.newValue !== undefined ? (
+                                  <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                                    <span className="px-1 py-0.2 rounded bg-red-500/10 text-red-600 dark:text-red-400 line-through">
+                                      {rule.oldValue || '(empty)'}
+                                    </span>
+                                    <span className="text-[var(--text-tertiary)]">→</span>
+                                    <span className="px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
+                                      {rule.newValue}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10.5px] font-sans text-[var(--text-secondary)] line-clamp-2">
+                                    {rule.description}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Delete Button */}
+                            <button
+                              type="button"
+                              onClick={() => deleteRule(rule.id)}
+                              className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
+                              title="Delete rule"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </>
                     )}
                   </div>
                 </CardBody>
@@ -1154,9 +1342,21 @@ export function Step7Transform() {
 
           {/* Transformed Data Preview — Multi-Table Display */}
           {has ? (() => {
-            const allTables: TableInfo[] = extractedTables.length > 0
+            const activeMappingSchemas = new Set<string>();
+            (state.mapping || []).forEach((m: any) => {
+              const sapStr = String(m.sap || '').trim();
+              if (sapStr.includes('.')) {
+                activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+              }
+            });
+
+            const rawTables = extractedTables.length > 0
               ? extractedTables
               : [{ table_name: 'Transformed Output', columns: Object.keys(transformedRows[0] || {}) }];
+            const filtered = activeMappingSchemas.size > 0
+              ? rawTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+              : rawTables;
+            const allTables: TableInfo[] = filtered.length > 0 ? filtered : rawTables;
             const visibleTables = allTables.filter((t: any) => selectedOutputTables.has(t.table_name));
             const allKeyColumns = detectKeyColumns(allTables.flatMap((t: any) => t.columns));
             const filteredRows = filterRowsByKey(transformedRows, outputKeyFilter, allKeyColumns);
@@ -1214,7 +1414,7 @@ export function Step7Transform() {
                       </div>
                     ) : (
                       visibleTables.map((t: any) => {
-                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
+                        const { columns: tableCols, rows: tableRows, keyColumns: tableKeys } = getTableDisplayData(t, filteredRows, state.mapping, true);
                         const currentPage = tablePages[t.table_name] || 1;
                         const paginatedRows = tableRows.slice((currentPage - 1) * 15, currentPage * 15);
 
@@ -1239,6 +1439,7 @@ export function Step7Transform() {
                               <DataTable
                                 rows={paginatedRows}
                                 cols={tableCols}
+                                keyColumns={tableKeys}
                                 editable={true}
                                 onColumnEdit={(col) => {
                                   setDynamicModalState({

@@ -92,6 +92,20 @@ export function Step2AIMapping() {
     fetchSchema();
   }, [state.obj, state.src]);
 
+  const isFieldMandatory = useCallback((sapFieldName?: string, mapEntryReq?: boolean) => {
+    if (mapEntryReq === true) return true;
+    if (!sapFieldName || !sapFields || sapFields.length === 0) return false;
+    const cleanSap = sapFieldName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const baseSap = (sapFieldName.split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const matched = sapFields.find((sf: any) => {
+      const fn = String(sf.field_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const baseFn = (String(sf.field_name || '').split('.').pop() || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return fn === cleanSap || baseFn === baseSap || fn === baseSap || baseFn === cleanSap;
+    });
+    return Boolean(matched?.is_mandatory);
+  }, [sapFields]);
+
   const handleSaveMapSrcEdit = (index: number, oldName: string) => {
     if (!editingMapSrc || !editingMapSrc.value.trim() || editingMapSrc.value === oldName) {
       setEditingMapSrc(null);
@@ -567,12 +581,25 @@ export function Step2AIMapping() {
               />
             </div>
             <CardBody className="p-3 space-y-2 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[var(--border-light)] scrollbar-track-transparent">
-              {state.headers.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => (
-                <div key={`${f}-${i}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[10px] font-mono text-[var(--text-secondary)]">
-                  <span>{f}</span>
-                  {state.mapping.find((m) => m.src === f) && <Badge variant="green" className="text-[8px]">mapped</Badge>}
-                </div>
-              ))}
+              {state.headers.filter(f => f.toLowerCase().includes(sourceSearch.toLowerCase())).map((f, i) => {
+                const mapItem = state.mapping.find((m) => m.src === f);
+                const isReq = mapItem ? isFieldMandatory(mapItem.sap, mapItem.req) : false;
+                return (
+                  <div key={`${f}-${i}`} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[10px] font-mono text-[var(--text-secondary)]">
+                    <span className="truncate pr-2">{f}</span>
+                    {mapItem && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Badge variant="green" className="text-[8px]">mapped</Badge>
+                        {isReq && (
+                          <span className="text-[9px] font-bold text-red-500 uppercase tracking-wide">
+                            req
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               {state.headers.length === 0 && (
                 <div className="text-[10px] text-[var(--text-tertiary)] text-center py-4">No source fields loaded.</div>
               )}
@@ -727,7 +754,7 @@ export function Step2AIMapping() {
                             <div className="min-w-0">
                               <div className={cn("font-mono text-[11px] flex items-center gap-1.5 flex-wrap", !targetValid ? "text-red-600 dark:text-red-400 font-bold" : "text-teal-600 dark:text-teal-400")}>
                                 <span className="truncate">{m.sap || <i className="text-red-500 font-bold">(Target Field Missing)</i>}</span>
-                                {m.req && <Badge variant="red" className="text-[8px] px-1 font-bold">M</Badge>}
+                                {isFieldMandatory(m.sap, m.req) && <Badge variant="red" className="text-[8px] px-1 font-bold">REQ</Badge>}
                                 {!targetValid && (
                                   <Badge variant="red" className="text-[8px] px-1.5 py-0.2 font-bold flex items-center gap-0.5 shrink-0">
                                     <AlertTriangle className="w-2.5 h-2.5" /> Not in Schema

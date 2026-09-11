@@ -43,7 +43,9 @@ async def apply_transform_mappings(
         if not required_cols.issubset(set(mapping_df.columns)):
             raise HTTPException(400, f"Uploaded file must contain exactly these columns: {required_cols}")
             
-        mapping_rules = mapping_df.fillna("").to_dict(orient="records")
+        # Deduplicate if Source_Field, Source_Data, and Target_Data are identical
+        mapping_df = mapping_df.fillna("").drop_duplicates(subset=["Source_Field", "Source_Data", "Target_Data"])
+        mapping_rules = mapping_df.to_dict(orient="records")
     except Exception as e:
         raise HTTPException(400, f"Error processing file: {str(e)}")
 
@@ -72,6 +74,7 @@ async def apply_transform_mappings(
     # 4. Delegate transformation to the Agent
     agent = TransformationAgent()
     transformed_rows, summary = agent.apply_mappings(cleansed_rows, mapping_rules)
+    summary["mapping_rules"] = mapping_rules
 
     return {
         "status": "success",

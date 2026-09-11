@@ -227,10 +227,23 @@ export function Step6Cleanse() {
   const [cleanseKeyFilter, setCleanseKeyFilter] = useState('');
 
   useEffect(() => {
-    if (extractedTables.length > 0) {
-      setSelectedCleanseTables(new Set(extractedTables.map((t: any) => t.table_name)));
+    const activeMappingSchemas = new Set<string>();
+    (state.mapping || []).forEach((m: any) => {
+      const sapStr = String(m.sap || '').trim();
+      if (sapStr.includes('.')) {
+        activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+      }
+    });
+
+    const filtered = activeMappingSchemas.size > 0
+      ? extractedTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+      : extractedTables;
+    const finalTables = filtered.length > 0 ? filtered : extractedTables;
+
+    if (finalTables.length > 0) {
+      setSelectedCleanseTables(new Set(finalTables.map((t: any) => t.table_name)));
     }
-  }, [extractedTables.length]);
+  }, [extractedTables.length, state.mapping]);
 
   const csvInputRef = useRef<HTMLInputElement>(null);
   const valCsvInputRef = useRef<HTMLInputElement>(null);
@@ -1941,9 +1954,21 @@ export function Step6Cleanse() {
             {openPreviewAccordion && (
               <CardBody>
                 {has ? (() => {
-                  const allTables: TableInfo[] = extractedTables.length > 0
+                  const activeMappingSchemas = new Set<string>();
+                  (state.mapping || []).forEach((m: any) => {
+                    const sapStr = String(m.sap || '').trim();
+                    if (sapStr.includes('.')) {
+                      activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+                    }
+                  });
+
+                  const rawTables = extractedTables.length > 0
                     ? extractedTables
                     : [{ table_name: 'Cleansed Records', columns: Object.keys(cleanedRows[0] || {}) }];
+                  const filtered = activeMappingSchemas.size > 0
+                    ? rawTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+                    : rawTables;
+                  const allTables: TableInfo[] = filtered.length > 0 ? filtered : rawTables;
                   const visibleTables = allTables.filter((t: any) => selectedCleanseTables.has(t.table_name));
                   const allKeyColumns = detectKeyColumns(allTables.flatMap((t: any) => t.columns));
                   const filteredRows = filterRowsByKey(cleanedRows, cleanseKeyFilter, allKeyColumns);
@@ -1965,7 +1990,7 @@ export function Step6Cleanse() {
                         </div>
                       ) : (
                         visibleTables.map((t: any) => {
-                          const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
+                          const { columns: tableCols, rows: tableRows, keyColumns: tableKeys } = getTableDisplayData(t, filteredRows, state.mapping, true);
                           return (
                             <div key={t.table_name} className="rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] p-4 space-y-3 shadow-xs">
                               <div className="flex items-center justify-between">
@@ -1984,7 +2009,7 @@ export function Step6Cleanse() {
                                   Export {t.table_name}
                                 </Button>
                               </div>
-                              <DataTable rows={tableRows.slice(0, 15)} cols={tableCols} />
+                              <DataTable rows={tableRows.slice(0, 15)} cols={tableCols} keyColumns={tableKeys} />
                               {tableRows.length > 15 && (
                                 <div className="text-[10px] text-[var(--text-tertiary)] text-center py-1.5 border-t border-[var(--border)]">
                                   Showing 15 of {tableRows.length} rows · Export CSV for full table

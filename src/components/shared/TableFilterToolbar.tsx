@@ -26,6 +26,7 @@ export function detectKeyColumns(columns: string[]): string[] {
 export interface TableInfo {
   table_name: string;
   columns: string[];
+  key_columns?: string[];
   row_count?: number;
 }
 
@@ -44,9 +45,13 @@ interface TableFilterToolbarProps {
 function getAllKeyColumns(tables: TableInfo[]): string[] {
   const keys = new Set<string>();
   tables.forEach(t => {
-    t.columns.forEach(c => {
-      if (isKeyColumn(c)) keys.add(c);
-    });
+    if (Array.isArray(t.key_columns) && t.key_columns.length > 0) {
+      t.key_columns.forEach(c => keys.add(c));
+    } else {
+      t.columns.forEach(c => {
+        if (isKeyColumn(c)) keys.add(c);
+      });
+    }
   });
   return Array.from(keys);
 }
@@ -116,9 +121,11 @@ export function getTableDisplayData(
   rows: Record<string, any>[],
   mappings: any[] = [],
   preferTargetFields: boolean = true
-): { columns: string[]; rows: Record<string, any>[] } {
+): { columns: string[]; rows: Record<string, any>[]; keyColumns: string[] } {
   if (!rows || rows.length === 0) {
-    return { columns: table.columns, rows: [] };
+    const rawTableCols = (table && Array.isArray(table.columns)) ? table.columns : (Array.isArray(table) ? table : []);
+    const rawKeyCols = (table && Array.isArray(table.key_columns)) ? table.key_columns : [];
+    return { columns: rawTableCols, rows: [], keyColumns: rawKeyCols };
   }
 
   // Common SuccessFactors & HR synonyms map (normalized lowercase alphanumeric -> array of alias keys)
@@ -335,9 +342,32 @@ export function getTableDisplayData(
     return projected;
   });
 
+  const rawKeyCols: string[] = (table && Array.isArray(table.key_columns)) ? table.key_columns : [];
+  const reqSapNorms = new Set<string>();
+  (mappings || []).forEach(m => {
+    if (m && (m.req === true || m.is_mandatory === true)) {
+      const sapStr = typeof m === 'object' ? String(m.sap || m.field_name || '') : '';
+      if (sapStr) {
+        reqSapNorms.add(norm(sapStr));
+        reqSapNorms.add(norm(sapStr.split('.').pop() || ''));
+      }
+    }
+  });
+
+  const resolvedKeyColumns: string[] = [];
+  finalColumns.forEach(c => {
+    const nC = norm(c);
+    const inRawKeys = rawKeyCols.some(k => norm(k) === nC);
+    const inReq = reqSapNorms.has(nC);
+    if (inRawKeys || inReq) {
+      resolvedKeyColumns.push(c);
+    }
+  });
+
   return {
     columns: finalColumns,
-    rows: normalizedRows
+    rows: normalizedRows,
+    keyColumns: resolvedKeyColumns
   };
 }
 

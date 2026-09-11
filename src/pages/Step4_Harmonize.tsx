@@ -680,11 +680,24 @@ export function Step4Harmonize() {
   const extractedTables = state.extractedTables || [];
 
   useEffect(() => {
+    const activeMappingSchemas = new Set<string>();
+    (state.mapping || []).forEach((m: any) => {
+      const sapStr = String(m.sap || '').trim();
+      if (sapStr.includes('.')) {
+        activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+      }
+    });
+
     const tablesToUse = (result as any)?.tables || extractedTables || [];
-    if (tablesToUse.length > 0) {
-      setSelectedOutputTables(new Set(tablesToUse.map((t: any) => t.table_name)));
+    const filtered = activeMappingSchemas.size > 0
+      ? tablesToUse.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+      : tablesToUse;
+    const finalTables = filtered.length > 0 ? filtered : tablesToUse;
+
+    if (finalTables.length > 0) {
+      setSelectedOutputTables(new Set(finalTables.map((t: any) => t.table_name)));
     }
-  }, [extractedTables.length, (result as any)?.tables]);
+  }, [extractedTables.length, (result as any)?.tables, state.mapping]);
 
   // Editable Rule Config
   const [ruleConfig, setRuleConfig] = useState<Record<string, RuleItemConfig>>({ ...DEFAULT_RULE_CONFIG });
@@ -1164,6 +1177,7 @@ export function Step4Harmonize() {
             rule_config: ruleConfig,
             custom_prompts: customPrompts,
             dynamic_rules: selectedDynRules,
+            mappings: state.mapping,
           }),
         });
       } else {
@@ -1184,6 +1198,7 @@ export function Step4Harmonize() {
         formData.append('rule_config_json', JSON.stringify(ruleConfig));
         if (customPrompts.length > 0) formData.append('custom_prompts_json', JSON.stringify(customPrompts));
         if (selectedDynRules.length > 0) formData.append('dynamic_rules_json', JSON.stringify(selectedDynRules));
+        if (state.mapping && state.mapping.length > 0) formData.append('mappings_json', JSON.stringify(state.mapping));
 
         // Append all secondary files
         stagedFiles.forEach(sf => {
@@ -1244,7 +1259,18 @@ export function Step4Harmonize() {
             setPreviewData(null);
             setResult(data);
             if (data.tables && data.tables.length > 0) {
-              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: data.tables });
+              const activeMappingSchemas = new Set<string>();
+              (state.mapping || []).forEach((m: any) => {
+                const sapStr = String(m.sap || '').trim();
+                if (sapStr.includes('.')) {
+                  activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+                }
+              });
+              const filtered = activeMappingSchemas.size > 0
+                ? data.tables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+                : data.tables;
+              const finalTables = filtered.length > 0 ? filtered : data.tables;
+              dispatch({ type: 'SET_FIELD', field: 'extractedTables', value: finalTables });
             }
             if (data.fix_log && data.fix_log.length > 0) {
               dispatch({ type: 'SET_FIELD', field: 'fixLog', value: data.fix_log });
@@ -1295,9 +1321,21 @@ export function Step4Harmonize() {
     showLoad('Saving data...', 'Persisting harmonized records to database');
     try {
       const resultTables = (result as any)?.tables;
-      const currentTables = (resultTables && resultTables.length > 0)
+      const rawTables = (resultTables && resultTables.length > 0)
         ? resultTables
         : (extractedTables.length > 0 ? extractedTables : (state.extractedTables || []));
+
+      const activeMappingSchemas = new Set<string>();
+      (state.mapping || []).forEach((m: any) => {
+        const sapStr = String(m.sap || '').trim();
+        if (sapStr.includes('.')) {
+          activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+        }
+      });
+      const filteredTables = activeMappingSchemas.size > 0
+        ? rawTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+        : rawTables;
+      const currentTables = filteredTables.length > 0 ? filteredTables : rawTables;
 
       const currentDynRules = savedDynamicRules.length > 0 ? savedDynamicRules : ((result as any)?.dynamic_rules || state.harmonizeDynamicRules || []);
 
@@ -1813,9 +1851,22 @@ export function Step4Harmonize() {
               : (outputRows.length > 0 ? Object.keys(outputRows[0]) : []);
 
             const resultTables = (result as any)?.tables;
-            const tablesSource = (resultTables && resultTables.length > 0)
+            const rawTablesSource = (resultTables && resultTables.length > 0)
               ? resultTables
               : (extractedTables.length > 0 ? extractedTables : []);
+
+            const activeMappingSchemas = new Set<string>();
+            (state.mapping || []).forEach((m: any) => {
+              const sapStr = String(m.sap || '').trim();
+              if (sapStr.includes('.')) {
+                activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+              }
+            });
+
+            const filteredTables = activeMappingSchemas.size > 0
+              ? rawTablesSource.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+              : rawTablesSource;
+            const tablesSource = filteredTables.length > 0 ? filteredTables : rawTablesSource;
 
             const allTables: TableInfo[] = tablesSource.length > 0
               ? tablesSource.map((t: any) => ({
@@ -1845,7 +1896,7 @@ export function Step4Harmonize() {
                   </div>
                 ) : (
                   visibleTables.map((t: any) => {
-                    const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
+                    const { columns: tableCols, rows: tableRows, keyColumns: tableKeys } = getTableDisplayData(t, filteredRows, state.mapping, true);
                     const currentPage = tablePages[t.table_name] || 1;
                     const paginatedRows = tableRows.slice((currentPage - 1) * 15, currentPage * 15);
 
@@ -1869,6 +1920,7 @@ export function Step4Harmonize() {
                           <DataTable
                             rows={paginatedRows}
                             cols={tableCols}
+                            keyColumns={tableKeys}
                           />
                           <TablePaginationFooter
                             currentPage={currentPage}

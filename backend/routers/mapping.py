@@ -217,6 +217,16 @@ def generate_mapping(req: MapRequest):
             target_fields_to_pass.append(def_tf)
             existing_sap_names.add(def_tf["sap_field"])
     
+    sf_mandatory_map = {}
+    for tf in target_fields:
+        fn = tf.get("field_name") or ""
+        st = tf.get("sf_structure") or ""
+        is_mand = bool(tf.get("is_mandatory", False))
+        if fn:
+            sf_mandatory_map[fn.lower()] = is_mand
+            if st:
+                sf_mandatory_map[f"{st}.{fn}".lower()] = is_mand
+
     db_mappings = []
     unmapped_fields = req.sourceFields.copy()
     
@@ -243,7 +253,8 @@ def generate_mapping(req: MapRequest):
                             "src": src_field,
                             "sap": target_name,
                             "tr": "none",
-                            "conf": 100
+                            "conf": 100,
+                            "req": bool(sf_f.get("is_mandatory", False))
                         })
                         unmapped_fields.remove(src_field)
             
@@ -354,11 +365,13 @@ def generate_mapping(req: MapRequest):
             else:
                 tr_rule = "trim"
                 
+        is_mand = sf_mandatory_map.get(target_f.lower()) or sf_mandatory_map.get(target_f.split('.')[-1].lower(), False)
         formatted.append({
             "src": src_field,
             "sap": target_f,
             "tr": tr_rule,
-            "conf": m.get("confidence", 0)
+            "conf": m.get("confidence", 0),
+            "req": is_mand
         })
     
     final_mappings = db_mappings + formatted
@@ -426,29 +439,33 @@ def save_all_mappings(req: SaveAllRequest):
         target_norm = norm_field(target_key)
         target_base = target_key.split(".")[-1]
         target_base_norm = norm_field(target_base)
+        struct = target_key.split(".")[0].strip() if "." in target_key else ""
+        fname = target_key.split(".")[-1].strip() if "." in target_key else target_key
 
-        # Lookup order: primary object fields -> global cross-object fields
+        # Lookup order: primary object fields -> only if no struct specified, check global fields
         fid = (
             primary_field_map.get(target_key)
             or primary_field_map.get(target_norm)
             or primary_field_map.get(target_base)
             or primary_field_map.get(target_base_norm)
-            or global_field_map.get(target_key)
-            or global_field_map.get(target_norm)
-            or global_field_map.get(target_base)
-            or global_field_map.get(target_base_norm)
         )
 
-        # Query DB by ilike on field_name if not found in memory map
+        if not fid and not struct:
+            fid = (
+                global_field_map.get(target_key)
+                or global_field_map.get(target_norm)
+                or global_field_map.get(target_base)
+                or global_field_map.get(target_base_norm)
+            )
+
+        # Query DB strictly for current object_id if not found in memory map
         if not fid:
-            res_find = client.table("sf_fields").select("id").ilike("field_name", target_base).limit(1).execute()
+            res_find = client.table("sf_fields").select("id").eq("object_id", obj_id).ilike("field_name", fname).limit(1).execute()
             if res_find.data:
                 fid = res_find.data[0]["id"]
 
-        # Fallback: if custom field not in sf_fields at all, auto-create or reuse existing
+        # Fallback: if custom field not in sf_fields at all, auto-create strictly for current object_id and structure
         if not fid:
-            struct = target_key.split(".")[0] if "." in target_key else ""
-            fname = target_key.split(".")[-1] if "." in target_key else target_key
             try:
                 res_exist = client.table("sf_fields").select("id").eq("object_id", obj_id).ilike("field_name", fname).limit(1).execute()
                 if res_exist.data:
@@ -466,8 +483,8 @@ def save_all_mappings(req: SaveAllRequest):
                         fid = ins_res.data[0]["id"]
             except Exception as e:
                 logger.warning(f"Could not auto-create sf_field for '{target_key}': {e}")
-                # Secondary lookup fallback
-                res_any = client.table("sf_fields").select("id").limit(1).execute()
+                # Secondary lookup fallback within primary object
+                res_any = client.table("sf_fields").select("id").eq("object_id", obj_id).limit(1).execute()
                 if res_any.data:
                     fid = res_any.data[0]["id"]
 

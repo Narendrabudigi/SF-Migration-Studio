@@ -114,7 +114,7 @@ const btnStyles: Record<BtnVariant, string> = {
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: BtnVariant;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   icon?: ReactNode;
 }
 export function Button({ variant = 'primary', size = 'md', icon, children, className, disabled, ...props }: ButtonProps) {
@@ -122,7 +122,7 @@ export function Button({ variant = 'primary', size = 'md', icon, children, class
     <button
       className={cn(
         'inline-flex items-center justify-center gap-1.5 font-medium rounded-md transition-all duration-150 whitespace-nowrap cursor-pointer select-none active:scale-[0.98]',
-        size === 'sm' ? 'px-3 py-1.5 text-[12px]' : size === 'lg' ? 'px-5 py-2.5 text-[14px]' : 'px-4 py-2 text-[13px]',
+        size === 'xs' ? 'px-2 py-1 text-[11px]' : size === 'sm' ? 'px-3 py-1.5 text-[12px]' : size === 'lg' ? 'px-5 py-2.5 text-[14px]' : 'px-4 py-2 text-[13px]',
         btnStyles[variant],
         disabled && 'opacity-40 cursor-not-allowed pointer-events-none',
         className
@@ -208,6 +208,7 @@ export interface DataTableProps {
   onCellEdit?: (col: string, val: unknown, row: Record<string, unknown>, rowIndex: number) => void;
   onColumnEdit?: (col: string) => void;
   getRowNumber?: (row: Record<string, unknown>, index: number) => number;
+  keyColumns?: string[];
 }
 
 export function DataTable({
@@ -217,16 +218,26 @@ export function DataTable({
   onCellEdit,
   onColumnEdit,
   getRowNumber,
+  keyColumns,
 }: DataTableProps) {
   if (!rows?.length) return <div className="py-6 text-center text-[var(--text-tertiary)] text-sm">No data</div>;
   const c = cols.length ? cols : Object.keys(rows[0] || {});
+
+  const checkIsPk = (col: string) => {
+    if (keyColumns !== undefined) {
+      const nCol = col.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return keyColumns.some(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === nCol);
+    }
+    return false;
+  };
+
   return (
     <div className="rounded-xl border border-[var(--border)] overflow-auto max-h-[420px]">
       <table className="w-full border-collapse text-[12px] whitespace-nowrap">
         <thead>
           <tr>
             {c.map((col) => {
-              const isPk = isPrimaryKeyField(col);
+              const isPk = checkIsPk(col);
               return (
                 <th
                   key={col}
@@ -238,7 +249,7 @@ export function DataTable({
                   <div className="inline-flex items-center justify-between w-full gap-1.5">
                     <div className="inline-flex items-center gap-1.5">
                       {isPk && (
-                        <span title="Primary Key Field" className="inline-flex items-center">
+                        <span title="Primary Key / Mandatory Field" className="inline-flex items-center">
                           <Key className="w-3 h-3 text-amber-500 dark:text-amber-400 shrink-0" />
                         </span>
                       )}
@@ -269,7 +280,7 @@ export function DataTable({
               {c.map((col) => {
                 const v = row[col] !== undefined ? String(row[col]) : '';
                 const empty = !v.trim();
-                const isPk = isPrimaryKeyField(col);
+                const isPk = checkIsPk(col);
                 const actualRowNum = getRowNumber ? getRowNumber(row, ri) : ri + 1;
                 return (
                   <td

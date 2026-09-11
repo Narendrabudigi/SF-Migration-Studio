@@ -67,6 +67,18 @@
       "severity": "ERROR",
       "source": "validation_dynamic_rule",
       "target_object": "Biographical Info"
+    },
+    {
+      "created_at": "2026-09-11T09:13:10.683058+00:00",
+      "description": "Converts the 'Business Unit' field value to uppercase.",
+      "field": "GENERAL",
+      "id": "DYNAMIC_HARM_1",
+      "label": "Convert Business Unit to Uppercase",
+      "priority": 100,
+      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
+      "python_code": "def transform(value, row):\n    if value is not None:\n        return str(value).upper()\n    return value",
+      "source": "harmonization_dynamic_rule",
+      "target_object": "Job Info"
     }
   ],
   "version": "1.0"

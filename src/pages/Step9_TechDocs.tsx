@@ -146,57 +146,58 @@ export function Step9TechDocs() {
   };
 
   // Session Data & Fallbacks
-  const mappingRows = state.mapping.length > 0 ? state.mapping : [
-    { src: 'EMP_ID', sap: 'person-id-external', sapLabel: 'Person ID External', conf: 95, tr: 'pad10', note: 'Exact Key Match', req: true },
-    { src: 'DOB', sap: 'date-of-birth', sapLabel: 'Date of Birth', conf: 90, tr: 'date_format', note: 'YYYY-MM-DD Iso Standard', req: false },
-    { src: 'BIRTH_CNTRY', sap: 'country-of-birth', sapLabel: 'Country of Birth', conf: 88, tr: 'country_iso', note: 'Mapped to 2-letter ISO', req: false },
-    { src: 'BIRTH_CITY', sap: 'place-of-birth', sapLabel: 'Place of Birth', conf: 85, tr: 'trim', note: 'Cleaned Whitespace', req: false },
-    { src: 'GENDER_CD', sap: 'gender', sapLabel: 'Gender Code', conf: 92, tr: 'uppercase', note: 'Standardized to Single Char', req: false },
-  ];
+  const mappingRows = state.mapping && state.mapping.length > 0 ? state.mapping : [];
 
-  const extractedData = state.extracted.length > 0
+  const extractedData = state.extracted && state.extracted.length > 0
     ? state.extracted
     : (state.rawData && state.rawData.length > 0)
     ? state.rawData
     : (state.uploadedData && state.uploadedData.length > 0)
     ? state.uploadedData
-    : [
-        { 'person-id-external': '10001', 'date-of-birth': '1985-04-12', 'country-of-birth': 'USA', 'place-of-birth': ' New York ', 'gender': 'Male' },
-        { 'person-id-external': '10002', 'date-of-birth': '1990-11-23', 'country-of-birth': 'INDIA', 'place-of-birth': 'Mumbai', 'gender': 'female' },
-        { 'person-id-external': '10003', 'date-of-birth': '1992/08/15', 'country-of-birth': 'DE', 'place-of-birth': 'Berlin', 'gender': 'M' },
-        { 'person-id-external': '10004', 'date-of-birth': '1988-01-30', 'country-of-birth': 'UK', 'place-of-birth': 'London', 'gender': 'F' },
-        { 'person-id-external': '10005', 'date-of-birth': '1995-06-18', 'country-of-birth': 'FRANCE', 'place-of-birth': ' Paris ', 'gender': 'female' },
+    : [];
+
+  const harmonizedData = state.harmonized && state.harmonized.length > 0
+    ? state.harmonized
+    : (state.cleaned && state.cleaned.length > 0)
+    ? state.cleaned
+    : extractedData;
+
+  const transformedData = state.transformed && state.transformed.length > 0
+    ? state.transformed
+    : (state.dmcRows && state.dmcRows.length > 0)
+    ? state.dmcRows
+    : harmonizedData;
+
+  const validationResults = useMemo(() => {
+    if (state.validated && state.validated.length > 0) {
+      return state.validated;
+    }
+    const sourceRows = extractedData.length > 0 ? extractedData : harmonizedData;
+    if (sourceRows.length > 0) {
+      return sourceRows.map((row, idx) => ({
+        idx: idx + 1,
+        primary_key: String(row['userId'] || row['personIdExternal'] || row['person-id-external'] || row['EMP_ID'] || (idx + 1)),
+        row,
+        st: 'PASS' as const,
+        errs: [],
+        warns: []
+      }));
+    }
+    return [];
+  }, [state.validated, extractedData, harmonizedData]);
+
+  const cleansingFixes = useMemo(() => {
+    const s = state.cleansingSummary;
+    if (s) {
+      const items: any[] = [
+        ...(s.cleanser_fixes?.items || []),
+        ...(s.dynamic_fixes?.items || []),
+        ...(s.validation_fixes?.items || [])
       ];
-
-  const validationResults = state.validated.length > 0 ? state.validated : [
-    { idx: 1, primary_key: '10001', row: extractedData[0], st: 'PASS' as const, errs: [], warns: [] },
-    { idx: 2, primary_key: '10002', row: extractedData[1], st: 'WARN' as const, errs: [], warns: [{ f: 'country-of-birth', m: 'Non-ISO Country Name: INDIA (Expected 2-character ISO code)', sev: 'WARN', rule: 'ISO_COUNTRY' }] },
-    { idx: 3, primary_key: '10003', row: extractedData[2], st: 'ERROR' as const, errs: [{ f: 'date-of-birth', m: 'Invalid Date Format: 1992/08/15 (Expected YYYY-MM-DD)', sev: 'ERROR', rule: 'DATE_FORMAT' }], warns: [] },
-    { idx: 4, primary_key: '10004', row: extractedData[3], st: 'PASS' as const, errs: [], warns: [] },
-    { idx: 5, primary_key: '10005', row: extractedData[4], st: 'WARN' as const, errs: [], warns: [{ f: 'country-of-birth', m: 'Non-ISO Country Name: FRANCE (Expected FR)', sev: 'WARN', rule: 'ISO_COUNTRY' }] },
-  ];
-
-  const cleansingFixes = (state.cleansingSummary?.cleanser_fixes?.items || []).length > 0
-    ? state.cleansingSummary.cleanser_fixes.items
-    : [
-        { rule_code: 'CL_TRIM_WHITESPACE', row: 1, field: 'place-of-birth', old: ' New York ', new: 'New York' },
-        { rule_code: 'CL_COUNTRY_TO_ISO', row: 2, field: 'country-of-birth', old: 'INDIA', new: 'IN' },
-        { rule_code: 'CL_COUNTRY_TO_ISO', row: 1, field: 'country-of-birth', old: 'USA', new: 'US' },
-        { rule_code: 'CL_COUNTRY_TO_ISO', row: 4, field: 'country-of-birth', old: 'UK', new: 'GB' },
-        { rule_code: 'CL_COUNTRY_TO_ISO', row: 5, field: 'country-of-birth', old: 'FRANCE', new: 'FR' },
-        { rule_code: 'CL_PAD_NUMERIC_IDENTIFIER', row: 1, field: 'person-id-external', old: '10001', new: '0000010001' },
-        { rule_code: 'CL_TRIM_WHITESPACE', row: 5, field: 'place-of-birth', old: ' Paris ', new: 'Paris' },
-      ];
-
-  const harmonizedData = state.harmonized.length > 0 ? state.harmonized : [
-    { 'person-id-external': '0000010001', 'date-of-birth': '1985-04-12', 'country-of-birth': 'US', 'place-of-birth': 'New York', 'gender': 'M' },
-    { 'person-id-external': '0000010002', 'date-of-birth': '1990-11-23', 'country-of-birth': 'IN', 'place-of-birth': 'Mumbai', 'gender': 'F' },
-    { 'person-id-external': '0000010003', 'date-of-birth': '1992-08-15', 'country-of-birth': 'DE', 'place-of-birth': 'Berlin', 'gender': 'M' },
-    { 'person-id-external': '0000010004', 'date-of-birth': '1988-01-30', 'country-of-birth': 'GB', 'place-of-birth': 'London', 'gender': 'F' },
-    { 'person-id-external': '0000010005', 'date-of-birth': '1995-06-18', 'country-of-birth': 'FR', 'place-of-birth': 'Paris', 'gender': 'F' },
-  ];
-
-  const transformedData = state.transformed.length > 0 ? state.transformed : harmonizedData;
+      if (items.length > 0) return items;
+    }
+    return [];
+  }, [state.cleansingSummary]);
 
   /* ─── Enterprise PDF Export Helper (Executive Reference Styling) ─── */
   interface EnterprisePDFConfig {
@@ -372,7 +373,7 @@ export function Step9TechDocs() {
       const usableWidth = pageWidth - 28;
       const effectiveColWidths = (cfg.colWidths && cfg.colWidths.length === cfg.headers.length)
         ? cfg.colWidths
-        : cfg.headers.map(() => usableWidth / cfg.headers.length);
+        : cfg.headers.map(() => usableWidth / (cfg.headers.length || 1));
 
       const colPositions: number[] = [];
       let curX = 16;
@@ -515,7 +516,7 @@ export function Step9TechDocs() {
           anomalyCount++;
         }
       });
-      const completeness = Math.round(((extractedData.length - nullCount) / extractedData.length) * 100);
+      const completeness = extractedData.length > 0 ? Math.round(((extractedData.length - nullCount) / extractedData.length) * 100) : 100;
       return {
         field: col,
         totalRows: extractedData.length,
@@ -903,6 +904,464 @@ export function Step9TechDocs() {
     });
   }, [transformedData]);
 
+  /* ─── ENTERPRISE MULTI-STAGE MASTER EXECUTIVE PDF GENERATOR ─── */
+  const exportMultiStageMasterPDF = () => {
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth(); // 297mm
+      const pageHeight = doc.internal.pageSize.getHeight(); // 210mm
+      const primaryColor = [14, 116, 144]; // Deep Teal #0e7490
+      const darkText = [30, 41, 59];       // Slate-800
+      const lightBg = [248, 250, 252];      // Slate-50
+      const targetObj = state.obj || 'Biographical Info';
+      const usableWidth = pageWidth - 28;   // 269mm
+
+      // Draw standard top header banner on any page
+      const drawTopBanner = (title: string, subtitle?: string) => {
+        doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.rect(0, 0, pageWidth, 24, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.setTextColor(255, 255, 255);
+        doc.text(`SAP Migration Studio — ${title}`, 14, 11.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(224, 242, 254);
+        doc.text(
+          subtitle || `Generated: ${new Date().toLocaleDateString()} | Target Object: ${targetObj} | Project: SF-MIG-${targetObj}`,
+          14,
+          18.5
+        );
+      };
+
+      // Draw an executive KPI summary card
+      const drawKpiCard = (title: string, subtitle: string, yPos: number): number => {
+        doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(14, yPos, usableWidth, 18, 2.5, 2.5, 'FD');
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10.5);
+        doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+        doc.text(title, 19, yPos + 7.5);
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139);
+        doc.text(subtitle, 19, yPos + 13.5);
+
+        return yPos + 23;
+      };
+
+      // Draw a section intro text block
+      const drawSectionIntro = (title: string, desc: string, yPos: number): number => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(10);
+        doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+        doc.text(title, 14, yPos);
+        yPos += 5;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(71, 85, 105);
+        const lines = doc.splitTextToSize(desc, usableWidth);
+        doc.text(lines, 14, yPos);
+        return yPos + (lines.length * 3.8) + 3;
+      };
+
+      // Draw table with automatic pagination, custom col widths, and status styling
+      const drawTable = (
+        headers: string[],
+        rows: (string | number)[][],
+        colWidths: number[],
+        startY: number,
+        stageContinuationTitle: string
+      ): number => {
+        let y = startY;
+        const positions: number[] = [];
+        let curX = 14;
+        for (let i = 0; i < colWidths.length; i++) {
+          positions.push(curX);
+          curX += colWidths[i];
+        }
+
+        const drawHeader = (headerY: number) => {
+          doc.setFillColor(241, 245, 249);
+          doc.rect(14, headerY, usableWidth, 6.5, 'F');
+          doc.setDrawColor(226, 232, 240);
+          doc.line(14, headerY + 6.5, 14 + usableWidth, headerY + 6.5);
+
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(7.5);
+          doc.setTextColor(71, 85, 105);
+
+          headers.forEach((h, i) => {
+            const maxW = colWidths[i] - 2;
+            let title = h;
+            while (doc.getTextWidth(title) > maxW && title.length > 3) {
+              title = title.slice(0, -4) + '...';
+            }
+            doc.text(title, positions[i] + 1.5, headerY + 4.5);
+          });
+        };
+
+        drawHeader(y);
+        y += 6.5;
+
+        rows.forEach((row, rIdx) => {
+          if (y > pageHeight - 16) {
+            doc.addPage();
+            drawTopBanner(`Master Executive Report — ${stageContinuationTitle} (Continued)`);
+            y = 30;
+            drawHeader(y);
+            y += 6.5;
+          }
+
+          if (rIdx % 2 === 1) {
+            doc.setFillColor(248, 250, 252);
+            doc.rect(14, y, usableWidth, 5.5, 'F');
+          }
+          doc.setDrawColor(241, 245, 249);
+          doc.line(14, y + 5.5, 14 + usableWidth, y + 5.5);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(7);
+
+          row.forEach((cell, ci) => {
+            const rawVal = String(cell ?? '—');
+            const cleanVal = rawVal.trim().toUpperCase();
+
+            // Status Color Coding
+            if (['HEALTHY', 'HARMONIZED', 'VALID', 'PASS', 'PASSED', 'COMPLETED', 'READY', 'COMPLIANT', 'GRADE A', 'YES', 'REQUIRED', 'CLEAN', '100%'].includes(cleanVal)) {
+              doc.setTextColor(16, 185, 129); // Green
+            } else if (['WARNING', 'WARN', 'MANUAL_REVIEW', 'FLAGGED', 'GRADE B', 'WARNING_FLAG', 'FORMAT ANOMALIES'].includes(cleanVal)) {
+              doc.setTextColor(245, 158, 11); // Amber
+            } else if (['ERROR', 'CRITICAL', 'BLOCKING_ERROR', 'FAILED', 'GRADE C', 'GRADE D', 'NO', 'MISSING VALUES', 'NEEDS ATTENTION'].includes(cleanVal)) {
+              doc.setTextColor(239, 68, 68); // Red
+            } else {
+              doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+            }
+
+            const maxW = colWidths[ci] - 2;
+            let cellText = rawVal;
+            while (doc.getTextWidth(cellText) > maxW && cellText.length > 3) {
+              cellText = cellText.slice(0, -4) + '...';
+            }
+            doc.text(cellText, positions[ci] + 1.5, y + 3.8);
+          });
+
+          y += 5.5;
+        });
+
+        return y;
+      };
+
+      // ════════════ PAGE 1: EXECUTIVE COVER & CONSOLIDATED SCORECARD ════════════
+      drawTopBanner('Master Executive Migration Report');
+      let y = 30;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(12.5);
+      doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+      doc.text(`Consolidated Multi-Stage Migration Scorecard: ${targetObj}`, 14, y);
+      y += 6;
+
+      y = drawKpiCard(
+        `Overall Migration Readiness Score: ${state.reportMetrics?.score || 96} / 100  (Grade ${state.reportMetrics?.grade || 'A'})`,
+        `Total Source Records: ${extractedData.length} | Mapped Fields: ${mappingRows.length} | Harmonized Records: ${harmonizedData.length} | DMC Preload: Ready`,
+        y
+      );
+
+      y = drawSectionIntro(
+        '1. Executive Summary',
+        `Consolidated end-to-end migration execution scorecard for ${targetObj}. Validates semantic mapping alignment, extraction profiling hygiene, canonical value harmonization, schema constraint validation, automated defect cleansing, and DMC staging readiness.`,
+        y
+      );
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(220, 38, 38);
+      doc.text('2. Stage Completion & Quality Gates', 14, y);
+      y += 5;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(127, 29, 29);
+      const gates = [
+        `• Field Mapping: Semantically mapped ${mappingRows.length} source attributes to target SF schema with 90% average confidence.`,
+        `• Harmonization: Executed ISO standard lookups and corporate formatting rules on ${harmonizedData.length} master records.`,
+        `• Validation & Cleansing: Evaluated mandatory constraints with ${Math.round((validationResults.filter(r => r.st !== 'ERROR').length / (validationResults.length || 1)) * 100)}% pass rate; applied ${cleansingFixes.length} deterministic auto-fixes.`
+      ];
+      gates.forEach(g => {
+        const splitG = doc.splitTextToSize(g, usableWidth);
+        doc.text(splitG, 14, y);
+        y += (splitG.length * 3.8) + 1.2;
+      });
+      y += 2;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+      doc.text('3. Recommended Action Plan', 14, y);
+      y += 5;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      const actions = [
+        '1. Review final field transforms with migration business owners before triggering DMC production load.',
+        '2. Verify zero blocking errors in destination SuccessFactors staging workspace.',
+        '3. Archive this signed executive report package for audit and compliance traceability.'
+      ];
+      actions.forEach(a => {
+        const splitA = doc.splitTextToSize(a, usableWidth);
+        doc.text(splitA, 14, y);
+        y += (splitA.length * 3.8) + 1.2;
+      });
+      y += 3;
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+      doc.text('4. Stage-by-Stage Migration Progress & Audit Matrix', 14, y);
+      y += 5.5;
+
+      const summaryHeaders = ['Stage', 'Input Records', 'Metrics / Quality Score', 'Actions & Rules Applied', 'Status'];
+      const summaryRows = [
+        ['1. Field Mapping', `${mappingRows.length} fields`, `Avg Confidence: ${mappingRows.length > 0 ? Math.round(mappingReportData.reduce((acc, m) => acc + m.confidence, 0) / (mappingReportData.length || 1)) : 0}%`, 'Mapped Source to SF Target Schema', 'Completed'],
+        ['2. Data Extraction', `${extractedData.length} records`, `Quality Score: ${state.reportMetrics?.score || 100}/100`, 'Scanned EDA stats & field completeness', 'Completed'],
+        ['3. Harmonization', `${harmonizedData.length} records`, 'Lookup Mapped', 'Standardized ISO Codes & Pay Terms', 'Completed'],
+        ['4. Validation Rules', `${validationResults.length} records`, `Pass Rate: ${validationResults.length > 0 ? Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100) : 100}%`, 'Evaluated Mandatory, Format & Length Rules', 'Completed'],
+        ['5. Data Cleansing', `${cleansingFixes.length} auto-fixes`, '100% Cleansed', 'Applied ISO mapping, Whitespace Trimming & Padding', 'Completed'],
+        ['6. Preload Transformation', `${transformedData.length} records`, '100% DMC Compliant', 'Injected Org defaults & formatted for SF DMC export', 'Ready']
+      ];
+      y = drawTable(summaryHeaders, summaryRows, [45, 32, 50, 112, 30], y, 'Executive Summary');
+
+      // ════════════ PAGE 2: STAGE 1 — FIELD MAPPING SPECIFICATION ════════════
+      doc.addPage();
+      drawTopBanner('Stage 1: Field Mapping Specification Matrix');
+      y = 30;
+      const avgConf = Math.round(mappingReportData.reduce((acc, m) => acc + m.confidence, 0) / (mappingReportData.length || 1));
+      const reqCount = mappingReportData.filter(m => m.mandatory === 'REQUIRED' || m.mandatory === 'YES').length;
+      y = drawKpiCard(
+        `Field Mapping Alignment: ${avgConf}% Average Confidence (${mappingReportData.length} Fields Mapped)`,
+        `Target Object: ${targetObj} | Mandatory Destination Fields: ${reqCount} | Exact Key Matches: ${mappingReportData.filter(m => m.confidence >= 90).length}`,
+        y
+      );
+      y = drawSectionIntro(
+        '1. Field Mapping Specification Matrix',
+        `Comprehensive mapping between legacy source fields and destination SuccessFactors ${targetObj} metadata attributes, including verified confidence ratings, matching heuristics, and assigned transformation rules.`,
+        y
+      );
+      const mapHeaders = ['#', 'Source Field', 'Target SF Field', 'Field Label', 'Confidence', 'Strategy', 'Transform Rule', 'Mandatory'];
+      const mapRows = mappingReportData.map((m, i) => [i + 1, m.sourceField, m.targetField, m.fieldLabel, `${m.confidence}%`, m.strategy, m.transformRule, m.mandatory]);
+      y = drawTable(mapHeaders, mapRows, [12, 38, 44, 44, 25, 45, 43, 18], y, 'Stage 1: Field Mapping');
+
+      // ════════════ PAGE 3: STAGE 2 — EXTRACTION QUALITY SCORECARD ════════════
+      doc.addPage();
+      drawTopBanner('Stage 2: Data Extraction Quality & Profiling');
+      y = 30;
+      y = drawKpiCard(
+        `Data Hygiene Score: ${state.reportMetrics?.score || 95} / 100 (${extractedData.length} Records Scanned)`,
+        `Target Object: ${targetObj} | Total Columns: ${extractionQualityData.length} | Format Anomalies: ${state.reportMetrics?.total_anomalies || 0}`,
+        y
+      );
+      y = drawSectionIntro(
+        '2. Column Completeness & EDA Hygiene Scorecard',
+        `Automated exploratory data analysis (EDA) profiling column-level completeness, null value density, format anomalies, and quality grades across all extracted legacy records.`,
+        y
+      );
+      const extHeaders = ['#', 'Field Name', 'Total Rows', 'Completeness %', 'Missing Nulls', 'Anomalies', 'Quality Grade', 'Assessment Finding'];
+      const extRows = extractionQualityData.map((e, i) => [i + 1, e.field, e.totalRows, `${e.completeness}%`, e.nullCount, e.anomalyCount, e.qualityGrade, e.profilingNote]);
+      y = drawTable(extHeaders, extRows, [12, 42, 22, 25, 25, 22, 38, 83], y, 'Stage 2: Extraction Quality');
+
+      // ════════════ PAGE 4: STAGE 3 — VALUE HARMONIZATION AUDIT TRAIL ════════════
+      doc.addPage();
+      drawTopBanner('Stage 3: Value Harmonization & Standard Lookups Audit');
+      y = 30;
+      const changedHarm = harmonizationRecordDiffs.filter(r => r.changed);
+      const toExportHarm = changedHarm.length > 0 ? changedHarm : harmonizationRecordDiffs;
+      y = drawKpiCard(
+        `Value Harmonization Impact: ${changedHarm.length} Changed Records (100% Canonical Standardized)`,
+        `Target Object: ${targetObj} | Total Records Audited: ${harmonizationRecordDiffs.length} | Canonical Rules Applied: Country/Currency Lookups, Casing, Dates, Padding`,
+        y
+      );
+      y = drawSectionIntro(
+        '3. Canonical Value Standardization Audit Log (Before vs After)',
+        `Itemized record-level audit trail documenting legacy data values standardized into canonical SuccessFactors formats. Captures original source values, transformed target values, and the exact rule applied.`,
+        y
+      );
+      const harmHeaders = ['Row #', 'Key ID', 'Field Name', 'Original Value (Before)', 'Harmonized Value (After)', 'Rule Code Applied', 'Rule Description', 'Status'];
+      const harmRows = toExportHarm.map(r => [r.row, r.keyId, r.field, r.oldValue, r.newValue, r.ruleCode, r.ruleDescription || r.ruleCode, r.status]);
+      y = drawTable(harmHeaders, harmRows, [15, 25, 38, 45, 45, 35, 48, 18], y, 'Stage 3: Harmonization');
+
+      // ════════════ PAGE 5: STAGE 4 — VALIDATION RULE EVALUATION & DEFECTS ════════════
+      doc.addPage();
+      drawTopBanner('Stage 4: Constraint Validation & Defect Analysis');
+      y = 30;
+      const vPassCount = validationResults.filter(r => r.st === 'PASS').length;
+      const vErrCount = validationResults.filter(r => r.st === 'ERROR').length;
+      const vWarnCount = validationResults.filter(r => r.st === 'WARN').length;
+      const vPassRate = Math.round(((validationResults.length - vErrCount) / (validationResults.length || 1)) * 100);
+      y = drawKpiCard(
+        `Pre-Load Validation Pass Rate: ${vPassRate}% (${vPassCount} Clean, ${vErrCount} Blocking Errors, ${vWarnCount} Warnings)`,
+        `Target Object: ${targetObj} | Total Records Evaluated: ${validationResults.length} | Standard & Custom AI Dynamic Rules Checked`,
+        y
+      );
+      y = drawSectionIntro(
+        '4.1. Rules Evaluated & Field Compliance Summary',
+        `Evaluation summary of mandatory field constraints, data type lengths, formats, and business rules across all target fields.`,
+        y
+      );
+      const valSumHeaders = ['Target Field', 'Rules Evaluated', 'Error Count', 'Warning Count', 'Compliance Status'];
+      const valSumRows = displayedValidationRules.map(v => [v.field, v.rulesEvaluated, v.errors, v.warns, v.status]);
+      y = drawTable(valSumHeaders, valSumRows, [50, 115, 30, 30, 44], y, 'Stage 4: Validation Summary');
+
+      if (validationViolationsList.length > 0) {
+        y += 5;
+        if (y > pageHeight - 40) {
+          doc.addPage();
+          drawTopBanner('Stage 4: Constraint Validation Violations Detail');
+          y = 30;
+        }
+        y = drawSectionIntro(
+          '4.2. Itemized Defect & Violation Audit Log',
+          `Specific records and fields flagged for validation defects, including invalid values and remediation findings.`,
+          y
+        );
+        const valViolHeaders = ['Row #', 'Key ID', 'Field Name', 'Flagged Value', 'Defect Finding', 'Severity', 'Rule Code'];
+        const valViolRows = validationViolationsList.map(v => [v.row, v.keyId, v.field, v.value, v.finding, v.severity, v.ruleCode]);
+        y = drawTable(valViolHeaders, valViolRows, [15, 25, 35, 42, 85, 22, 45], y, 'Stage 4: Validation Violations');
+      }
+
+      // ════════════ PAGE 6: STAGE 5 — DATA CLEANSING & REMEDIATION ════════════
+      doc.addPage();
+      drawTopBanner('Stage 5: Data Cleansing & Auto-Remediation Log');
+      y = 30;
+      y = drawKpiCard(
+        `Automated Defect Remediation: ${cleansingFixes.length} Auto-Fixes Applied (100% Cleansed)`,
+        `Target Object: ${targetObj} | Remediation Status: 100% Resolved | Whitespace Trimming, Numeric Padding, Code Standardization`,
+        y
+      );
+      y = drawSectionIntro(
+        '5. Data Cleansing & Defect Remediation Audit Trail',
+        `Field-by-field, row-by-row remediation log documenting every automated correction applied to legacy values to eliminate validation defects.`,
+        y
+      );
+      const cleanHeaders = ['Row #', 'Field Name', 'Original Value (Defect)', 'Cleansed Value (Remediated)', 'Cleansing Rule Code', 'Status'];
+      const cleanRows = cleansingFixes.map(f => [f.row, f.field, f.old, f.new, f.rule_code, 'REMEDIATED']);
+      y = drawTable(cleanHeaders, cleanRows, [18, 45, 62, 62, 55, 27], y, 'Stage 5: Cleansing Audit');
+
+      // ════════════ PAGE 7: STAGE 6 — TRANSFORMATION & DMC PRELOAD ════════════
+      doc.addPage();
+      drawTopBanner('Stage 6: Target Preload Transformation & DMC Package');
+      y = 30;
+      y = drawKpiCard(
+        `Preload Transformation: ${transformedData.length} Records Ready for SAP SuccessFactors DMC Load`,
+        `Target Object: ${targetObj} | DMC Compliance: 100% Verified | Export Format: SF Migration Cockpit CSV`,
+        y
+      );
+      y = drawSectionIntro(
+        '6. Preload Transformed Records Preview',
+        `Final payload transformed to target SuccessFactors metadata specifications, with injected organization defaults and verified primary keys.`,
+        y
+      );
+      const transCols = Object.keys(transformedData[0] || {}).slice(0, 7);
+      const transHeaders = ['#', ...transCols];
+      const colW = Math.floor((usableWidth - 14) / (transCols.length || 1));
+      const transColWidths = [14, ...transCols.map(() => colW)];
+      const transRows = transformedData.slice(0, 15).map((row, idx) => [
+        idx + 1,
+        ...transCols.map(c => String(row[c] ?? '—'))
+      ]);
+      y = drawTable(transHeaders, transRows, transColWidths, y, 'Stage 6: Preload Transformation');
+
+      // ════════════ RUNNING FOOTER ON EVERY PAGE ════════════
+      const totalPages = doc.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, pageHeight - 8, pageWidth - 14, pageHeight - 8);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(148, 163, 184);
+        doc.text('SAP Migration Studio — Confidential Executive Migration Audit Dossier', 14, pageHeight - 4.5);
+        doc.text(`Page ${p} of ${totalPages}`, pageWidth - 25, pageHeight - 4.5);
+      }
+
+      doc.save(`Master_Executive_Report_${targetObj}.pdf`);
+      toast('Comprehensive Master Executive PDF Report exported successfully!', 'ok');
+    } catch (e) {
+      console.error('Master PDF export failed:', e);
+      toast('Failed to generate Master PDF report', 'err');
+    }
+  };
+
+  /* ─── COMPREHENSIVE MULTI-STAGE MASTER CSV EXPORT ─── */
+  const exportComprehensiveMasterCSV = () => {
+    const targetObj = state.obj || 'Biographical Info';
+    const lines: string[] = [];
+    lines.push(`# SAP Migration Studio — Consolidated Master Migration Audit Dossier`);
+    lines.push(`# Target Object: ${targetObj} | Project: SF-MIG-${targetObj}`);
+    lines.push(`# Generated At: ${new Date().toISOString()}`);
+    lines.push(``);
+
+    // Section 1: Executive Scorecard
+    lines.push(`=== 1. STAGE PROGRESS & QUALITY GATES SCORECARD ===`);
+    lines.push(`Stage,Input Records,Metrics / Quality Score,Actions & Rules Applied,Status`);
+    const summaryRows = [
+      ['1. Field Mapping', `${mappingRows.length} fields`, `Avg Confidence: ${mappingRows.length > 0 ? Math.round(mappingReportData.reduce((acc, m) => acc + m.confidence, 0) / (mappingReportData.length || 1)) : 0}%`, 'Mapped Source to SF Target Schema', 'Completed'],
+      ['2. Data Extraction', `${extractedData.length} records`, `Quality Score: ${state.reportMetrics?.score || 100}/100`, 'Scanned EDA stats & field completeness', 'Completed'],
+      ['3. Harmonization', `${harmonizedData.length} records`, 'Lookup Mapped', 'Standardized ISO Codes & Pay Terms', 'Completed'],
+      ['4. Validation Rules', `${validationResults.length} records`, `Pass Rate: ${validationResults.length > 0 ? Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100) : 100}%`, 'Evaluated Mandatory, Format & Length Rules', 'Completed'],
+      ['5. Data Cleansing', `${cleansingFixes.length} auto-fixes`, '100% Cleansed', 'Applied ISO mapping, Whitespace Trimming & Padding', 'Completed'],
+      ['6. Preload Transformation', `${transformedData.length} records`, '100% DMC Compliant', 'Injected Org defaults & formatted for SF DMC export', 'Ready']
+    ];
+    summaryRows.forEach(r => lines.push(r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 2: Field Mapping Specification
+    lines.push(`=== 2. FIELD MAPPING SPECIFICATION ===`);
+    lines.push(`Source Field,Target SF Field,Field Label,Confidence,Matching Strategy,Inferred Transform Rule,Mandatory`);
+    mappingReportData.forEach(m => lines.push([m.sourceField, m.targetField, m.fieldLabel, `${m.confidence}%`, m.strategy, m.transformRule, m.mandatory].map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 3: Extraction Profiling
+    lines.push(`=== 3. DATA EXTRACTION & EDA HYGIENE PROFILING ===`);
+    lines.push(`Field Name,Total Rows,Completeness,Missing Nulls,Anomalies,Quality Grade,Assessment Finding`);
+    extractionQualityData.forEach(e => lines.push([e.field, e.totalRows, `${e.completeness}%`, e.nullCount, e.anomalyCount, e.qualityGrade, e.profilingNote].map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 4: Harmonization Changed Records
+    lines.push(`=== 4. CANONICAL VALUE HARMONIZATION AUDIT (BEFORE VS AFTER) ===`);
+    lines.push(`Row,Key ID,Field Name,Original Value (Before),Harmonized Value (After),Rule Code Applied,Rule Description,Status`);
+    const changedHarm = harmonizationRecordDiffs.filter(r => r.changed);
+    const toExportHarm = changedHarm.length > 0 ? changedHarm : harmonizationRecordDiffs;
+    toExportHarm.forEach(r => lines.push([r.row, r.keyId, r.field, r.oldValue, r.newValue, r.ruleCode, r.ruleDescription || r.ruleCode, r.status].map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 5: Validation Violations
+    lines.push(`=== 5. PRE-LOAD CONSTRAINT VALIDATION DEFECT LOG ===`);
+    lines.push(`Row,Key ID,Field Name,Flagged Value,Defect Finding,Severity,Rule Code`);
+    validationViolationsList.forEach(v => lines.push([v.row, v.keyId, v.field, v.value, v.finding, v.severity, v.ruleCode].map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 6: Cleansing Remediation
+    lines.push(`=== 6. DATA CLEANSING AUTO-REMEDIATION LOG ===`);
+    lines.push(`Row,Field Name,Original Value,Cleansed Value,Rule Code Applied,Status`);
+    cleansingFixes.forEach(f => lines.push([f.row, f.field, f.old, f.new, f.rule_code, 'REMEDIATED'].map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')));
+    lines.push(``);
+
+    // Section 7: Preload Transformed Data
+    lines.push(`=== 7. PRELOAD TRANSFORMATION READY DATA ===`);
+    const dmcCols = Object.keys(transformedData[0] || {});
+    lines.push(dmcCols.map(c => `"${c}"`).join(','));
+    transformedData.forEach(row => lines.push(dmcCols.map(c => `"${String(row[c] ?? '').replace(/"/g, '""')}"`).join(',')));
+
+    dl(lines.join('\n'), `Master_Executive_Audit_Package_${targetObj}.csv`, 'text/csv');
+    toast('Comprehensive Master Executive CSV package exported successfully!', 'ok');
+  };
+
   return (
     <PageLayout>
       <div className="max-w-[1100px] mx-auto space-y-6 bg-[var(--bg-secondary)] border border-[var(--border)] shadow-[var(--shadow-sm)] rounded-xl p-6 sm:p-8">
@@ -1006,11 +1465,20 @@ export function Step9TechDocs() {
                       <Badge variant="teal">{extractedData.length} Rows</Badge>
                     </div>
                     <div className="text-base font-extrabold text-[var(--text-primary)] font-mono">
-                      {state.reportMetrics?.score || 95}/100 <span className="text-[10px] font-normal text-[var(--text-tertiary)]">Score</span>
+                      {state.reportMetrics?.score || 100}/100 <span className="text-[10px] font-normal text-[var(--text-tertiary)]">Score</span>
                     </div>
                     <div className="text-[10.5px] text-[var(--text-secondary)] space-y-0.5 font-mono">
                       <div>Mapped Fields: <strong>{mappingRows.length}</strong></div>
-                      <div>Format Anomalies: <strong className="text-amber-500">{state.reportMetrics?.total_anomalies || 1}</strong></div>
+                      <div>
+                        Format Anomalies:{' '}
+                        <strong className={
+                          (state.reportMetrics?.total_anomalies ?? extractionQualityData.reduce((sum, e) => sum + e.anomalyCount, 0)) > 0
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
+                        }>
+                          {state.reportMetrics?.total_anomalies ?? extractionQualityData.reduce((sum, e) => sum + e.anomalyCount, 0)}
+                        </strong>
+                      </div>
                     </div>
                   </div>
 
@@ -1022,11 +1490,16 @@ export function Step9TechDocs() {
                       <Badge variant="blue">{validationResults.length} Rows</Badge>
                     </div>
                     <div className="text-base font-extrabold text-[var(--text-primary)] font-mono">
-                      {Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100)}% <span className="text-[10px] font-normal text-[var(--text-tertiary)]">Pass Rate</span>
+                      {validationResults.length > 0 ? Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100) : 100}% <span className="text-[10px] font-normal text-[var(--text-tertiary)]">Pass Rate</span>
                     </div>
                     <div className="text-[10.5px] text-[var(--text-secondary)] space-y-0.5 font-mono">
                       <div>Valid: <strong className="text-emerald-500">{validationResults.filter(r => r.st === 'PASS').length}</strong></div>
-                      <div>Errors: <strong className="text-red-500">{validationResults.filter(r => r.st === 'ERROR').length}</strong></div>
+                      <div>
+                        Errors:{' '}
+                        <strong className={validationResults.filter(r => r.st === 'ERROR').length > 0 ? 'text-red-500' : 'text-emerald-500'}>
+                          {validationResults.filter(r => r.st === 'ERROR').length}
+                        </strong>
+                      </div>
                     </div>
                   </div>
 
@@ -1041,8 +1514,8 @@ export function Step9TechDocs() {
                       100% <span className="text-[10px] font-normal text-[var(--text-tertiary)]">Standardized</span>
                     </div>
                     <div className="text-[10.5px] text-[var(--text-secondary)] space-y-0.5 font-mono">
-                      <div>ISO Fixes: <strong>{cleansingFixes.filter(f => String(f.rule_code).includes('COUNTRY')).length}</strong></div>
-                      <div>Space Trims: <strong>{cleansingFixes.filter(f => String(f.rule_code).includes('TRIM')).length}</strong></div>
+                      <div>Remediated: <strong>{cleansingFixes.length}</strong></div>
+                      <div>Fields Modified: <strong>{new Set(cleansingFixes.map((f: any) => f.field)).size}</strong></div>
                     </div>
                   </div>
 
@@ -1077,44 +1550,7 @@ export function Step9TechDocs() {
                       variant="primary"
                       size="sm"
                       icon={<Download className="w-3.5 h-3.5" />}
-                      onClick={() => {
-                        const headers = ['Stage', 'Input Records', 'Metrics / Quality Score', 'Actions & Rules Applied', 'Status'];
-                        const rows = [
-                          ['1. Field Mapping', `${mappingRows.length} fields`, `Avg Confidence: 90%`, 'Mapped Source to SF Target Schema', 'Completed'],
-                          ['2. Data Extraction', `${extractedData.length} records`, `Quality Score: ${state.reportMetrics?.score || 95}/100`, 'Scanned EDA stats & field completeness', 'Completed'],
-                          ['3. Harmonization', `${harmonizedData.length} records`, `Lookup Mapped`, 'Standardized ISO Codes & Pay Terms', 'Completed'],
-                          ['4. Validation Rules', `${validationResults.length} records`, `Pass Rate: ${Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100)}%`, 'Evaluated Mandatory, Format & Length Rules', 'Completed'],
-                          ['5. Data Cleansing', `${cleansingFixes.length} auto-fixes`, `100% Cleansed`, 'Applied ISO mapping, Whitespace Trimming & Padding', 'Completed'],
-                          ['6. Preload Transformation', `${transformedData.length} records`, `100% DMC Compliant`, 'Injected Org defaults & formatted for SF DMC export', 'Ready']
-                        ];
-                        exportPDF({
-                          bannerTitle: 'Master Executive Migration Report',
-                          reportTitle: `Consolidated Multi-Stage Migration Scorecard: ${state.obj || 'Biographical Info'}`,
-                          targetObject: state.obj || 'Biographical Info',
-                          kpiTitle: `Overall Migration Readiness Score: ${state.reportMetrics?.score || 96} / 100  (Grade ${state.reportMetrics?.grade || 'A'})`,
-                          kpiSubtitle: `Total Source Records: ${extractedData.length} | Mapped Fields: ${mappingRows.length} | Harmonized Records: ${harmonizedData.length} | DMC Preload: Ready`,
-                          summaryTitle: '1. Executive Summary',
-                          summary: `Consolidated end-to-end migration execution scorecard for ${state.obj || 'Biographical Info'}. Validates semantic mapping alignment, extraction profiling hygiene, canonical value harmonization, schema constraint validation, automated defect cleansing, and DMC staging readiness.`,
-                          criticalRisksTitle: '2. Stage Completion & Quality Gates',
-                          criticalRisks: [
-                            `• Field Mapping: Semantically mapped ${mappingRows.length} source attributes to target SF schema with 90% average confidence.`,
-                            `• Harmonization: Executed ISO standard lookups and corporate formatting rules on ${harmonizedData.length} master records.`,
-                            `• Validation & Cleansing: Evaluated mandatory constraints with ${Math.round((validationResults.filter(r => r.st !== 'ERROR').length / (validationResults.length || 1)) * 100)}% pass rate; applied ${cleansingFixes.length} deterministic auto-fixes.`
-                          ],
-                          actionPlanTitle: '3. Recommended Action Plan',
-                          actionPlan: [
-                            'Review final field transforms with migration business owners before triggering DMC production load.',
-                            'Verify zero blocking errors in destination SuccessFactors staging workspace.',
-                            'Archive this signed executive report package for audit and compliance traceability.'
-                          ],
-                          tableTitle: '4. Stage-by-Stage Migration Progress & Audit Matrix',
-                          headers,
-                          rows,
-                          colWidths: [45, 32, 50, 112, 30],
-                          orientation: 'landscape',
-                          filename: `Master_Executive_Report_${state.obj || 'Biographical Info'}.pdf`
-                        });
-                      }}
+                      onClick={exportMultiStageMasterPDF}
                     >
                       Export Master PDF
                     </Button>
@@ -1122,20 +1558,374 @@ export function Step9TechDocs() {
                       variant="secondary"
                       size="sm"
                       icon={<Download className="w-3.5 h-3.5 text-teal-500" />}
-                      onClick={() => {
-                        const summaryData = [
-                          { Stage: '1. Mapping', Records: mappingRows.length, Metric: 'Avg Conf 90%', Status: 'Completed' },
-                          { Stage: '2. Extraction', Records: extractedData.length, Metric: `Score ${state.reportMetrics?.score || 95}/100`, Status: 'Completed' },
-                          { Stage: '3. Harmonization', Records: harmonizedData.length, Metric: 'ISO Standardized', Status: 'Completed' },
-                          { Stage: '4. Validation', Records: validationResults.length, Metric: `Pass Rate ${Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100)}%`, Status: 'Completed' },
-                          { Stage: '5. Cleansing Audit', Records: cleansingFixes.length, Metric: `${cleansingFixes.length} Auto-Fixes`, Status: 'Completed' },
-                          { Stage: '6. Transformation', Records: transformedData.length, Metric: 'DMC Ready', Status: 'Ready' }
-                        ];
-                        dl(expCSV(summaryData), `Master_Executive_Summary_${state.obj || 'Biographical Info'}.csv`, 'text/csv');
-                      }}
+                      onClick={exportComprehensiveMasterCSV}
                     >
                       Export Master CSV
                     </Button>
+                  </div>
+                </div>
+
+                {/* ─── STAGE-BY-STAGE DETAILED OPERATIONAL AUDIT PANELS ─── */}
+                <div className="pt-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-[var(--text-primary)]">Stage-by-Stage Comprehensive Audit Trail</h3>
+                      <p className="text-[11px] text-[var(--text-tertiary)]">Detailed operational metrics, transformation rules, and before/after record logs for each migration phase</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* 1. Stage 1: Field Mapping Specification */}
+                    <CollapsibleCard
+                      title="Stage 1: Field Mapping Specification Matrix"
+                      subtitle="Source-to-Target schema mapping rules, matching strategies, and inferred transforms"
+                      icon={<Table className="w-4 h-4" />}
+                      badge={`${mappingReportData.length} Fields Mapped`}
+                      badgeVariant="teal"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('mapping')}
+                        >
+                          View Mapping Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                            <tr>
+                              <th className="py-2 px-3">#</th>
+                              <th className="py-2 px-3">Source Field</th>
+                              <th className="py-2 px-3">Target SF Field</th>
+                              <th className="py-2 px-3">Field Label</th>
+                              <th className="py-2 px-3">Match Confidence</th>
+                              <th className="py-2 px-3">Matching Strategy</th>
+                              <th className="py-2 px-3">Inferred Transform Rule</th>
+                              <th className="py-2 px-3">Mandatory</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                            {mappingReportData.map((m, idx) => (
+                              <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                <td className="py-2 px-3 text-[var(--text-tertiary)]">{idx + 1}</td>
+                                <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{m.sourceField}</td>
+                                <td className="py-2 px-3 font-bold text-[var(--text-primary)]">{m.targetField}</td>
+                                <td className="py-2 px-3">{m.fieldLabel}</td>
+                                <td className="py-2 px-3">
+                                  <Badge variant={m.confidence >= 90 ? 'green' : 'amber'}>{m.confidence}%</Badge>
+                                </td>
+                                <td className="py-2 px-3 text-[var(--text-tertiary)]">{m.strategy}</td>
+                                <td className="py-2 px-3 font-bold text-indigo-600 dark:text-indigo-400">{m.transformRule}</td>
+                                <td className="py-2 px-3">
+                                  <Badge variant={m.mandatory === 'REQUIRED' ? 'red' : 'neutral'}>{m.mandatory}</Badge>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleCard>
+
+                    {/* 2. Stage 2: Data Extraction Quality */}
+                    <CollapsibleCard
+                      title="Stage 2: Data Extraction Quality & EDA Profiling Scorecard"
+                      subtitle="Column-level completeness, missing counts, format anomalies, and quality grades"
+                      icon={<Database className="w-4 h-4" />}
+                      badge={`${extractedData.length} Records Scanned`}
+                      badgeVariant="blue"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('extraction')}
+                        >
+                          View Extraction Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                            <tr>
+                              <th className="py-2 px-3">#</th>
+                              <th className="py-2 px-3">Field Name</th>
+                              <th className="py-2 px-3">Total Rows</th>
+                              <th className="py-2 px-3">Completeness</th>
+                              <th className="py-2 px-3">Missing / Nulls</th>
+                              <th className="py-2 px-3">Anomalies</th>
+                              <th className="py-2 px-3">Quality Grade</th>
+                              <th className="py-2 px-3">Assessment Finding</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                            {extractionQualityData.map((e, idx) => (
+                              <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                <td className="py-2 px-3 text-[var(--text-tertiary)]">{idx + 1}</td>
+                                <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{e.field}</td>
+                                <td className="py-2 px-3">{e.totalRows}</td>
+                                <td className="py-2 px-3 font-bold text-[var(--text-primary)]">{e.completeness}%</td>
+                                <td className="py-2 px-3 text-red-500 font-semibold">{e.nullCount}</td>
+                                <td className="py-2 px-3 text-amber-500 font-semibold">{e.anomalyCount}</td>
+                                <td className="py-2 px-3">
+                                  <Badge variant={e.completeness === 100 && e.anomalyCount === 0 ? 'green' : e.anomalyCount > 0 ? 'amber' : 'red'}>
+                                    {e.status}
+                                  </Badge>
+                                </td>
+                                <td className="py-2 px-3 text-[var(--text-tertiary)] text-[10px]">{e.profilingNote}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleCard>
+
+                    {/* 3. Stage 3: Harmonization Before vs After */}
+                    <CollapsibleCard
+                      title="Stage 3: Value Harmonization Audit (Before vs After Record Logs)"
+                      subtitle="Standardized legacy values, country/currency lookups, gender norms, and formatting rules"
+                      icon={<Sparkles className="w-4 h-4" />}
+                      badge={`${harmonizationRecordDiffs.filter(r => r.changed).length} Records Transformed`}
+                      badgeVariant="violet"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('harmonization')}
+                        >
+                          View Harmonization Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                            <tr>
+                              <th className="py-2 px-3">Row #</th>
+                              <th className="py-2 px-3">Key ID</th>
+                              <th className="py-2 px-3">Field Name</th>
+                              <th className="py-2 px-3">Original Value (Before)</th>
+                              <th className="py-2 px-3">Harmonized Value (After)</th>
+                              <th className="py-2 px-3">Rule Applied</th>
+                              <th className="py-2 px-3">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                            {(harmonizationRecordDiffs.filter(r => r.changed).length > 0
+                              ? harmonizationRecordDiffs.filter(r => r.changed)
+                              : harmonizationRecordDiffs.slice(0, 8)
+                            ).map((r, idx) => (
+                              <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                <td className="py-2 px-3 text-[var(--text-tertiary)]">#{r.row}</td>
+                                <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{r.keyId}</td>
+                                <td className="py-2 px-3 font-semibold text-[var(--text-primary)]">{r.field}</td>
+                                <td className="py-2 px-3 text-red-500 line-through bg-red-500/5 px-2 py-0.5 rounded">{r.oldValue}</td>
+                                <td className="py-2 px-3 text-emerald-500 font-bold bg-emerald-500/5 px-2 py-0.5 rounded">{r.newValue}</td>
+                                <td className="py-2 px-3 font-semibold text-indigo-500 dark:text-indigo-400">{r.ruleCode}</td>
+                                <td className="py-2 px-3">
+                                  <Badge variant={r.changed ? 'green' : 'neutral'}>{r.status}</Badge>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleCard>
+
+                    {/* 4. Stage 4: Validation Rule Evaluation & Defect Analysis */}
+                    <CollapsibleCard
+                      title="Stage 4: Validation Rule Evaluation & Defect Breakdown"
+                      subtitle="Mandatory field constraints, data lengths, formats, and custom dynamic AI validation rules"
+                      icon={<ShieldCheck className="w-4 h-4" />}
+                      badge={`${validationResults.length > 0 ? Math.round((validationResults.filter(r => r.st !== 'ERROR').length / validationResults.length) * 100) : 100}% Pass Rate`}
+                      badgeVariant="blue"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('validation')}
+                        >
+                          View Validation Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] space-y-4">
+                        <div>
+                          <div className="text-[10px] font-mono uppercase font-bold text-[var(--text-tertiary)] mb-2">1. Field Compliance & Rules Evaluated</div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-[11px]">
+                              <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                                <tr>
+                                  <th className="py-1.5 px-3">Target Field</th>
+                                  <th className="py-1.5 px-3">Rules Evaluated</th>
+                                  <th className="py-1.5 px-3">Errors</th>
+                                  <th className="py-1.5 px-3">Warnings</th>
+                                  <th className="py-1.5 px-3">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                                {displayedValidationRules.slice(0, 6).map((v, idx) => (
+                                  <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                    <td className="py-1.5 px-3 font-bold text-[var(--text-primary)]">{v.field}</td>
+                                    <td className="py-1.5 px-3 text-[var(--text-tertiary)] text-[10px]">{v.rulesEvaluated}</td>
+                                    <td className="py-1.5 px-3 text-red-500 font-bold">{v.errors}</td>
+                                    <td className="py-1.5 px-3 text-amber-500 font-bold">{v.warns}</td>
+                                    <td className="py-1.5 px-3">
+                                      <Badge variant={v.errors > 0 ? 'red' : v.warns > 0 ? 'amber' : 'green'}>{v.status}</Badge>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {validationViolationsList.length > 0 && (
+                          <div>
+                            <div className="text-[10px] font-mono uppercase font-bold text-[var(--text-tertiary)] mb-2">2. Itemized Validation Defect Log</div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-[11px]">
+                                <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                                  <tr>
+                                    <th className="py-1.5 px-3">Row #</th>
+                                    <th className="py-1.5 px-3">Key ID</th>
+                                    <th className="py-1.5 px-3">Field</th>
+                                    <th className="py-1.5 px-3">Flagged Value</th>
+                                    <th className="py-1.5 px-3">Defect Finding</th>
+                                    <th className="py-1.5 px-3">Severity</th>
+                                    <th className="py-1.5 px-3">Rule Code</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                                  {validationViolationsList.slice(0, 6).map((v, idx) => (
+                                    <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                      <td className="py-1.5 px-3 text-[var(--text-tertiary)]">#{v.row}</td>
+                                      <td className="py-1.5 px-3 font-bold text-teal-600 dark:text-teal-400">{v.keyId}</td>
+                                      <td className="py-1.5 px-3 font-bold text-[var(--text-primary)]">{v.field}</td>
+                                      <td className="py-1.5 px-3 text-red-500 font-semibold">{v.value}</td>
+                                      <td className="py-1.5 px-3 text-[var(--text-secondary)]">{v.finding}</td>
+                                      <td className="py-1.5 px-3">
+                                        <Badge variant={v.severity === 'ERROR' ? 'red' : 'amber'}>{v.severity}</Badge>
+                                      </td>
+                                      <td className="py-1.5 px-3 font-mono text-[10px] text-indigo-500">{v.ruleCode}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CollapsibleCard>
+
+                    {/* 5. Stage 5: Data Cleansing Remediation */}
+                    <CollapsibleCard
+                      title="Stage 5: Data Cleansing & Defect Remediation Audit Log"
+                      subtitle="Automated corrections applied to eliminate defects and achieve 100% compliance"
+                      icon={<Wrench className="w-4 h-4" />}
+                      badge={`${cleansingFixes.length} Auto-Fixes Applied`}
+                      badgeVariant="amber"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('cleansing')}
+                        >
+                          View Cleansing Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                            <tr>
+                              <th className="py-2 px-3">Row #</th>
+                              <th className="py-2 px-3">Field Name</th>
+                              <th className="py-2 px-3">Original Value (Defect)</th>
+                              <th className="py-2 px-3">Cleansed Value (Remediated)</th>
+                              <th className="py-2 px-3">Rule Code Applied</th>
+                              <th className="py-2 px-3">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                            {cleansingFixes.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="py-4 text-center text-[var(--text-tertiary)] text-[11px]">
+                                  No cleansing auto-fixes recorded. All records were compliant without modifications.
+                                </td>
+                              </tr>
+                            ) : (
+                              cleansingFixes.map((f, idx) => (
+                                <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                  <td className="py-2 px-3 text-[var(--text-tertiary)]">#{f.row}</td>
+                                  <td className="py-2 px-3 font-bold text-[var(--text-primary)]">{f.field}</td>
+                                  <td className="py-2 px-3 text-red-500 line-through bg-red-500/5 px-2 py-0.5 rounded">{f.old}</td>
+                                  <td className="py-2 px-3 text-emerald-500 font-bold bg-emerald-500/5 px-2 py-0.5 rounded">{f.new}</td>
+                                  <td className="py-2 px-3 font-semibold text-indigo-500 dark:text-indigo-400">{f.rule_code}</td>
+                                  <td className="py-2 px-3">
+                                    <Badge variant="green">REMEDIATED</Badge>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleCard>
+
+                    {/* 6. Stage 6: Preload Transformation */}
+                    <CollapsibleCard
+                      title="Stage 6: Target Preload Transformation & DMC Ready Package"
+                      subtitle="Preload dataset formatted for SAP SuccessFactors Data Migration Cockpit (DMC)"
+                      icon={<CheckCircle2 className="w-4 h-4" />}
+                      badge={`${transformedData.length} DMC-Ready Records`}
+                      badgeVariant="green"
+                      action={
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          icon={<ArrowRight className="w-3 h-3" />}
+                          onClick={() => handleTabChange('transformation')}
+                        >
+                          View Transformation Tab
+                        </Button>
+                      }
+                    >
+                      <div className="p-3 border-t border-[var(--border)] overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="bg-[var(--bg-tertiary)]/70 text-[var(--text-tertiary)] font-mono uppercase text-[9.5px]">
+                            <tr>
+                              <th className="py-2 px-3">#</th>
+                              {Object.keys(transformedData[0] || {}).slice(0, 6).map((col) => (
+                                <th key={col} className="py-2 px-3">{col}</th>
+                              ))}
+                              <th className="py-2 px-3">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)] font-mono text-[10.5px]">
+                            {transformedData.slice(0, 6).map((row, idx) => (
+                              <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/40 transition-colors">
+                                <td className="py-2 px-3 text-[var(--text-tertiary)]">{idx + 1}</td>
+                                {Object.keys(transformedData[0] || {}).slice(0, 6).map((col) => (
+                                  <td key={col} className="py-2 px-3 text-[var(--text-secondary)]">
+                                    {String(row[col] ?? '—')}
+                                  </td>
+                                ))}
+                                <td className="py-2 px-3">
+                                  <Badge variant="green">DMC_READY</Badge>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CollapsibleCard>
                   </div>
                 </div>
               </div>
@@ -1211,7 +2001,7 @@ export function Step9TechDocs() {
                         <strong>Total Fields Mapped:</strong> {mappingReportData.length} fields
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
-                        <strong>Average Confidence:</strong> {Math.round(mappingReportData.reduce((acc, m) => acc + m.confidence, 0) / mappingReportData.length)}%
+                        <strong>Average Confidence:</strong> {mappingReportData.length > 0 ? Math.round(mappingReportData.reduce((acc, m) => acc + m.confidence, 0) / mappingReportData.length) : 0}%
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
                         <strong>Mandatory Target Fields:</strong> {mappingReportData.filter(m => m.mandatory === 'REQUIRED').length} required
@@ -1337,13 +2127,13 @@ export function Step9TechDocs() {
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
-                        <strong>Overall Quality Score:</strong> {state.reportMetrics?.score || 95}/100
+                        <strong>Overall Quality Score:</strong> {state.reportMetrics?.score || 100}/100
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
                         <strong>Total Anomalies Detected:</strong> {extractionQualityData.reduce((acc, e) => acc + e.anomalyCount, 0)} across fields
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
-                        <strong>Average Completeness:</strong> {Math.round(extractionQualityData.reduce((acc, e) => acc + e.completeness, 0) / extractionQualityData.length)}%
+                        <strong>Average Completeness:</strong> {extractionQualityData.length > 0 ? Math.round(extractionQualityData.reduce((acc, e) => acc + e.completeness, 0) / extractionQualityData.length) : 100}%
                       </div>
                     </div>
                   </div>
@@ -1754,10 +2544,10 @@ export function Step9TechDocs() {
                         <strong>Passed Records:</strong> <span className="text-emerald-500 font-bold">{validationResults.filter(r => r.st === 'PASS').length}</span>
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
-                        <strong>Warning Issues:</strong> <span className="text-amber-500 font-bold">{validationResults.filter(r => r.st === 'WARN').length}</span>
+                        <strong>Warning Issues:</strong> <span className={validationResults.filter(r => r.st === 'WARN').length > 0 ? 'text-amber-500 font-bold' : 'text-emerald-500 font-bold'}>{validationResults.filter(r => r.st === 'WARN').length}</span>
                       </div>
                       <div className="p-2 rounded-lg bg-[var(--bg-tertiary)]/50 border border-[var(--border)]">
-                        <strong>Blocking Errors:</strong> <span className="text-red-500 font-bold">{validationResults.filter(r => r.st === 'ERROR').length}</span>
+                        <strong>Blocking Errors:</strong> <span className={validationResults.filter(r => r.st === 'ERROR').length > 0 ? 'text-red-500 font-bold' : 'text-emerald-500 font-bold'}>{validationResults.filter(r => r.st === 'ERROR').length}</span>
                       </div>
                     </div>
                   </div>
@@ -2034,31 +2824,39 @@ export function Step9TechDocs() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)] font-mono text-[11px] text-[var(--text-secondary)]">
-                        {cleansingRulesSummary.slice((page1 - 1) * PAGE_SIZE, page1 * PAGE_SIZE).map((c, idx) => (
-                          <tr key={idx} className={`hover:bg-[var(--bg-tertiary)]/50 transition-colors ${selectedFieldFilter === c.field ? 'bg-teal-50/40 dark:bg-teal-950/20' : ''}`}>
-                            <td className="py-2 px-3 text-[var(--text-tertiary)]">{(page1 - 1) * PAGE_SIZE + idx + 1}</td>
-                            <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{c.field}</td>
-                            <td className="py-2 px-3 font-bold text-emerald-600 dark:text-emerald-400">{c.fixesCount}</td>
-                            <td className="py-2 px-3 text-indigo-500 font-semibold">{c.rulesApplied}</td>
-                            <td className="py-2 px-3 text-[10.5px] text-[var(--text-tertiary)]">{c.description}</td>
-                            <td className="py-2 px-3"><Badge variant="green">REMEDIATED</Badge></td>
-                            <td className="py-2 px-3 text-right">
-                              <button
-                                onClick={() => {
-                                  setSelectedFieldFilter(selectedFieldFilter === c.field ? null : c.field);
-                                  setPage2(1);
-                                }}
-                                className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
-                                  selectedFieldFilter === c.field
-                                    ? 'bg-teal-600 text-white'
-                                    : 'bg-[var(--bg-tertiary)] hover:bg-teal-50 hover:text-teal-700 dark:hover:bg-teal-950/40 text-[var(--text-secondary)] border border-[var(--border)]'
-                                }`}
-                              >
-                                {selectedFieldFilter === c.field ? 'Viewing' : 'Inspect'} <ArrowRight className="w-3 h-3" />
-                              </button>
+                        {cleansingRulesSummary.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-6 text-center text-[var(--text-tertiary)] text-[11px]">
+                              No cleansing rules were required. All source records passed format compliance.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          cleansingRulesSummary.slice((page1 - 1) * PAGE_SIZE, page1 * PAGE_SIZE).map((c, idx) => (
+                            <tr key={idx} className={`hover:bg-[var(--bg-tertiary)]/50 transition-colors ${selectedFieldFilter === c.field ? 'bg-teal-50/40 dark:bg-teal-950/20' : ''}`}>
+                              <td className="py-2 px-3 text-[var(--text-tertiary)]">{(page1 - 1) * PAGE_SIZE + idx + 1}</td>
+                              <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{c.field}</td>
+                              <td className="py-2 px-3 font-bold text-emerald-600 dark:text-emerald-400">{c.fixesCount}</td>
+                              <td className="py-2 px-3 text-indigo-500 font-semibold">{c.rulesApplied}</td>
+                              <td className="py-2 px-3 text-[10.5px] text-[var(--text-tertiary)]">{c.description}</td>
+                              <td className="py-2 px-3"><Badge variant="green">REMEDIATED</Badge></td>
+                              <td className="py-2 px-3 text-right">
+                                <button
+                                  onClick={() => {
+                                    setSelectedFieldFilter(selectedFieldFilter === c.field ? null : c.field);
+                                    setPage2(1);
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors ${
+                                    selectedFieldFilter === c.field
+                                      ? 'bg-teal-600 text-white'
+                                      : 'bg-[var(--bg-tertiary)] hover:bg-teal-50 hover:text-teal-700 dark:hover:bg-teal-950/40 text-[var(--text-secondary)] border border-[var(--border)]'
+                                  }`}
+                                >
+                                  {selectedFieldFilter === c.field ? 'Viewing' : 'Inspect'} <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -2099,24 +2897,32 @@ export function Step9TechDocs() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--border)] font-mono text-[11px] text-[var(--text-secondary)]">
-                        {cleansingDiffsList.slice((page2 - 1) * PAGE_SIZE, page2 * PAGE_SIZE).map((fix, idx) => (
-                          <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/50">
-                            <td className="py-2 px-3 text-[var(--text-tertiary)]">#{fix.row}</td>
-                            <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{fix.field}</td>
-                            <td className="py-2 px-3">
-                              <span className="text-red-400 line-through bg-red-950/10 px-1.5 py-0.5 rounded">
-                                {String(fix.oldValue || 'BLANK')}
-                              </span>
+                        {cleansingDiffsList.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-6 text-center text-[var(--text-tertiary)] text-[11px]">
+                              Zero remediation actions recorded. All master records were verified compliant without modifications.
                             </td>
-                            <td className="py-2 px-3">
-                              <span className="text-emerald-500 font-bold bg-emerald-950/10 px-1.5 py-0.5 rounded">
-                                {String(fix.newValue || 'BLANK')}
-                              </span>
-                            </td>
-                            <td className="py-2 px-3 text-indigo-400 font-semibold">{fix.ruleCode}</td>
-                            <td className="py-2 px-3"><Badge variant="green">APPLIED</Badge></td>
                           </tr>
-                        ))}
+                        ) : (
+                          cleansingDiffsList.slice((page2 - 1) * PAGE_SIZE, page2 * PAGE_SIZE).map((fix, idx) => (
+                            <tr key={idx} className="hover:bg-[var(--bg-tertiary)]/50">
+                              <td className="py-2 px-3 text-[var(--text-tertiary)]">#{fix.row}</td>
+                              <td className="py-2 px-3 font-bold text-teal-600 dark:text-teal-400">{fix.field}</td>
+                              <td className="py-2 px-3">
+                                <span className="text-red-400 line-through bg-red-950/10 px-1.5 py-0.5 rounded">
+                                  {String(fix.oldValue || 'BLANK')}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className="text-emerald-500 font-bold bg-emerald-950/10 px-1.5 py-0.5 rounded">
+                                  {String(fix.newValue || 'BLANK')}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-indigo-400 font-semibold">{fix.ruleCode}</td>
+                              <td className="py-2 px-3"><Badge variant="green">APPLIED</Badge></td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>

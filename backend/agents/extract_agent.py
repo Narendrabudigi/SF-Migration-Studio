@@ -461,12 +461,28 @@ You MUST return the output as a valid JSON object matching this exact schema:
         all_cols = list(harmonized_results[0].keys())
         tgt_clean = str(target_object or "").replace(" Data", "").strip() or "Biographical Info"
 
+        # Dynamically fetch mandatory fields from DB sf_fields for target object
+        db_mandatory_targets = set()
+        try:
+            client = supabase_service.get_client()
+            clean_obj = str(target_object or "").replace(" Data", "").strip()
+            res_obj = client.table("sf_objects").select("id").ilike("name", f"%{clean_obj}%").limit(1).execute()
+            if res_obj.data:
+                obj_id = res_obj.data[0]["id"]
+                res_fields = client.table("sf_fields").select("field_name, sf_structure, is_mandatory").eq("object_id", obj_id).eq("is_mandatory", True).execute()
+                for sf in (res_fields.data or []):
+                    fn = sf.get("field_name")
+                    st = sf.get("sf_structure")
+                    if fn:
+                        db_mandatory_targets.add(fn.lower())
+                        if st:
+                            db_mandatory_targets.add(f"{st}.{fn}".lower())
+        except Exception as e:
+            logger.warning(f"Could not load sf_fields mandatory status: {e}")
+
         # 1. Parse mappings to group fields strictly by their pure schema prefix
         schema_fields = {}   # schema -> list of dicts {src, target, full_sap}
         schema_order = []
-        root_pk_target = None
-        root_pk_src = None
-        root_schema = None
 
         for m in (mappings or []):
             if isinstance(m, dict):
@@ -490,14 +506,6 @@ You MUST return the output as a valid JSON object matching this exact schema:
                 schema = tgt_clean
                 target_field = sap_clean.strip()
 
-            # Identify the primary key of the primary entity (e.g., personIdExternal, userId, pernr)
-            field_upper = target_field.upper()
-            if root_pk_target is None:
-                if any(k in field_upper for k in ["PERSONIDEXTERNAL", "PERSON_ID_EXTERNAL", "USERID", "USER_ID", "PERNR", "KUNNR", "LIFNR"]):
-                    root_pk_target = target_field
-                    root_pk_src = src_clean
-                    root_schema = schema
-
             if schema not in schema_fields:
                 schema_fields[schema] = []
                 schema_order.append(schema)
@@ -508,14 +516,6 @@ You MUST return the output as a valid JSON object matching this exact schema:
                 "full_sap": sap_clean
             })
 
-        # Fallback root PK if not matched by specific keyword
-        if root_pk_target is None and schema_order:
-            first_schema = schema_order[0]
-            if schema_fields[first_schema]:
-                root_pk_target = schema_fields[first_schema][0]["target"]
-                root_pk_src = schema_fields[first_schema][0]["src"]
-                root_schema = first_schema
-
         # If no schema mappings were detected, fallback to single clean table
         if not schema_fields:
             meta_keywords = ["hris element", "business key:", "effective-dated:", "entity perperson", "technical name"]
@@ -523,25 +523,82 @@ You MUST return the output as a valid JSON object matching this exact schema:
             return [{
                 "table_name": tgt_clean,
                 "columns": clean_cols if clean_cols else all_cols,
+                "key_columns": [],
                 "row_count": len(harmonized_results)
             }]
 
         tables_list = []
+        all_cols_norm = {re.sub(r'[^a-zA-Z0-9]', '', str(c)).lower() for c in all_cols}
+
         for schema in schema_order:
-            fields = schema_fields[schema]
+            fields = schema_fields.get(schema, [])
+            if not fields:
+                continue
+
+            # Pure mapped columns for this schema - no arbitrary synthetic key injections
             cols = [f["target"] for f in fields]
-
-            # In child tables, ensure the parent entity primary key is present as join key
-            if root_pk_target and schema != root_schema:
-                has_pk = any(f["target"] == root_pk_target for f in fields)
-                if not has_pk:
-                    cols.insert(0, root_pk_target)
-
             unique_cols = list(dict.fromkeys(cols))
 
+            # Dynamically identify key columns strictly if mandatory in DB or mapping
+            key_cols = []
+            for f in fields:
+                tgt = f["target"]
+                full_sap = f["full_sap"]
+                is_mand = (
+                    tgt.lower() in db_mandatory_targets or
+                    full_sap.lower() in db_mandatory_targets or
+                    any(
+                        (m.get("req") is True or m.get("is_mandatory") is True)
+                        for m in (mappings or [])
+                        if isinstance(m, dict) and (
+                            str(m.get("sap", "")).lower() == full_sap.lower() or
+                            str(m.get("sap", "")).lower() == tgt.lower() or
+                            str(m.get("src", "")).lower() == f["src"].lower()
+                        )
+                    )
+                )
+                if is_mand and tgt not in key_cols:
+                    key_cols.append(tgt)
+
+            # If multiple schemas exist, check if this schema has any fields present in harmonized_results
+            if len(schema_order) > 1 and harmonized_results:
+                schema_fields_norm = {
+                    re.sub(r'[^a-zA-Z0-9]', '', str(f["target"])).lower()
+                    for f in fields
+                } | {
+                    re.sub(r'[^a-zA-Z0-9]', '', str(f["src"])).lower()
+                    for f in fields
+                }
+                matching_cols = schema_fields_norm.intersection(all_cols_norm)
+                # If zero columns match harmonized_results, prune this empty phantom schema
+                if not matching_cols:
+                    has_data = any(
+                        any(str(row.get(f["target"], "")).strip() or str(row.get(f["src"], "")).strip() for f in fields)
+                        for row in harmonized_results[:10]
+                    )
+                    if not has_data:
+                        continue
+
             tables_list.append({
-                "table_name": schema,  # Pure Schema Name (e.g., PerPerson, PerPersonal, EmpEmployment)
+                "table_name": schema,  # Pure Schema Name (e.g., EmpJob, PerPerson, PerPersonal)
                 "columns": unique_cols,
+                "key_columns": key_cols,
+                "row_count": len(harmonized_results)
+            })
+
+        # Fallback: if all schemas were pruned, retain first schema
+        if not tables_list and schema_order:
+            first_schema = schema_order[0]
+            fields = schema_fields.get(first_schema, [])
+            unique_cols = list(dict.fromkeys([f["target"] for f in fields]))
+            key_cols = [
+                f["target"] for f in fields
+                if f["target"].lower() in db_mandatory_targets or f["full_sap"].lower() in db_mandatory_targets
+            ]
+            tables_list.append({
+                "table_name": first_schema,
+                "columns": unique_cols if unique_cols else all_cols,
+                "key_columns": key_cols,
                 "row_count": len(harmonized_results)
             })
 

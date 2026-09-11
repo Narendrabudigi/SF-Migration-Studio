@@ -192,10 +192,23 @@ export function Step3Extract() {
 
   // Initialize selectedTables when extractedTables change
   useEffect(() => {
-    if (extractedTables.length > 0) {
-      setSelectedTables(new Set(extractedTables.map((t: any) => t.table_name)));
+    const activeMappingSchemas = new Set<string>();
+    (state.mapping || []).forEach((m: any) => {
+      const sapStr = String(m.sap || '').trim();
+      if (sapStr.includes('.')) {
+        activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+      }
+    });
+
+    const filtered = activeMappingSchemas.size > 0
+      ? extractedTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+      : extractedTables;
+    const finalTables = filtered.length > 0 ? filtered : extractedTables;
+
+    if (finalTables.length > 0) {
+      setSelectedTables(new Set(finalTables.map((t: any) => t.table_name)));
     }
-  }, [extractedTables.length]);
+  }, [extractedTables.length, state.mapping]);
 
 
 
@@ -207,7 +220,18 @@ export function Step3Extract() {
 
     showLoad('Saving data...', 'Persisting extracted records to database');
     try {
-      const currentTables = extractedTables.length > 0 ? extractedTables : (state.extractedTables || []);
+      const rawTables = extractedTables.length > 0 ? extractedTables : (state.extractedTables || []);
+      const activeMappingSchemas = new Set<string>();
+      (state.mapping || []).forEach((m: any) => {
+        const sapStr = String(m.sap || '').trim();
+        if (sapStr.includes('.')) {
+          activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+        }
+      });
+      const filtered = activeMappingSchemas.size > 0
+        ? rawTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+        : rawTables;
+      const currentTables = filtered.length > 0 ? filtered : rawTables;
       const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/extract/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -559,9 +583,21 @@ export function Step3Extract() {
             <div className="space-y-6">
               {/* Table Filter Toolbar */}
               {(() => {
-                const allTables: TableInfo[] = extractedTables.length > 0 
+                const activeMappingSchemas = new Set<string>();
+                (state.mapping || []).forEach((m: any) => {
+                  const sapStr = String(m.sap || '').trim();
+                  if (sapStr.includes('.')) {
+                    activeMappingSchemas.add(sapStr.split('.')[0].trim().toLowerCase());
+                  }
+                });
+
+                const rawTables = extractedTables.length > 0 
                   ? extractedTables 
                   : [{ table_name: 'Extracted Records', columns: Object.keys(state.extracted[0] || {}) }];
+                const filtered = activeMappingSchemas.size > 0
+                  ? rawTables.filter((t: any) => activeMappingSchemas.has(String(t.table_name || '').trim().toLowerCase()))
+                  : rawTables;
+                const allTables: TableInfo[] = filtered.length > 0 ? filtered : rawTables;
                 const visibleTables = allTables.filter((t: any) => selectedTables.has(t.table_name));
                 // Collect all key columns across all tables for filtering
                 const allKeyColumns = detectKeyColumns(allTables.flatMap((t: any) => t.columns));
@@ -584,7 +620,7 @@ export function Step3Extract() {
                       </div>
                     ) : (
                       visibleTables.map((t: any) => {
-                        const { columns: tableCols, rows: tableRows } = getTableDisplayData(t, filteredRows, state.mapping, true);
+                        const { columns: tableCols, rows: tableRows, keyColumns: tableKeys } = getTableDisplayData(t, filteredRows, state.mapping, true);
                         return (
                           <Card key={t.table_name}>
                             <CardHeader title={`Extracted: ${t.table_name}`}>
@@ -603,7 +639,7 @@ export function Step3Extract() {
                               </div>
                             </CardHeader>
                             <CardBody>
-                              <DataTable rows={tableRows} cols={tableCols} />
+                              <DataTable rows={tableRows} cols={tableCols} keyColumns={tableKeys} />
                             </CardBody>
                           </Card>
                         );

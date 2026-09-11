@@ -291,6 +291,7 @@ class HarmonizeFlowRequest(BaseModel):
     rule_config: Optional[Dict[str, Any]] = None
     custom_prompts: Optional[List[str]] = None
     dynamic_rules: Optional[List[Dict[str, Any]]] = None
+    mappings: Optional[List[Dict[str, Any]]] = None
 
 @router.post("/harmonize/flow")
 def run_harmonization_flow(req: HarmonizeFlowRequest):
@@ -333,25 +334,45 @@ def run_harmonization_flow(req: HarmonizeFlowRequest):
 
         primary_df = pd.DataFrame(extracted_rows)
 
-        # 2. Fetch User Corrected Mappings from DB
-        res_map = client.table("user_corrected_mappings").select("source_field_name, transform_rule, confidence, sf_fields(sf_structure, field_name)").eq("project_id", req.project_id).execute()
-        if not res_map.data:
-            raise HTTPException(400, "No user corrected mappings found in the database for this project.")
-
+        # 2. Fetch User Corrected Mappings: prioritize active mappings from client, else DB filtered by object_id
         primary_mappings = []
-        for m in res_map.data:
-            sf_field = m.get("sf_fields")
-            if not sf_field:
-                continue
-            sf_str = f"{sf_field.get('sf_structure', '')}.{sf_field.get('field_name', '')}" if sf_field.get('sf_structure') else sf_field.get('field_name', '')
-            raw_src = m.get("source_field_name", "")
-            clean_src = re.sub(r"^\[\d+\]", "", raw_src)
-            primary_mappings.append(MappingEntry(
-                src=clean_src,
-                sap=sf_str,
-                transform=m.get("transform_rule", "none"),
-                confidence=int(m.get("confidence", 100))
-            ))
+        if req.mappings and len(req.mappings) > 0:
+            for m in req.mappings:
+                m_src = str(m.get("src", "")).strip()
+                m_sap = str(m.get("sap", "")).strip()
+                if not m_src or not m_sap:
+                    continue
+                clean_src = re.sub(r"^\[\d+\]\s*", "", m_src)
+                primary_mappings.append(MappingEntry(
+                    src=clean_src,
+                    sap=m_sap,
+                    transform=m.get("tr", m.get("transform", "none")),
+                    confidence=int(m.get("conf", m.get("confidence", 100)))
+                ))
+
+        if not primary_mappings:
+            res_map = client.table("user_corrected_mappings") \
+                .select("source_field_name, transform_rule, confidence, sf_fields!inner(sf_structure, field_name, object_id)") \
+                .eq("project_id", req.project_id) \
+                .eq("sf_fields.object_id", object_id) \
+                .execute()
+            if not res_map.data:
+                # Fallback: if sf_fields!inner object_id filter had no records, check if any records exist for this project
+                res_map = client.table("user_corrected_mappings").select("source_field_name, transform_rule, confidence, sf_fields(sf_structure, field_name)").eq("project_id", req.project_id).execute()
+
+            for m in (res_map.data or []):
+                sf_field = m.get("sf_fields")
+                if not sf_field:
+                    continue
+                sf_str = f"{sf_field.get('sf_structure', '')}.{sf_field.get('field_name', '')}" if sf_field.get('sf_structure') else sf_field.get('field_name', '')
+                raw_src = m.get("source_field_name", "")
+                clean_src = re.sub(r"^\[\d+\]\s*", "", raw_src)
+                primary_mappings.append(MappingEntry(
+                    src=clean_src,
+                    sap=sf_str,
+                    transform=m.get("transform_rule", "none"),
+                    confidence=int(m.get("confidence", 100))
+                ))
 
         if not primary_mappings:
             raise HTTPException(400, "No valid mappings could be constructed from the database.")
@@ -449,6 +470,7 @@ async def run_harmonization_multi_flow(
     rule_config_json: str = Form(""),
     custom_prompts_json: str = Form(""),
     dynamic_rules_json: str = Form(""),
+    mappings_json: Optional[str] = Form(None),
 ):
     """
     Multi-source harmonization with primary data from DB and secondary data uploaded.
@@ -519,27 +541,49 @@ async def run_harmonization_multi_flow(
 
         primary_df = pd.DataFrame(extracted_rows)
 
-        # 2. Fetch Primary Mappings from DB
-        res_map = client.table("user_corrected_mappings").select(
-            "source_field_name, transform_rule, confidence, sf_fields(sf_structure, field_name)"
-        ).eq("project_id", project_id).execute()
-        if not res_map.data:
-            raise HTTPException(400, "No user corrected mappings found in the database for this project.")
-
+        # 2. Fetch Primary Mappings: prioritize active mappings from client, else DB filtered by object_id
         primary_mappings = []
-        for m in res_map.data:
-            sf_field = m.get("sf_fields")
-            if not sf_field:
-                continue
-            sf_str = f"{sf_field.get('sf_structure', '')}.{sf_field.get('field_name', '')}" if sf_field.get('sf_structure') else sf_field.get('field_name', '')
-            raw_src = m.get("source_field_name", "")
-            clean_src = re.sub(r"^\[\d+\]", "", raw_src)
-            primary_mappings.append(MappingEntry(
-                src=clean_src,
-                sap=sf_str,
-                transform=m.get("transform_rule", "none"),
-                confidence=int(m.get("confidence", 100))
-            ))
+        if mappings_json:
+            try:
+                parsed_mappings = json.loads(mappings_json)
+                if isinstance(parsed_mappings, list):
+                    for m in parsed_mappings:
+                        m_src = str(m.get("src", "")).strip()
+                        m_sap = str(m.get("sap", "")).strip()
+                        if not m_src or not m_sap:
+                            continue
+                        clean_src = re.sub(r"^\[\d+\]\s*", "", m_src)
+                        primary_mappings.append(MappingEntry(
+                            src=clean_src,
+                            sap=m_sap,
+                            transform=m.get("tr", m.get("transform", "none")),
+                            confidence=int(m.get("conf", m.get("confidence", 100)))
+                        ))
+            except Exception:
+                pass
+
+        if not primary_mappings:
+            res_map = client.table("user_corrected_mappings").select(
+                "source_field_name, transform_rule, confidence, sf_fields!inner(sf_structure, field_name, object_id)"
+            ).eq("project_id", project_id).eq("sf_fields.object_id", object_id).execute()
+            if not res_map.data:
+                res_map = client.table("user_corrected_mappings").select(
+                    "source_field_name, transform_rule, confidence, sf_fields(sf_structure, field_name)"
+                ).eq("project_id", project_id).execute()
+
+            for m in (res_map.data or []):
+                sf_field = m.get("sf_fields")
+                if not sf_field:
+                    continue
+                sf_str = f"{sf_field.get('sf_structure', '')}.{sf_field.get('field_name', '')}" if sf_field.get('sf_structure') else sf_field.get('field_name', '')
+                raw_src = m.get("source_field_name", "")
+                clean_src = re.sub(r"^\[\d+\]", "", raw_src)
+                primary_mappings.append(MappingEntry(
+                    src=clean_src,
+                    sap=sf_str,
+                    transform=m.get("transform_rule", "none"),
+                    confidence=int(m.get("confidence", 100))
+                ))
 
         if not primary_mappings:
             raise HTTPException(400, "No valid mappings could be constructed from the database.")
