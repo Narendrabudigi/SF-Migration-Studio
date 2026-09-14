@@ -50,6 +50,7 @@ function AppContent() {
         <Route path="/cleanse" element={<Step6Cleanse />} />
         <Route path="/transform" element={<Step7Transform />} />
         <Route path="/export" element={<Step8DMCExport />} />
+        <Route path="/docs/:id" element={<Step9TechDocs />} />
         <Route path="/docs" element={<Step9TechDocs />} />
         <Route path="/insert" element={<InsertMapping />} />
         <Route path="*" element={<Navigate to="/" replace />} />

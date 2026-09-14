@@ -79,6 +79,30 @@
       "python_code": "def transform(value, row):\n    if value is not None:\n        return str(value).upper()\n    return value",
       "source": "harmonization_dynamic_rule",
       "target_object": "Job Info"
+    },
+    {
+      "created_at": "2026-09-11T13:26:42.512580+00:00",
+      "description": "If the 'Payroll End Date' field is empty or null, set its value to 'nandu'. Otherwise, keep the original value.",
+      "field": "GENERAL",
+      "id": "DYNAMIC_HARM_1",
+      "label": "Replace empty Payroll End Date with 'nandu'",
+      "priority": 100,
+      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
+      "python_code": "def transform(value, row):\n    if not value or value.strip() == '':\n        return 'nandu'\n    return value",
+      "source": "harmonization_dynamic_rule",
+      "target_object": "Employment Details"
+    },
+    {
+      "created_at": "2026-09-14T06:19:39.897674+00:00",
+      "description": "Converts the value of the 'company' field to its uppercase representation.",
+      "field": "GENERAL",
+      "id": "DYNAMIC_HARM_1",
+      "label": "Converts the 'Company' field value to its uppercase representation",
+      "priority": 100,
+      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
+      "python_code": "def transform(value, row):\n    return value.upper()",
+      "source": "harmonization_dynamic_rule",
+      "target_object": "EmpJob"
     }
   ],
   "version": "1.0"

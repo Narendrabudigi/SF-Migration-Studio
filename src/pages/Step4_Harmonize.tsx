@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { dl, expCSV } from '@/lib/utils';
+import { jsPDF } from 'jspdf';
 import {
   PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button,
   DataTable, EmptyState
@@ -209,6 +210,8 @@ const RULE_LIST: RuleDef[] = [
 
 /* ─── Harmonization Report Card (With Vector PDF & Report CSV Exports) ─── */
 function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
+  const { state } = useMigration();
+  const { toast } = useToast();
   const [showLogDetails, setShowLogDetails] = useState(false);
 
   const fixLog = result.fix_log || [];
@@ -297,7 +300,265 @@ function HarmonizationReportCard({ result }: { result: HarmonizationResult }) {
   };
 
   const exportVectorPDF = () => {
-    window.print();
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const targetObj = state.obj || 'Harmonized_Object';
+      const cleanObj = targetObj.replace(/[\s/]+/g, '_');
+
+      // Colors
+      const primaryColor = [124, 58, 237]; // Purple 600
+      const darkText = [30, 41, 59];
+      const mutedText = [100, 116, 139];
+      const bodyText = [71, 85, 105];
+      const lightBg = [248, 250, 252];
+      const tableHeaderBg = [243, 232, 255]; // Soft Purple
+      const tableAltBg = [250, 245, 255];
+
+      // Header Banner
+      doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.rect(0, 0, pageWidth, 28, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(255, 255, 255);
+      doc.text('SuccessFactors Migration Studio — Harmonization Audit Report', 14, 13);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      const timestamp = `${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      doc.text(
+        `Generated: ${timestamp} | Target Object: ${targetObj} | Records: ${stats.total_output || rows.length}`,
+        14,
+        21
+      );
+
+      let yPos = 36;
+
+      // Executive Title
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+      doc.text(`Harmonization Pipeline Execution Report: ${targetObj}`, 14, yPos);
+      yPos += 7;
+
+      // Scorecard Summary Box
+      doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+      doc.roundedRect(14, yPos, pageWidth - 28, 24, 2.5, 2.5, 'F');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10.5);
+      doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      doc.text('Harmonization Metric Summary & Pipeline Yield', 20, yPos + 8);
+
+      const cleanedRows = (stats.deduped || 0) + (stats.empty_removed || 0);
+      const outputCols = stats.columns || (rows.length > 0 ? Object.keys(rows[0]).length : 0);
+      const sourceStr = Object.entries(sourceCounts).map(([s, c]) => `${s}: ${c}`).join(', ') || 'Standard Input';
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(mutedText[0], mutedText[1], mutedText[2]);
+      doc.text(
+        `Rows Preserved: ${stats.total_output || rows.length} / ${stats.total_input || rows.length}  |  Cleaned/Deduped: ${cleanedRows}  |  Columns: ${outputCols}  |  Fixes: ${totalFixEvents}`,
+        20,
+        yPos + 15
+      );
+      doc.text(
+        `Source Attribution: ${sourceStr}`,
+        20,
+        yPos + 20
+      );
+
+      yPos += 30;
+
+      // Section 1: Executive Harmonization Summary
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+      doc.text('1. Harmonization Breakdown & Standardizations Applied', 14, yPos);
+      yPos += 6;
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+      const summaryText = `Harmonization processing successfully unified legacy records into ${rows.length} validated master records across ${outputCols} standardized columns. Source contributions: ${sourceStr}. Total automated field standardization and AI transformations applied: ${totalFixEvents}.`;
+      const splitSummary = doc.splitTextToSize(summaryText, pageWidth - 28);
+      doc.text(splitSummary, 14, yPos);
+      yPos += (splitSummary.length * 4.5) + 6;
+
+      // Rule Categories Breakdown List
+      categories.forEach((cat) => {
+        if (cat.items.length > 0) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(9);
+          doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+          doc.text(`• ${cat.title} (${cat.items.length} events)`, 18, yPos);
+          yPos += 5;
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+          const samples = cat.items.slice(0, 2);
+          samples.forEach((item) => {
+            const splitItem = doc.splitTextToSize(`   ${item}`, pageWidth - 36);
+            doc.text(splitItem, 20, yPos);
+            yPos += (splitItem.length * 3.8) + 1;
+          });
+          yPos += 2;
+        }
+      });
+
+      yPos += 4;
+
+      // Section 2: Detailed Transformation Audit Trail Table
+      if (fixLog.length > 0) {
+        if (yPos > 210) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+        doc.text(`2. Transformation Audit Trail (Showing Top ${Math.min(fixLog.length, 60)} of ${fixLog.length} Events)`, 14, yPos);
+        yPos += 7;
+
+        // Table Header
+        doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+        doc.rect(14, yPos, pageWidth - 28, 7, 'F');
+        doc.setFontSize(8);
+        doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+        doc.text('#', 17, yPos + 5);
+        doc.text('Category / Rule', 26, yPos + 5);
+        doc.text('Target (Row / Field)', 72, yPos + 5);
+        doc.text('Transformation Details', 125, yPos + 5);
+        yPos += 7;
+
+        doc.setFont('helvetica', 'normal');
+
+        const auditSubset = fixLog.slice(0, 60);
+        auditSubset.forEach((line, idx) => {
+          if (yPos > 275) {
+            doc.addPage();
+            yPos = 20;
+
+            // Re-render header on new page
+            doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+            doc.rect(14, yPos, pageWidth - 28, 7, 'F');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(8);
+            doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+            doc.text('#', 17, yPos + 5);
+            doc.text('Category / Rule', 26, yPos + 5);
+            doc.text('Target (Row / Field)', 72, yPos + 5);
+            doc.text('Transformation Details', 125, yPos + 5);
+            doc.setFont('helvetica', 'normal');
+            yPos += 7;
+          }
+
+          if (idx % 2 === 1) {
+            doc.setFillColor(tableAltBg[0], tableAltBg[1], tableAltBg[2]);
+            doc.rect(14, yPos, pageWidth - 28, 6, 'F');
+          }
+
+          let cat = 'Rule';
+          let target = '—';
+          let details = line;
+
+          const matchTransform = line.match(/^\[([^\]]+)\]\s*(?:Row\s*(\d+))?(?:\s*\(([^)]+)\))?:\s*(?:'([^']*)'\s*→\s*'([^']*)')?(.*)$/);
+          if (matchTransform) {
+            cat = matchTransform[1] || 'Transform';
+            const rowPart = matchTransform[2] ? `Row ${matchTransform[2]}` : '';
+            const fieldPart = matchTransform[3] || '';
+            target = [rowPart, fieldPart].filter(Boolean).join(' ') || '—';
+            if (matchTransform[4] !== undefined && matchTransform[5] !== undefined) {
+              details = `'${matchTransform[4]}' → '${matchTransform[5]}'`;
+            } else {
+              details = matchTransform[6]?.trim() || line;
+            }
+          } else {
+            const matchCat = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+            if (matchCat) {
+              cat = matchCat[1];
+              details = matchCat[2];
+            }
+          }
+
+          doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+          doc.text(String(idx + 1), 17, yPos + 4.2);
+          doc.text(cat.substring(0, 24), 26, yPos + 4.2);
+          doc.text(target.substring(0, 26), 72, yPos + 4.2);
+          doc.text(details.substring(0, 48), 125, yPos + 4.2);
+
+          yPos += 6;
+        });
+      }
+
+      // Section 3: Harmonized Dataset Sample Preview
+      if (rows.length > 0) {
+        doc.addPage();
+        yPos = 20;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+        doc.text(`3. Harmonized Master Data Sample Preview (${targetObj})`, 14, yPos);
+        yPos += 5;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(mutedText[0], mutedText[1], mutedText[2]);
+        doc.text(`Displaying top sample records of unified schema (${rows.length} total rows, ${outputCols} columns)`, 14, yPos);
+        yPos += 6;
+
+        const cols = Object.keys(rows[0] || {}).slice(0, 5);
+        doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+        doc.rect(14, yPos, pageWidth - 28, 7, 'F');
+        doc.setFontSize(8);
+        doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+        cols.forEach((c, idx) => {
+          doc.text(c.substring(0, 16), 18 + idx * 35, yPos + 5);
+        });
+        yPos += 7;
+
+        doc.setFont('helvetica', 'normal');
+        rows.slice(0, 35).forEach((r: any, idx: number) => {
+          if (yPos > 275) {
+            doc.addPage();
+            yPos = 20;
+            // header
+            doc.setFillColor(tableHeaderBg[0], tableHeaderBg[1], tableHeaderBg[2]);
+            doc.rect(14, yPos, pageWidth - 28, 7, 'F');
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(8);
+            doc.setTextColor(bodyText[0], bodyText[1], bodyText[2]);
+            cols.forEach((c, cidx) => {
+              doc.text(c.substring(0, 16), 18 + cidx * 35, yPos + 5);
+            });
+            doc.setFont('helvetica', 'normal');
+            yPos += 7;
+          }
+
+          if (idx % 2 === 1) {
+            doc.setFillColor(tableAltBg[0], tableAltBg[1], tableAltBg[2]);
+            doc.rect(14, yPos, pageWidth - 28, 6, 'F');
+          }
+
+          doc.setTextColor(darkText[0], darkText[1], darkText[2]);
+          cols.forEach((c, cidx) => {
+            doc.text(String(r[c] ?? '').substring(0, 18), 18 + cidx * 35, yPos + 4.2);
+          });
+          yPos += 6;
+        });
+      }
+
+      // Trigger direct file download
+      doc.save(`Harmonization_Audit_Report_${cleanObj}.pdf`);
+      toast('Harmonization Audit Report PDF downloaded successfully!', 'ok');
+    } catch (err: any) {
+      console.error(err);
+      toast('Failed to generate Harmonization PDF report', 'err');
+    }
   };
 
   return (
@@ -705,7 +966,19 @@ export function Step4Harmonize() {
 
   // Dynamic AI Rules
   const [customPrompts, setCustomPrompts] = useState<string[]>(state.harmonizeCustomPrompts || []);
-  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(state.harmonizeDynamicRules || []);
+  const [savedDynamicRules, setSavedDynamicRules] = useState<any[]>(() => {
+    return (state.harmonizeDynamicRules || []).map((r: any) => {
+      if (r.target_field === 'Legal Employer' || r.target_field === 'legal_employer' || (r.label && /legal employer/i.test(r.label))) {
+        return {
+          ...r,
+          target_field: 'COMPANY',
+          label: (r.label || '').replace(/Legal Employer/gi, 'Company'),
+          description: (r.description || '').replace(/Legal Employer/gi, 'Company'),
+        };
+      }
+      return r;
+    });
+  });
   const [selectedDynamicRules, setSelectedDynamicRules] = useState<Record<string, boolean>>(
     Object.fromEntries((state.harmonizeDynamicRules || []).map((r: any) => [r.id, true]))
   );
@@ -720,7 +993,17 @@ export function Step4Harmonize() {
         const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/sap/harmonize/load/${state.projectId}?target_object=${encodeURIComponent(objName)}`);
         if (res.ok) {
           const json = await res.json();
-          const loadedRules = Array.isArray(json.dynamic_rules) ? json.dynamic_rules : [];
+          const loadedRules = (Array.isArray(json.dynamic_rules) ? json.dynamic_rules : []).map((r: any) => {
+            if (r.target_field === 'Legal Employer' || r.target_field === 'legal_employer' || (r.label && /legal employer/i.test(r.label))) {
+              return {
+                ...r,
+                target_field: 'COMPANY',
+                label: (r.label || '').replace(/Legal Employer/gi, 'Company'),
+                description: (r.description || '').replace(/Legal Employer/gi, 'Company'),
+              };
+            }
+            return r;
+          });
           setSavedDynamicRules(loadedRules);
           dispatch({ type: 'SET_FIELD', field: 'harmonizeDynamicRules', value: loadedRules });
           setSelectedDynamicRules(
@@ -860,9 +1143,18 @@ export function Step4Harmonize() {
     }
     showLoad('Saving rules...', 'Compiling and saving dynamic harmonization rules to database');
     try {
-      const actualCols = (state.extracted && state.extracted.length > 0)
-        ? Object.keys(state.extracted[0])
-        : ((result?.columns && result.columns.length > 0) ? result.columns : (state.headers || []));
+      // Prioritize harmonized post-mapping columns (the actual columns seen in Step 4)
+      const actualCols = (result?.columns && result.columns.length > 0)
+        ? result.columns
+        : ((result?.final_table && result.final_table.length > 0)
+          ? Object.keys(result.final_table[0])
+          : ((state.harmonized && state.harmonized.length > 0)
+            ? Object.keys(state.harmonized[0])
+            : ((state.mapping && state.mapping.length > 0)
+              ? Array.from(new Set(state.mapping.map((m: any) => m.sap ? (m.sap.includes('.') ? m.sap.split('.').pop() : m.sap) : '').filter(Boolean)))
+              : ((state.extracted && state.extracted.length > 0)
+                ? Object.keys(state.extracted[0])
+                : (state.headers || [])))));
 
       let compiled: any[] = [];
       if (customPrompts.length > 0) {
@@ -872,7 +1164,8 @@ export function Step4Harmonize() {
           body: JSON.stringify({
             prompts: customPrompts,
             target_object: state.obj,
-            actual_columns: actualCols
+            actual_columns: actualCols,
+            mappings: state.mapping,
           })
         });
         if (res.ok) {
@@ -881,9 +1174,24 @@ export function Step4Harmonize() {
         }
       }
 
+      // Auto-repair existing saved rules if they had "Legal Employer" substituted
+      const repairedSavedRules = savedDynamicRules.map((r: any) => {
+        const isLegalEmployer = r.target_field === 'Legal Employer' || r.target_field === 'legal_employer' || (r.label && /legal employer/i.test(r.label));
+        if (isLegalEmployer) {
+          const companyCol = actualCols.find((c: string) => c.toUpperCase() === 'COMPANY') || 'COMPANY';
+          return {
+            ...r,
+            target_field: companyCol,
+            label: (r.label || '').replace(/Legal Employer/gi, 'Company'),
+            description: (r.description || '').replace(/Legal Employer/gi, 'Company'),
+          };
+        }
+        return r;
+      });
+
       const deduupedCompiled = dedupeRules(compiled);
       const payloadRules = [
-        ...savedDynamicRules,
+        ...repairedSavedRules,
         ...deduupedCompiled
       ].map((r: any) => ({
         ...r,

@@ -1273,9 +1273,28 @@ class HarmonizationAgent:
                     actual_col = col
                     break
 
-            # 2. Field Synonym / Alias match (e.g. Employee Reference / PERNR -> userId, Given Name -> firstName)
+            # 2. Field Synonym / Alias match (e.g. Employee Reference / PERNR -> userId, Legal Employer -> company)
             if actual_col is None:
                 field_aliases_map = {
+                    "company": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+                    "legal employer": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+                    "legalemployer": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+                    "company name": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+                    "business unit": ["businessunit", "business_unit", "bunit", "division", "segment"],
+                    "businessunit": ["businessunit", "business_unit", "bunit", "division", "segment"],
+                    "department": ["department", "dept", "orgunit", "org_unit", "departmentname"],
+                    "cost center": ["costcenter", "cost_center", "kostl"],
+                    "costcenter": ["costcenter", "cost_center", "kostl"],
+                    "location": ["location", "worklocation", "work_location", "site"],
+                    "worklocation": ["worklocation", "work_location", "location", "site"],
+                    "country": ["country", "countryofcompany", "country_of_company", "countryofbirth", "country_of_birth", "nationality", "land1"],
+                    "countryofcompany": ["countryofcompany", "country_of_company", "country", "land1"],
+                    "job title": ["jobtitle", "job_title", "title", "position"],
+                    "jobcode": ["jobcode", "job_code", "jobtitle", "job_title"],
+                    "start date": ["startdate", "start_date", "begda", "hiredate", "hire_date"],
+                    "startdate": ["startdate", "start_date", "begda", "hiredate", "hire_date"],
+                    "end date": ["enddate", "end_date", "endda", "terminationdate", "termination_date"],
+                    "enddate": ["enddate", "end_date", "endda", "terminationdate", "termination_date"],
                     "givenname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
                     "given name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
                     "firstname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
@@ -1303,7 +1322,6 @@ class HarmonizationAgent:
                     "preferred name": ["preferredname", "preferred_name", "preferred-name", "dispname", "displayname", "nickname"],
                     "preferredlanguage": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
                     "preferred language": ["preferredlanguage", "preferred_language", "preferred-language", "language", "spras", "nativepreferredlang"],
-                    "country": ["country", "countryofbirth", "country_of_birth", "nationality", "land1"],
                     "country of birth": ["countryofbirth", "country_of_birth", "country", "nationality", "land1"],
                     "date of birth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
                     "dateofbirth": ["dateofbirth", "date_of_birth", "dob", "gbdat"],
@@ -1329,9 +1347,27 @@ class HarmonizationAgent:
                         actual_col = col
                         break
 
+            # 4. Fallback search against rule text (label + description)
+            if actual_col is None:
+                rule_words = set(re.findall(r'\b[a-zA-Z0-9_-]+\b', rule_text.lower()))
+                for col in df.columns:
+                    col_str = str(col)
+                    col_norm = col_str.lower().replace("-", "").replace("_", "")
+                    if col_norm in rule_words or col_str.lower() in rule_words:
+                        actual_col = col
+                        break
+                    # Also check aliases of column
+                    col_aliases = field_aliases_map.get(col_str.lower()) or field_aliases_map.get(col_norm) or []
+                    if any(a in rule_words or f" {a} " in f" {rule_text.lower()} " for a in col_aliases):
+                        actual_col = col
+                        break
+
             if actual_col is None:
                 self.fix_log.append(f"[DynamicAI] Skipping rule '{label}' — field '{target_field}' not found in dataset columns: {list(df.columns)}")
                 continue
+
+            if str(actual_col).upper() != str(target_field).upper():
+                self.fix_log.append(f"[DynamicAI] Mapped rule '{label}' target field '{target_field}' → '{actual_col}'")
 
             try:
                 # Build the transform function from LLM code

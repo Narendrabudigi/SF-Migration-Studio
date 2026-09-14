@@ -39,6 +39,7 @@ from routers.validate import router as validate_router
 from routers.cleanser import router as cleanser_router
 from routers.transform import router as transform_router
 from routers.target_objects import router as target_objects_router
+from routers.tech_docs import router as tech_docs_router
 
 app.include_router(mapping_router, prefix="/api/sap")
 app.include_router(project_router, prefix="/api/sap/projects")
@@ -49,6 +50,7 @@ app.include_router(validate_router, prefix="/api")
 app.include_router(cleanser_router, prefix="/api/sap/cleanser")
 app.include_router(transform_router, prefix="/api/sap/transform")
 app.include_router(target_objects_router, prefix="/api/sap/target-objects")
+app.include_router(tech_docs_router, prefix="/api/sap/tech-docs")
 app.include_router(auth_router, prefix="/api/auth")
 
 if __name__ == "__main__":

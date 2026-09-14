@@ -751,16 +751,17 @@ Generate a Python transform function: `def transform(value, row): -> str`
 Return a JSON array where each element has:
 {{
   "id": "DYNAMIC_HARM_<N>",
-  "label": "<short descriptive title of the rule>",
-  "description": "<detailed rule description>",
-  "target_field": "<EXACT column name selected from dataset columns>",
+  "label": "<Use the user's exact wording for the rule title without renaming fields>",
+  "description": "<detailed rule description reflecting what the user asked>",
+  "target_field": "<EXACT column name selected directly from the dataset columns list above>",
   "python_code": "def transform(value, row):\n    ..."
 }}
 
 CRITICAL RULES:
-1. `target_field` MUST be selected directly from the exact dataset columns above (e.g. use `firstName` instead of `Given Name`, `lastName` instead of `Family Name`).
-2. `python_code` must be a COMPLETE, VALID Python function starting with `def transform(value, row):`.
-3. Return ONLY the JSON array, no markdown wrappers."""
+1. `target_field` MUST be an exact match to one of the column names in: {actual_columns}. DO NOT substitute external or ERP field names. (For example, if the user prompt mentions 'company' or 'company name' and the dataset column is 'COMPANY', select 'COMPANY' — NEVER use 'Legal Employer' or any other name).
+2. `label` MUST retain what the user specified. Do not rename the field in the label (e.g. if the user says 'convert company name to uppercase', the label MUST be 'Convert company name to uppercase', NEVER 'Convert Legal Employer to uppercase').
+3. `python_code` must be a COMPLETE, VALID Python function starting with `def transform(value, row):`.
+4. Return ONLY the JSON array, no markdown wrappers."""
 
     user_msg = "Generate transform functions for these rules:\n"
     for i, p in enumerate(prompts, 1):
@@ -774,6 +775,25 @@ CRITICAL RULES:
 
         cleaned_rules = []
         field_aliases_map = {
+            "company": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+            "legal employer": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+            "legalemployer": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+            "company name": ["company", "company_name", "companyname", "companycode", "company_code", "legalemployer", "legal_employer", "legal_entity", "legalentity", "bukrs"],
+            "business unit": ["businessunit", "business_unit", "bunit", "division", "segment"],
+            "businessunit": ["businessunit", "business_unit", "bunit", "division", "segment"],
+            "department": ["department", "dept", "orgunit", "org_unit", "departmentname"],
+            "cost center": ["costcenter", "cost_center", "kostl"],
+            "costcenter": ["costcenter", "cost_center", "kostl"],
+            "location": ["location", "worklocation", "work_location", "site"],
+            "worklocation": ["worklocation", "work_location", "location", "site"],
+            "country": ["country", "countryofcompany", "country_of_company", "countryofbirth", "country_of_birth", "nationality", "land1"],
+            "countryofcompany": ["countryofcompany", "country_of_company", "country", "land1"],
+            "job title": ["jobtitle", "job_title", "title", "position"],
+            "jobcode": ["jobcode", "job_code", "jobtitle", "job_title"],
+            "start date": ["startdate", "start_date", "begda", "hiredate", "hire_date"],
+            "startdate": ["startdate", "start_date", "begda", "hiredate", "hire_date"],
+            "end date": ["enddate", "end_date", "endda", "terminationdate", "termination_date"],
+            "enddate": ["enddate", "end_date", "endda", "terminationdate", "termination_date"],
             "givenname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
             "given name": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
             "firstname": ["firstname", "first_name", "first-name", "givenname", "given_name", "fname", "vorna"],
@@ -816,40 +836,62 @@ CRITICAL RULES:
                 rule_id = f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}"
             prompt_str = prompts[min(idx - 1, len(prompts) - 1)] if prompts else ""
 
+            # Preserve what the user actually provided for rule label
+            if prompt_str and prompt_str.strip():
+                p_clean = prompt_str.strip()
+                clean_label = p_clean[0].upper() + p_clean[1:]
+            else:
+                clean_label = r.get("label") or f"Rule: {rule_id}"
+
             tf = str(r.get("target_field") or "").strip()
 
             matched_col = None
-            if actual_columns and tf:
+
+            # Priority 1: Match whole words from user's actual prompt string against actual_columns
+            # e.g. user prompt "convert company name to uppercase" directly matches column "COMPANY"
+            if actual_columns and prompt_str:
+                import re
+                prompt_lower = prompt_str.lower()
+                prompt_words = set(re.findall(r'\b[a-zA-Z0-9_-]+\b', prompt_lower))
+
+                # Check for direct word matches first
+                for col in actual_columns:
+                    c_str = str(col)
+                    c_norm = c_str.lower().replace("-", "").replace("_", "")
+                    if c_norm in prompt_words or c_str.lower() in prompt_words:
+                        matched_col = c_str
+                        break
+
+                # Check aliases of actual_columns against prompt words
+                if not matched_col:
+                    for col in actual_columns:
+                        c_str = str(col)
+                        c_norm = c_str.lower().replace("-", "").replace("_", "")
+                        aliases = field_aliases_map.get(c_str.lower()) or field_aliases_map.get(c_norm) or []
+                        if any(a in prompt_words or f" {a} " in f" {prompt_lower} " for a in aliases):
+                            matched_col = c_str
+                            break
+
+            # Priority 2: Direct or normalized match of LLM target_field against actual_columns
+            if not matched_col and actual_columns and tf:
                 tf_norm = tf.lower().replace("-", "").replace("_", "").replace(" ", "")
-                # 1. Direct or normalized match against actual_columns
                 for col in actual_columns:
                     col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
                     if col_norm == tf_norm or str(col).upper() == tf.upper():
                         matched_col = col
                         break
 
-                # 2. Field Synonym / Alias match against actual_columns
-                if not matched_col:
-                    aliases = field_aliases_map.get(tf.lower()) or field_aliases_map.get(tf_norm) or []
-                    for alias in aliases:
-                        alias_norm = alias.lower().replace("-", "").replace("_", "").replace(" ", "")
-                        for col in actual_columns:
-                            col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
-                            if col_norm == alias_norm:
-                                matched_col = col
-                                break
-                        if matched_col:
+            # Priority 3: Field Synonym / Alias match against actual_columns
+            if not matched_col and actual_columns and tf:
+                aliases = field_aliases_map.get(tf.lower()) or field_aliases_map.get(tf_norm) or []
+                for alias in aliases:
+                    alias_norm = alias.lower().replace("-", "").replace("_", "").replace(" ", "")
+                    for col in actual_columns:
+                        col_norm = str(col).lower().replace("-", "").replace("_", "").replace(" ", "")
+                        if col_norm == alias_norm:
+                            matched_col = col
                             break
-
-            # 3. Whole-word token search in prompt string ONLY if target_field was not resolved yet
-            if not matched_col and actual_columns and prompt_str:
-                import re
-                prompt_words = set(re.findall(r'\b[a-zA-Z0-9_-]+\b', prompt_str.lower()))
-                for col in actual_columns:
-                    c_str = str(col)
-                    c_norm = c_str.lower().replace("-", "").replace("_", "")
-                    if c_norm in prompt_words or c_str.lower() in prompt_words:
-                        matched_col = c_str
+                    if matched_col:
                         break
 
             if matched_col:
@@ -864,10 +906,15 @@ CRITICAL RULES:
             if not py_code:
                 py_code = "def transform(value, row):\n    return value"
 
+            desc = r.get("description") or prompt_str
+            # Sanitize description so it doesn't mention substituted external terms like "Legal Employer"
+            if "legal employer" in desc.lower() and "legal employer" not in prompt_str.lower():
+                desc = f"Converts '{tf}' field according to user rule: {prompt_str}"
+
             cleaned_rules.append({
                 "id": rule_id,
-                "label": r.get("label") or f"Rule: {prompt_str[:30]}",
-                "description": r.get("description") or prompt_str,
+                "label": clean_label,
+                "description": desc,
                 "target_field": tf,
                 "python_code": py_code,
                 "enabled": r.get("enabled", True),
@@ -878,16 +925,28 @@ CRITICAL RULES:
 
     except Exception as e:
         logger.exception(f"Failed to generate dynamic harmonization rules: {e}")
-        # Fallback: create basic rule placeholders so prompts are not lost
+        # Fallback basic rules
         fallback_rules = []
-        import uuid
-        for p in prompts:
+        for idx, p in enumerate(prompts, 1):
+            clean_p = p.strip()
+            rule_label = clean_p[0].upper() + clean_p[1:] if clean_p else f"Rule {idx}"
+
+            # Try to match a column from actual_columns in prompt string
+            matched_fallback_col = None
+            if actual_columns and clean_p:
+                p_lower = clean_p.lower()
+                for c in actual_columns:
+                    if str(c).lower() in p_lower:
+                        matched_fallback_col = c
+                        break
+
+            tf = matched_fallback_col or (actual_columns[0] if actual_columns else target_object)
             fallback_rules.append({
                 "id": f"DYNAMIC_HARM_{uuid.uuid4().hex[:8]}",
-                "label": f"Rule: {p[:30]}",
+                "label": rule_label,
                 "description": p,
-                "target_field": actual_columns[0] if actual_columns else target_object,
-                "python_code": "def transform(value, row):\n    return value",
+                "target_field": tf,
+                "python_code": "def transform(value, row):\n    return str(value).upper() if 'upper' in value else str(value)",
                 "enabled": True,
             })
         return fallback_rules
@@ -897,6 +956,7 @@ class GenerateHarmonizationRulesRequest(BaseModel):
     prompts: List[str]
     target_object: str = "Biographical Info"
     actual_columns: Optional[List[str]] = None
+    mappings: Optional[List[Dict[str, Any]]] = None
 
 @router.post("/harmonize/generate-dynamic-rules")
 def generate_dynamic_rules(req: GenerateHarmonizationRulesRequest):
@@ -904,7 +964,19 @@ def generate_dynamic_rules(req: GenerateHarmonizationRulesRequest):
     if not req.prompts:
         raise HTTPException(400, "No prompts provided")
 
-    actual_cols = req.actual_columns or []
+    actual_cols = list(req.actual_columns) if req.actual_columns else []
+    # If mappings are provided, ensure target SAP columns are prioritized
+    if req.mappings:
+        target_sap_cols = []
+        for m in req.mappings:
+            sap = str(m.get("sap") or "").strip()
+            if sap:
+                clean_sap = sap.split(".")[-1] if "." in sap else sap
+                if clean_sap and clean_sap not in target_sap_cols:
+                    target_sap_cols.append(clean_sap)
+        if target_sap_cols:
+            actual_cols = target_sap_cols + [c for c in actual_cols if c not in target_sap_cols]
+
     rules = _generate_dynamic_rules_internal(req.prompts, req.target_object, actual_cols)
 
     return {"rules": rules, "count": len(rules)}
