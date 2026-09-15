@@ -31,6 +31,15 @@ interface ParsedField {
   enabled?: string;
 }
 
+interface DetectedMappings {
+  table_source: string;
+  field_column: string;
+  label_column: string;
+  type_column: string;
+  required_column: string;
+  enabled_column: string;
+}
+
 interface ValidationResponse {
   valid: boolean;
   detected_table_name: string;
@@ -41,6 +50,8 @@ interface ValidationResponse {
   fields: ParsedField[];
   error?: string;
   missing_columns?: string[];
+  found_columns?: string[];
+  detected_mappings?: DetectedMappings;
 }
 
 export function TargetObjectImportModal({
@@ -56,6 +67,7 @@ export function TargetObjectImportModal({
   const [isImporting, setIsImporting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [missingColumns, setMissingColumns] = useState<string[]>([]);
+  const [foundColumns, setFoundColumns] = useState<string[]>([]);
 
   const [parsedData, setParsedData] = useState<ValidationResponse | null>(null);
   const [targetObjectName, setTargetObjectName] = useState('');
@@ -67,6 +79,7 @@ export function TargetObjectImportModal({
     setIsImporting(false);
     setValidationError(null);
     setMissingColumns([]);
+    setFoundColumns([]);
     setParsedData(null);
     setTargetObjectName('');
     setTargetObjectDescription('');
@@ -102,14 +115,15 @@ export function TargetObjectImportModal({
     if (!file) return;
 
     const ext = file.name.toLowerCase();
-    if (!ext.endsWith('.xlsx') && !ext.endsWith('.xls')) {
-      setValidationError('Please upload an Excel spreadsheet file (.xlsx or .xls).');
+    if (!ext.endsWith('.xlsx') && !ext.endsWith('.xls') && !ext.endsWith('.csv')) {
+      setValidationError('Please upload an Excel spreadsheet file (.xlsx, .xls) or CSV file.');
       return;
     }
 
     setIsUploading(true);
     setValidationError(null);
     setMissingColumns([]);
+    setFoundColumns([]);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -125,6 +139,7 @@ export function TargetObjectImportModal({
       if (!res.ok || !data.valid) {
         setValidationError(data.error || 'The uploaded file is not in standard format.');
         setMissingColumns(data.missing_columns || []);
+        setFoundColumns(data.found_columns || []);
         setIsUploading(false);
         return;
       }
@@ -302,8 +317,28 @@ export function TargetObjectImportModal({
                       </div>
 
                       {missingColumns.length > 0 && (
-                        <div className="text-[11px] font-mono bg-red-500/10 p-2 rounded-lg border border-red-500/20">
-                          Missing headers: <strong>{missingColumns.join(', ')}</strong>
+                        <div className="text-[11px] font-mono bg-red-500/10 p-2.5 rounded-lg border border-red-500/20 space-y-1">
+                          <div>
+                            Missing essential column: <strong className="text-red-500">{missingColumns.join(', ')}</strong>
+                          </div>
+                        </div>
+                      )}
+
+                      {foundColumns.length > 0 && (
+                        <div className="text-[11px] font-mono bg-[var(--bg-tertiary)] p-2.5 rounded-lg border border-[var(--border)] text-[var(--text-secondary)] space-y-1.5">
+                          <div className="font-semibold text-[var(--text-tertiary)] uppercase text-[9.5px]">
+                            Detected Headers in Uploaded File:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {foundColumns.map((col, idx) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-0.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-primary)] text-[10.5px]"
+                              >
+                                {col}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -328,6 +363,45 @@ export function TargetObjectImportModal({
               {/* STEP 2: OBJECT NAME INPUT & PREVIEW */}
               {step === 'preview' && parsedData && (
                 <div className="space-y-4">
+                  {/* Dynamic Column Mapping Summary Card */}
+                  {parsedData.detected_mappings && (
+                    <div className="p-3 rounded-xl border border-teal-500/20 bg-teal-500/5 text-[11px] font-mono space-y-2">
+                      <div className="flex items-center justify-between text-teal-600 dark:text-teal-400 font-bold text-[10.5px] uppercase tracking-wider">
+                        <span className="flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5" />
+                          Dynamic Column Resolution
+                        </span>
+                        <span className="text-[10px] text-emerald-500 font-semibold">✓ Auto-Mapped Successfully</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10.5px]">
+                        <div className="p-1.5 rounded bg-[var(--bg-secondary)]/80 border border-[var(--border)]">
+                          <span className="text-[9.5px] text-[var(--text-tertiary)] block">Field Name</span>
+                          <span className="font-bold text-[var(--text-primary)] truncate block" title={parsedData.detected_mappings.field_column}>
+                            {parsedData.detected_mappings.field_column}
+                          </span>
+                        </div>
+                        <div className="p-1.5 rounded bg-[var(--bg-secondary)]/80 border border-[var(--border)]">
+                          <span className="text-[9.5px] text-[var(--text-tertiary)] block">Label</span>
+                          <span className="font-bold text-[var(--text-primary)] truncate block" title={parsedData.detected_mappings.label_column}>
+                            {parsedData.detected_mappings.label_column}
+                          </span>
+                        </div>
+                        <div className="p-1.5 rounded bg-[var(--bg-secondary)]/80 border border-[var(--border)]">
+                          <span className="text-[9.5px] text-[var(--text-tertiary)] block">Required / Mandatory</span>
+                          <span className="font-bold text-amber-500 truncate block" title={parsedData.detected_mappings.required_column}>
+                            {parsedData.detected_mappings.required_column}
+                          </span>
+                        </div>
+                        <div className="p-1.5 rounded bg-[var(--bg-secondary)]/80 border border-[var(--border)]">
+                          <span className="text-[9.5px] text-[var(--text-tertiary)] block">Table / Entity</span>
+                          <span className="font-bold text-teal-600 dark:text-teal-400 truncate block" title={parsedData.detected_mappings.table_source}>
+                            {parsedData.detected_mappings.table_source}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Summary Bar */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 font-mono text-[11px]">
                     <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)]/50 space-y-0.5">
