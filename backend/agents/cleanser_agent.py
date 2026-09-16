@@ -1831,8 +1831,7 @@ def _build_dynamic_fixer_prompts(rule_item: dict[str, Any], issue_group: dict[st
             "rule_code": issue_group.get("rule_code"),
             "field_name": issue_group.get("field_name"),
             "issue_count": issue_group.get("issue_count", len(issues)),
-            "invalid_values": invalid_values[:20],
-            "issues": issues,
+            "data_privacy": "Actual data values have been removed to prevent data leakage. Write the generic fixer script purely based on the rule description, error message, and target field name."
         },
     }
 

@@ -59,13 +59,26 @@ interface StatBoxProps {
   color?: string;
 }
 export function StatBox({ value, label, subtitle, color = 'var(--color-primary-500)' }: StatBoxProps) {
+  const valStr = String(value);
+  const isLong = valStr.length > 8;
+  const isVeryLong = valStr.length > 14;
+
   return (
-    <div className="glass-panel rounded-2xl p-5 relative overflow-hidden group">
+    <div className="glass-panel rounded-2xl p-5 relative overflow-hidden group flex flex-col justify-center">
       <div className="absolute inset-0 bg-gradient-to-br from-primary-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-      <div className="relative z-10">
-        <div className="font-mono text-3xl font-black tracking-tight mb-1" style={{ color }}>{value}</div>
-        <div className="text-[13px] font-bold text-[var(--text-secondary)]">{label}</div>
-        {subtitle && <div className="text-[11px] text-[var(--text-tertiary)] mt-1">{subtitle}</div>}
+      <div className="relative z-10 min-w-0 w-full">
+        <div 
+          className={cn(
+            "font-mono font-black tracking-tight mb-1 break-all whitespace-normal leading-tight",
+            isVeryLong ? "text-xl mt-1" : isLong ? "text-2xl" : "text-3xl"
+          )} 
+          style={{ color }}
+          title={valStr}
+        >
+          {value}
+        </div>
+        <div className="text-[13px] font-bold text-[var(--text-secondary)] truncate" title={label}>{label}</div>
+        {subtitle && <div className="text-[11px] text-[var(--text-tertiary)] mt-1 truncate" title={subtitle}>{subtitle}</div>}
       </div>
     </div>
   );

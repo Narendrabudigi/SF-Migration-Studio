@@ -382,7 +382,7 @@ export function Step8DMCExport() {
     setTimeout(() => tick(0, 'Analyzing entity attributes…'), 400);
     try {
       const r = await ai(
-        `Final SuccessFactors DMF readiness check for ${state.obj} (${sfInfo.entity}) migration.\nTarget System: SAP SuccessFactors Employee Central OData API & Admin Center Import.\nData sample: ${JSON.stringify(state.dmcRows.slice(0, 3))}\nMandatory fields: ${(OBJS[state.obj]?.fields || []).filter((f) => f.req).map((f) => f.n).join(',')}\nProvide SuccessFactors upload readiness score (0-100), any blocking issues, and API recommendations.\nJSON: {"score":0-100,"blockers":["issue"],"warnings":["warn"],"recommendation":"text"}`,
+        `Final SuccessFactors DMF readiness check for ${state.obj} (${sfInfo.entity}) migration.\nTarget System: SAP SuccessFactors Employee Central OData API & Admin Center Import.\nProvided fields: ${cols.join(', ')}\nMandatory fields: ${(OBJS[state.obj]?.fields || []).filter((f) => f.req).map((f) => f.n).join(',')}\nProvide SuccessFactors upload readiness score (0-100), any blocking issues, and API recommendations.\nJSON: {"score":0-100,"blockers":["issue"],"warnings":["warn"],"recommendation":"text"}`,
         state.aiLog
       );
       const res = parseAI(r) as Record<string, unknown> | null;
@@ -438,11 +438,11 @@ export function Step8DMCExport() {
             <CardBody className="p-3 space-y-3">
               {/* SuccessFactors Entity Specs Box */}
               <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-tertiary)] space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-bold text-violet-600 dark:text-violet-400">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[12px] font-bold text-violet-600 dark:text-violet-400 break-words whitespace-normal leading-tight mt-0.5 flex-1" title={sfInfo.entity}>
                     {sfInfo.entity}
                   </span>
-                  <Badge variant="violet" className="text-[8px] uppercase tracking-wider">
+                  <Badge variant="violet" className="text-[8px] uppercase tracking-wider shrink-0 mt-0.5">
                     SuccessFactors
                   </Badge>
                 </div>
