@@ -585,5 +585,7 @@ export function ConfirmModal({
 export { DynamicTransformModal } from './DynamicTransformModal';
 export type { DynamicTransformModalProps } from './DynamicTransformModal';
 export { TargetObjectImportModal } from './TargetObjectImportModal';
+export { TablePaginationFooter } from './TablePaginationFooter';
+export { TableFilterToolbar } from './TableFilterToolbar';
 
 

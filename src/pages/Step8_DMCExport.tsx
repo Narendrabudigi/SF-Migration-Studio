@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
 import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { OBJS, DMC_COLS } from '@/data/sap-schemas';
-import { ai, parseAI } from '@/services/ai-service';
+import { ai, parseAI, getSAPSchema } from '@/services/ai-service';
 import { dl, esc } from '@/lib/utils';
 import {
   PageLayout, PageGrid, GridCol, Card, CardHeader, CardBody, Button, Badge,
-  StatBox, StatsGrid, DataTable, InfoBox, PageHeader, EmptyState, AIResponse, CodeBlock
+  StatBox, StatsGrid, DataTable, InfoBox, PageHeader, EmptyState, AIResponse, CodeBlock, TablePaginationFooter
 } from '@/components/shared';
 import {
   ArrowLeft, ArrowRight, Package, Bot, Download, Globe, CloudUpload,
@@ -219,6 +219,23 @@ export function Step8DMCExport() {
   const { toast } = useToast();
   const { showLoad, tick, hideLoad } = useLoading();
 
+  const [targetSchemaCols, setTargetSchemaCols] = useState<string[]>([]);
+
+  useEffect(() => {
+    async function fetchSchema() {
+      try {
+        const res = await getSAPSchema(state.obj || 'Biographical Info');
+        if (res && res.fields && res.fields.length > 0) {
+          const fields = res.fields.map((f: any) => f.sap_structure ? `${f.sap_structure}.${f.field_name}` : f.field_name);
+          setTargetSchemaCols(fields);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch dynamic target schema', err);
+      }
+    }
+    fetchSchema();
+  }, [state.obj]);
+
   // Active Integration Tab: 'api' (Direct API Target Connect) vs 'file' (DMF File Preload & Download)
   const [activeTab, setActiveTab] = useState<'api' | 'file'>('api');
 
@@ -234,6 +251,7 @@ export function Step8DMCExport() {
 
   const [aiOutput, setAiOutput] = useState('');
   const [isCopiedPayload, setIsCopiedPayload] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Resolved SF Entity Spec
   const sfInfo = SF_ENTITY_MAP[state.obj] || {
@@ -244,7 +262,7 @@ export function Step8DMCExport() {
     desc: 'SuccessFactors Data Migration Framework object'
   };
 
-  const cols = DMC_COLS[state.obj] || (state.transformed[0] ? Object.keys(state.transformed[0]) : []);
+  const cols = targetSchemaCols.length > 0 ? targetSchemaCols : (state.transformed[0] ? Object.keys(state.transformed[0]) : []);
   const obj = OBJS[state.obj] || {};
   const has = state.dmcRows.length > 0;
 
@@ -264,7 +282,7 @@ export function Step8DMCExport() {
     ]);
     [0, 1, 2, 3, 4].forEach((i) => setTimeout(() => tick(i), 320 + i * 280));
 
-    const dmfCols = DMC_COLS[state.obj] || Object.keys(src[0]);
+    const dmfCols = cols;
     const dmcRows = src.map((row) => {
       const o: Record<string, string> = {};
       dmfCols.forEach((c) => { o[c] = row[c] !== undefined ? row[c] : ''; });
@@ -704,29 +722,33 @@ export function Step8DMCExport() {
                 >
                   {has && (
                     <div className="flex items-center gap-2">
-                      <Button variant="success" size="sm" icon={<Download className="w-3.5 h-3.5" />} onClick={dlDMFcsv}>
-                        Download CSV
-                      </Button>
                       <Button variant="secondary" size="sm" icon={<FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" />} onClick={dlDMFxls}>
                         Download Excel (XLSX)
                       </Button>
                     </div>
                   )}
                 </CardHeader>
-                <CardBody>
+                <CardBody className="p-0 overflow-hidden">
                   {has ? (
                     <>
-                      <div className="text-[11px] font-semibold text-[var(--text-secondary)] mb-2 flex items-center justify-between">
-                        <span>Generated CSV Header & Sample Records:</span>
+                      <div className="p-4 border-b border-[var(--border-light)] flex items-center justify-between bg-[var(--bg-secondary)]">
+                        <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
+                          Table Preview (All Records):
+                        </span>
                         <span className="font-mono text-[9px] text-[var(--text-tertiary)]">{state.dmcRows.length} rows</span>
                       </div>
-                      <CodeBlock className="text-[9.5px] max-h-[130px] overflow-auto mb-4">
-                        {genDMFCSV(state.dmcRows.slice(0, 3), cols, state.obj, sfInfo.dmfTemplate)}
-                      </CodeBlock>
-                      <div className="text-[11px] font-semibold text-[var(--text-secondary)] mb-1">
-                        Table Preview (First 6 Records):
-                      </div>
-                      <DataTable rows={state.dmcRows.slice(0, 6)} cols={cols} />
+                      <DataTable 
+                        rows={state.dmcRows.slice((currentPage - 1) * 15, currentPage * 15)} 
+                        cols={cols} 
+                      />
+                      <TablePaginationFooter
+                        currentPage={currentPage}
+                        totalRows={state.dmcRows.length}
+                        pageSize={15}
+                        onPageChange={setCurrentPage}
+                        isFiltered={false}
+                        accentColor="violet"
+                      />
                     </>
                   ) : (
                     <EmptyState
@@ -738,35 +760,6 @@ export function Step8DMCExport() {
               </Card>
             </div>
           )}
-
-          {/* SuccessFactors Admin Center & DMF Instructions */}
-          <Card>
-            <CardHeader
-              title="SuccessFactors Admin Center Import Guide"
-              subtitle="Standard operational procedure for Employee Central target upload"
-            />
-            <CardBody className="space-y-3">
-              <InfoBox variant="info">
-                <strong className="text-violet-600 dark:text-violet-400">
-                  Target Upload Steps in SuccessFactors Admin Center:
-                </strong>
-                <br /><br />
-                1. Navigate to <strong>Admin Center</strong> → search for <strong>Import Employee Data</strong><br />
-                2. Select Target Entity: <strong>{state.obj || 'Biographical Info'} ({sfInfo.entity})</strong><br />
-                3. Choose File Action → Select <strong>Incremental Load</strong> (or <strong>Full Purge</strong> for initial seed)<br />
-                4. File Encoding → <strong>Unicode (UTF-8)</strong><br />
-                5. Upload File → Select the generated <strong>DMF CSV file</strong><br />
-                6. Click <strong>Validate Import File</strong> → Run pre-import business rule check and schema verification<br />
-                7. Review validation results → Click <strong>Import Data</strong><br />
-                8. Verify employee records in <strong>Employee Profile</strong> & <strong>Data Inspector</strong>
-              </InfoBox>
-
-              <InfoBox variant="success">
-                <strong>Migration Pipeline Summary:</strong><br />
-                Source: {state.src} | Target Object: {state.obj} | Extracted: {state.extracted.length} → Harmonized: {state.harmonized.length} → Validated: {state.validated.filter((v) => v.st !== 'ERROR').length} → Cleaned: {state.cleaned.length} → Transformed: {state.transformed.length} → <strong>SuccessFactors DMF Ready: {state.dmcRows.length}</strong>
-              </InfoBox>
-            </CardBody>
-          </Card>
 
           {/* AI Check Output */}
           {aiOutput && (

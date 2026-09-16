@@ -306,7 +306,7 @@ export function Step2AIMapping() {
 
         const invalidCount = enriched.filter(m => !isTargetValid(m.sap)).length;
         if (invalidCount > 0) {
-          toast(`Uploaded ${enriched.length} mappings. ⚠️ ${invalidCount} target field(s) not in schema (highlighted in red).`, 'warning');
+          toast(`Uploaded ${enriched.length} mappings. ⚠️ ${invalidCount} target field(s) not in schema (highlighted in red).`, 'err');
         } else {
           toast(`Successfully uploaded ${enriched.length} mappings!`, 'ok');
         }
