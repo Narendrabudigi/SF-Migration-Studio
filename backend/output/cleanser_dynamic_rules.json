@@ -103,6 +103,20 @@
       "python_code": "def transform(value, row):\n    return value.upper()",
       "source": "harmonization_dynamic_rule",
       "target_object": "EmpJob"
+    },
+    {
+      "created_at": "2026-09-17T05:23:52.642210+00:00",
+      "description": "The 'gender' field should be stored in uppercase.",
+      "error_message": "The 'gender' field is not in uppercase. Please convert it to uppercase.",
+      "field": "gender",
+      "id": "DYNAMIC_f8c6a718",
+      "label": "Gender Not Uppercase",
+      "priority": 100,
+      "project_id": "76c28050-ce9f-4598-8ee9-189be4405f07",
+      "python_code": "str(row.get('gender', '')).strip() != str(row.get('gender', '')).strip().upper()",
+      "severity": "ERROR",
+      "source": "cleanser_dynamic_rule",
+      "target_object": "Global SF Object"
     }
   ],
   "version": "1.0"

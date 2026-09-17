@@ -109,6 +109,11 @@ def save_source_fields(req: SaveSourceFieldsRequest):
 @router.get("/schema")
 def get_schema(object_name: str = "Biographical Info"):
     client = supabase_service.get_client()
+    
+    if object_name in ["Global SF Object", "All Objects"]:
+        res_fields = client.table("sf_fields").select("*").limit(10000).execute()
+        return {"object_name": object_name, "fields": res_fields.data}
+
     # 1. Fetch object ID
     res_obj = client.table("sf_objects").select("id").ilike("name", object_name).execute()
     if not res_obj.data:
@@ -194,13 +199,18 @@ ALL_DEFAULT_TARGET_FIELDS = [
 def generate_mapping(req: MapRequest):
     client = supabase_service.get_client()
     
-    res_obj = client.table("sf_objects").select("id").ilike("name", req.targetObject).execute()
-    obj_id = res_obj.data[0]["id"] if res_obj.data else None
-    
-    target_fields = []
-    if obj_id:
-        res_fields = client.table("sf_fields").select("*").eq("object_id", obj_id).execute()
+    if req.targetObject in ["Global SF Object", "All Objects"]:
+        obj_id = None
+        res_fields = client.table("sf_fields").select("*").limit(10000).execute()
         target_fields = res_fields.data or []
+    else:
+        res_obj = client.table("sf_objects").select("id").ilike("name", req.targetObject).execute()
+        obj_id = res_obj.data[0]["id"] if res_obj.data else None
+        
+        target_fields = []
+        if obj_id:
+            res_fields = client.table("sf_fields").select("*").eq("object_id", obj_id).execute()
+            target_fields = res_fields.data or []
     
     minimal_target_fields = []
     for f in target_fields:
@@ -389,10 +399,13 @@ def save_all_mappings(req: SaveAllRequest):
         raise HTTPException(404, "Source system not found")
     sys_id = sys_res.data[0]["id"]
     
-    obj_res = client.table("sf_objects").select("id").ilike("name", req.targetObject).execute()
-    if not obj_res.data:
-        raise HTTPException(404, "Target object not found")
-    obj_id = obj_res.data[0]["id"]
+    if req.targetObject in ["Global SF Object", "All Objects"]:
+        obj_id = None
+    else:
+        obj_res = client.table("sf_objects").select("id").ilike("name", req.targetObject).execute()
+        if not obj_res.data:
+            raise HTTPException(404, "Target object not found")
+        obj_id = obj_res.data[0]["id"]
     
     # 1. Fetch all fields across all objects in sf_fields
     fields_res = client.table("sf_fields").select("id, field_name, sf_structure, object_id").execute()
@@ -422,12 +435,15 @@ def save_all_mappings(req: SaveAllRequest):
                 if k not in global_field_map:
                     global_field_map[k] = fid
         
-    existing = client.table("user_corrected_mappings") \
+    query = client.table("user_corrected_mappings") \
         .select("id, sf_fields!inner(object_id)") \
         .eq("project_id", req.projectId) \
-        .eq("source_system_id", sys_id) \
-        .eq("sf_fields.object_id", obj_id) \
-        .execute()
+        .eq("source_system_id", sys_id)
+        
+    if obj_id:
+        query = query.eq("sf_fields.object_id", obj_id)
+        
+    existing = query.execute()
         
     ids_to_delete = [row["id"] for row in existing.data]
     if ids_to_delete:
@@ -462,13 +478,13 @@ def save_all_mappings(req: SaveAllRequest):
             )
 
         # Query DB strictly for current object_id if not found in memory map
-        if not fid:
+        if not fid and obj_id:
             res_find = client.table("sf_fields").select("id").eq("object_id", obj_id).ilike("field_name", fname).limit(1).execute()
             if res_find.data:
                 fid = res_find.data[0]["id"]
 
         # Fallback: if custom field not in sf_fields at all, auto-create strictly for current object_id and structure
-        if not fid:
+        if not fid and obj_id:
             try:
                 res_exist = client.table("sf_fields").select("id").eq("object_id", obj_id).ilike("field_name", fname).limit(1).execute()
                 if res_exist.data:
@@ -520,17 +536,23 @@ def get_mapping_history(project_id: str, source_system: str, target_object: str)
         return {"mappings": []}
     sys_id = sys_res.data[0]["id"]
     
-    obj_res = client.table("sf_objects").select("id").ilike("name", target_object).execute()
-    if not obj_res.data:
-        return {"mappings": []}
-    obj_id = obj_res.data[0]["id"]
+    if target_object in ["Global SF Object", "All Objects"]:
+        obj_id = None
+    else:
+        obj_res = client.table("sf_objects").select("id").ilike("name", target_object).execute()
+        if not obj_res.data:
+            return {"mappings": []}
+        obj_id = obj_res.data[0]["id"]
     
-    res = client.table("user_corrected_mappings") \
+    query = client.table("user_corrected_mappings") \
         .select("source_field_name, transform_rule, confidence, sf_fields!inner(field_name, sf_structure, object_id)") \
         .eq("project_id", project_id) \
-        .eq("source_system_id", sys_id) \
-        .eq("sf_fields.object_id", obj_id) \
-        .execute()
+        .eq("source_system_id", sys_id)
+        
+    if obj_id:
+        query = query.eq("sf_fields.object_id", obj_id)
+        
+    res = query.execute()
         
     import re
     mappings_with_order = []
