@@ -5,6 +5,7 @@ import { useToast } from '@/components/ui/toast';
 import { useLoading } from '@/components/ui/loading-overlay';
 import { SAMPLE } from '@/data/sample-data';
 import { getSAPObjectDefinition } from '@/data/sap-schemas';
+import { ERP_KEY_SYNONYMS } from '@/data/lookup-maps';
 import {
   Card, CardHeader, CardBody, Button, InfoBox, Badge, DataTable,
   PageLayout, PageGrid, GridCol, PageHeader, Divider, SidebarItem, Select, ConfirmModal, TargetObjectImportModal
@@ -79,12 +80,6 @@ export function Step1SourceData() {
   useEffect(() => {
     fetchProjects();
     fetchBackendObjects();
-    if (state.src === 'EXCEL_CSV' && stagedFiles.length === 0) {
-      dispatch({
-        type: 'BATCH_UPDATE',
-        updates: { rawData: [], headers: [], uploadedData: [], uploadedFileName: '' }
-      });
-    }
   }, [fetchBackendObjects]);
 
   const fetchProjects = async () => {
@@ -140,18 +135,6 @@ interface SecondaryJoinConfig {
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [baseFileName, setBaseFileName] = useState<string>('');
   const [joinConfigs, setJoinConfigs] = useState<Record<string, SecondaryJoinConfig>>({});
-
-  const ERP_KEY_SYNONYMS: Record<string, string[]> = {
-    customer: ['kunnr', 'customerid', 'customer_id', 'cust_id', 'custid', 'customer', 'account_num', 'account_number', 'customerno', 'customer_no', 'client_id', 'client_no'],
-    company_code: ['bukrs', 'company_code', 'companycode', 'cocode', 'co_code', 'comp_code', 'legal_entity', 'company', 'comp_id', 'compid'],
-    employee: ['pernr', 'person_id_external', 'person_id', 'userid', 'user_id', 'employee_id', 'empid', 'emp_id', 'staff_id'],
-    material: ['matnr', 'material_id', 'mat_id', 'item_id', 'item_code', 'product_id', 'sku'],
-    vendor: ['lifnr', 'vendor_id', 'supplier_id', 'supp_id', 'vendor_num'],
-    sales_org: ['vkorg', 'sales_org', 'sales_organization', 'salesorg'],
-    order: ['vbeln', 'order_id', 'sales_order', 'order_num'],
-    plant: ['werks', 'plant', 'plant_id', 'facility'],
-    address: ['address_id', 'addressid', 'addr_id', 'addrid'],
-  };
 
   const findAllMatchingKeyPairs = (parentHeaders: string[], childHeaders: string[]): KeyCondition[] => {
     if (!parentHeaders.length || !childHeaders.length) {

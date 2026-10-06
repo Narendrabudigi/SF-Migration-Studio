@@ -18,6 +18,7 @@ import { useMigration } from '@/store/migration-store';
 import { TableFilterToolbar, filterRowsByKey, detectKeyColumns, getTableDisplayData } from '@/components/shared/TableFilterToolbar';
 import type { TableInfo } from '@/components/shared/TableFilterToolbar';
 import { TablePaginationFooter } from '@/components/shared/TablePaginationFooter';
+import { ERP_KEY_SYNONYMS } from '@/data/lookup-maps';
 
 /* ─── Types ─── */
 interface HarmonizationStats {
@@ -71,17 +72,6 @@ interface RuleItemConfig {
 }
 
 /* ─── Heuristic Key Auto-Matching ─── */
-const ERP_KEY_SYNONYMS: Record<string, string[]> = {
-  customer: ['kunnr', 'customerid', 'customer_id', 'cust_id', 'custid', 'customer', 'account_num', 'account_number', 'customerno', 'customer_no', 'client_id', 'client_no'],
-  company_code: ['bukrs', 'company_code', 'companycode', 'cocode', 'co_code', 'comp_code', 'legal_entity', 'company', 'comp_id', 'compid'],
-  employee: ['pernr', 'person_id_external', 'person_id', 'userid', 'user_id', 'employee_id', 'empid', 'emp_id', 'staff_id'],
-  material: ['matnr', 'material_id', 'mat_id', 'item_id', 'item_code', 'product_id', 'sku'],
-  vendor: ['lifnr', 'vendor_id', 'supplier_id', 'supp_id', 'vendor_num'],
-  sales_org: ['vkorg', 'sales_org', 'sales_organization', 'salesorg'],
-  order: ['vbeln', 'order_id', 'sales_order', 'order_num'],
-  plant: ['werks', 'plant', 'plant_id', 'facility'],
-  address: ['address_id', 'addressid', 'addr_id', 'addrid'],
-};
 
 function normalizeKeyName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');

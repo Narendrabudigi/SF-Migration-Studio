@@ -45,170 +45,9 @@ import pandas as pd
 # 1. LOOKUP MAPS (ported from src/data/lookup-maps.ts)
 # ══════════════════════════════════════════════════════════
 
-COUNTRY_MAP: Dict[str, str] = {
-    "AFGHANISTAN": "AF", "ALBANIA": "AL", "ALGERIA": "DZ", "AMERICAN SAMOA": "AS", "ANDORRA": "AD", "ANGOLA": "AO", "ANGUILLA": "AI",
-    "ANTARCTICA": "AQ", "ANTARCTICA (THE TERRITORY SOUTH OF 60 DEG S)": "AQ", "ANTIGUA AND BARBUDA": "AG", "ARGENTINA": "AR", "ARMENIA": "AM",
-    "ARUBA": "AW", "AUSTRALIA": "AU", "AUSTRIA": "AT", "AZERBAIJAN": "AZ", "BAHAMAS": "BS", "BAHRAIN": "BH", "BANGLADESH": "BD",
-    "BARBADOS": "BB", "BELARUS": "BY", "BELGIUM": "BE", "BELIZE": "BZ", "BENIN": "BJ", "BERMUDA": "BM", "BHUTAN": "BT",
-    "BILLING_COUNTRY": "IN", "BOLIVIA": "BO", "BOSNIA AND HERZEGOVINA": "BA", "BOTSWANA": "BW", "BOUVET ISLAND (BOUVETOYA)": "BV",
-    "BRAZIL": "BR", "BRITISH VIRGIN ISLANDS": "VG", "BRUNEI DARUSSALAM": "BN", "BULGARIA": "BG", "BURKINA FASO": "BF", "BURUNDI": "BI",
-    "CAMBODIA": "KH", "CAMEROON": "CM", "CANADA": "CA", "CAPE VERDE": "CV", "CAYMAN ISLANDS": "KY", "CENTRAL AFRICAN REPUBLIC": "CF",
-    "CHAD": "TD", "CHILE": "CL", "CHINA": "CN", "COCOS (KEELING) ISLANDS": "CC", "COLOMBIA": "CO", "COMOROS": "KM", "CONGO": "CG",
-    "COOK ISLANDS": "CK", "COSTA RICA": "CR", "CROATIA": "HR", "CUBA": "CU", "CYPRUS": "CY", "CZECH REPUBLIC": "CZ", "DENMARK": "DK",
-    "DJIBOUTI": "DJ", "DOMINICA": "DM", "DOMINICAN REPUBLIC": "DO", "ECUADOR": "EC", "EGYPT": "EG", "EL SALVADOR": "SV",
-    "EQUATORIAL GUINEA": "GQ", "ERITREA": "ER", "ESTONIA": "EE", "ETHIOPIA": "ET", "FALKLAND ISLANDS (MALVINAS)": "FK", "FAROE ISLANDS": "FO",
-    "FIJI": "FJ", "FINLAND": "FI", "FRANCE": "FR", "FRENCH GUIANA": "GF", "FRENCH POLYNESIA": "PF", "FRENCH SOUTHERN TERRITORIES": "TF",
-    "GABON": "GA", "GAMBIA": "GM", "GEORGIA": "GE", "GERMANY": "DE", "GHANA": "GH", "GIBRALTAR": "GI", "GREECE": "GR", "GREENLAND": "GL",
-    "GRENADA": "GD", "GUADELOUPE": "GP", "GUAM": "GU", "GUATEMALA": "GT", "GUERNSEY": "GG", "GUINEA": "GN", "GUINEA-BISSAU": "GW",
-    "GUYANA": "GY", "HAITI": "HT", "HEARD ISLAND AND MCDONALD ISLANDS": "HM", "HOLY SEE (VATICAN CITY STATE)": "VA", "HONDURAS": "HN",
-    "HONG KONG": "HK", "HUNGARY": "HU", "ICELAND": "IS", "INDIA": "IN", "INDONESIA": "ID", "IRAN": "IR", "IRAQ": "IQ", "IRELAND": "IE",
-    "ISLE OF MAN": "IM", "ISRAEL": "IL", "ITALY": "IT", "JAMAICA": "JM", "JAPAN": "JP", "JERSEY": "JE", "JORDAN": "JO", "KAZAKHSTAN": "KZ",
-    "KENYA": "KE", "KIRIBATI": "KI", "KOREA": "KR", "SOUTH KOREA": "KR", "NORTH KOREA": "KP", "KUWAIT": "KW", "KYRGYZ REPUBLIC": "KG",
-    "LAO PEOPLE'S DEMOCRATIC REPUBLIC": "LA", "LATVIA": "LV", "LEBANON": "LB", "LESOTHO": "LS", "LIBERIA": "LR", "LIBYA": "LY",
-    "LIECHTENSTEIN": "LI", "LITHUANIA": "LT", "LUXEMBOURG": "LU", "MACAO": "MO", "MACAU": "MO", "MADAGASCAR": "MG", "MALAWI": "MW",
-    "MALAYSIA": "MY", "MALDIVES": "MV", "MALI": "ML", "MALTA": "MT", "MARSHALL ISLANDS": "MH", "MARTINIQUE": "MQ", "MAURITANIA": "MR",
-    "MAURITIUS": "MU", "MEXICO": "MX", "MICRONESIA": "FM", "MOLDOVA": "MD", "MONACO": "MC", "MONGOLIA": "MN", "MONTSERRAT": "MS",
-    "MOROCCO": "MA", "MOZAMBIQUE": "MZ", "MYANMAR": "MM", "NAMIBIA": "NA", "NAURU": "NR", "NEPAL": "NP", "NETHERLANDS": "NL",
-    "NETHERLANDS ANTILLES": "AN", "NEW CALEDONIA": "NC", "NEW ZEALAND": "NZ", "NICARAGUA": "NI", "NIGER": "NE", "NIGERIA": "NG",
-    "NIUE": "NU", "NORFOLK ISLAND": "NF", "NORWAY": "NO", "OMAN": "OM", "PAKISTAN": "PK", "PALAU": "PW", "PALESTINIAN TERRITORY": "PS",
-    "PANAMA": "PA", "PAPUA NEW GUINEA": "PG", "PARAGUAY": "PY", "PERU": "PE", "PHILIPPINES": "PH", "POLAND": "PL", "PORTUGAL": "PT",
-    "PUERTO RICO": "PR", "QATAR": "QA", "ROMANIA": "RO", "RUSSIA": "RU", "RUSSIAN FEDERATION": "RU", "RWANDA": "RW", "SAINT BARTHELEMY": "BL",
-    "SAINT HELENA": "SH", "SAINT KITTS AND NEVIS": "KN", "SAINT LUCIA": "LC", "SAINT MARTIN": "MF", "SAINT PIERRE AND MIQUELON": "PM",
-    "SAINT VINCENT AND THE GRENADINES": "VC", "SAMOA": "WS", "SAN MARINO": "SM", "SAO TOME AND PRINCIPE": "ST", "SAUDI ARABIA": "SA",
-    "SENEGAL": "SN", "SERBIA": "RS", "SEYCHELLES": "SC", "SIERRA LEONE": "SL", "SINGAPORE": "SG", "SLOVAKIA (SLOVAK REPUBLIC)": "SK",
-    "SLOVENIA": "SI", "SOLOMON ISLANDS": "SB", "SOMALIA": "SO", "SOUTH AFRICA": "ZA", "SOUTH GEORGIA AND THE SOUTH SANDWICH ISLANDS": "GS",
-    "SPAIN": "ES", "SRI LANKA": "LK", "SUDAN": "SD", "SURINAME": "SR", "SVALBARD & JAN MAYEN ISLANDS": "SJ", "SWAZILAND": "SZ",
-    "ESWATINI": "SZ", "SWEDEN": "SE", "SWITZERLAND": "CH", "SYRIAN ARAB REPUBLIC": "SY", "TAIWAN": "TW", "TAJIKISTAN": "TJ",
-    "TANZANIA": "TZ", "THAILAND": "TH", "TIMOR-LESTE": "TL", "TOGO": "TG", "TOKELAU": "TK", "TONGA": "TO", "TRINIDAD AND TOBAGO": "TT",
-    "TUNISIA": "TN", "TURKEY": "TR", "TURKMENISTAN": "TM", "TURKS AND CAICOS ISLANDS": "TC", "TUVALU": "TV", "UAE": "AE", "UGANDA": "UG",
-    "UK": "GB", "UKRAINE": "UA", "UNITED ARAB EMIRATES": "AE", "UNITED KINGDOM": "GB", "UNITED STATES": "US",
-    "UNITED STATES MINOR OUTLYING ISLANDS": "UM", "UNITED STATES OF AMERICA": "US", "UNITED STATES VIRGIN ISLANDS": "VI", "URUGUAY": "UY",
-    "USA": "US", "UZBEKISTAN": "UZ", "VANUATU": "VU", "VENEZUELA": "VE", "VIETNAM": "VN", "VIRGIN ISLANDS (BRITISH)": "VG",
-    "VIRGIN ISLANDS (U.S.)": "VI", "WESTERN SAHARA": "EH", "YEMEN": "YE", "ZAMBIA": "ZM", "ZIMBABWE": "ZW",
-}
-
-COUNTRY_MAP_3: Dict[str, str] = {
-    "AFGHANISTAN": "AFG", "ALBANIA": "ALB", "ALGERIA": "DZA", "AMERICAN SAMOA": "ASM", "ANDORRA": "AND", "ANGOLA": "AGO",
-    "ARGENTINA": "ARG", "ARMENIA": "ARM", "ARUBA": "ABW", "AUSTRALIA": "AUS", "AUSTRIA": "AUT", "AZERBAIJAN": "AZE",
-    "BAHAMAS": "BHS", "BAHRAIN": "BHR", "BANGLADESH": "BGD", "BARBADOS": "BRB", "BELARUS": "BLR", "BELGIUM": "BEL",
-    "BERMUDA": "BMU", "BHUTAN": "BTN", "BOLIVIA": "BOL", "BRAZIL": "BRA", "BULGARIA": "BGR", "CAMBODIA": "KHM",
-    "CANADA": "CAN", "CHILE": "CHL", "CHINA": "CHN", "COLOMBIA": "COL", "COSTA RICA": "CRI", "CROATIA": "HRV",
-    "CUBA": "CUB", "CYPRUS": "CYP", "CZECH REPUBLIC": "CZE", "DENMARK": "DNK", "EGYPT": "EGY", "ESTONIA": "EST",
-    "FINLAND": "FIN", "FRANCE": "FRA", "GERMANY": "DEU", "GHANA": "GHA", "GREECE": "GRC", "HONG KONG": "HKG",
-    "HUNGARY": "HUN", "ICELAND": "ISL", "INDIA": "IND", "INDONESIA": "IDN", "IRAN": "IRN", "IRAQ": "IRQ",
-    "IRELAND": "IRL", "ISRAEL": "ISR", "ITALY": "ITA", "JAMAICA": "JAM", "JAPAN": "JPN", "JORDAN": "JOR",
-    "KAZAKHSTAN": "KAZ", "KENYA": "KEN", "KOREA": "KOR", "SOUTH KOREA": "KOR", "KUWAIT": "KWT", "LATVIA": "LVA",
-    "LEBANON": "LBN", "LIBYA": "LBY", "LITHUANIA": "LTU", "LUXEMBOURG": "LUX", "MALAYSIA": "MYS", "MALDIVES": "MDV",
-    "MALTA": "MLT", "MEXICO": "MEX", "MONACO": "MCO", "MONGOLIA": "MNG", "MOROCCO": "MAR", "NEPAL": "NPL",
-    "NETHERLANDS": "NLD", "NEW ZEALAND": "NZL", "NIGERIA": "NGA", "NORWAY": "NOR", "OMAN": "OMN", "PAKISTAN": "PAK",
-    "PANAMA": "PAN", "PARAGUAY": "PRY", "PERU": "PER", "PHILIPPINES": "PHL", "POLAND": "POL", "PORTUGAL": "PRT",
-    "QATAR": "QAT", "ROMANIA": "ROU", "RUSSIA": "RUS", "RUSSIAN FEDERATION": "RUS", "SAUDI ARABIA": "SAU",
-    "SINGAPORE": "SGP", "SLOVAKIA": "SVK", "SLOVENIA": "SVN", "SOUTH AFRICA": "ZAF", "SPAIN": "ESP", "SRI LANKA": "LKA",
-    "SUDAN": "SDN", "SWEDEN": "SWE", "SWITZERLAND": "CHE", "TAIWAN": "TWN", "THAILAND": "THA", "TUNISIA": "TUN",
-    "TURKEY": "TUR", "UAE": "ARE", "UNITED ARAB EMIRATES": "ARE", "UNITED KINGDOM": "GBR", "UK": "GBR",
-    "UNITED STATES": "USA", "UNITED STATES OF AMERICA": "USA", "USA": "USA", "URUGUAY": "URY", "VENEZUELA": "VEN",
-    "VIETNAM": "VNM", "ZIMBABWE": "ZWE",
-    "IN": "IND", "US": "USA", "DE": "DEU", "FR": "FRA", "GB": "GBR", "CA": "CAN", "AU": "AUS", "JP": "JPN", "CN": "CHN", "IT": "ITA", "BR": "BRA", "RU": "RUS", "MX": "MEX", "ES": "ESP", "NL": "NLD", "CH": "CHE", "SE": "SWE", "SG": "SGP"
-}
-
-QUANTITY_MAP: Dict[str, str] = {
-    "KILOGRAM": "KG", "KILOGRAMS": "KG", "KG": "KG", "KGS": "KG",
-    "GRAM": "G", "GRAMS": "G", "G": "G", "GR": "G",
-    "MILLIGRAM": "MG", "MILLIGRAMS": "MG", "MG": "MG",
-    "TON": "TO", "TONS": "TO", "TONNE": "TO", "TONNES": "TO", "MT": "TO", "METRIC TON": "TO",
-    "LITER": "L", "LITERS": "L", "LITRE": "L", "LITRES": "L", "L": "L", "LTR": "L", "LTRS": "L",
-    "MILLILITER": "ML", "MILLILITERS": "ML", "MILLILITRE": "ML", "ML": "ML",
-    "METER": "M", "METERS": "M", "METRE": "M", "METRES": "M", "M": "M", "MTR": "M",
-    "CENTIMETER": "CM", "CENTIMETERS": "CM", "CM": "CM",
-    "MILLIMETER": "MM", "MILLIMETERS": "MM", "MM": "MM",
-    "KILOMETER": "KM", "KILOMETERS": "KM", "KM": "KM",
-    "INCH": "IN", "INCHES": "IN", "IN": "IN",
-    "FOOT": "FT", "FEET": "FT", "FT": "FT",
-    "YARD": "YD", "YARDS": "YD", "YD": "YD",
-    "PIECE": "PC", "PIECES": "PC", "PCS": "PC", "PC": "PC", "P": "PC",
-    "EACH": "EA", "EA": "EA",
-    "UNIT": "UN", "UNITS": "UN", "UN": "UN",
-    "BOX": "BX", "BOXES": "BX", "BX": "BX",
-    "CARTON": "CT", "CARTONS": "CT", "CTN": "CT", "CT": "CT",
-    "PACK": "PK", "PACKS": "PK", "PKG": "PK", "PACKET": "PK", "PK": "PK",
-    "SET": "SET", "SETS": "SET",
-    "PAIR": "PR", "PAIRS": "PR", "PR": "PR",
-    "DOZEN": "DZ", "DOZ": "DZ", "DZ": "DZ",
-    "PALLET": "PAL", "PALLETS": "PAL", "PAL": "PAL",
-    "ROLL": "ROL", "ROLLS": "ROL", "RL": "ROL",
-    "CONTAINER": "CN", "CONTAINERS": "CN", "CN": "CN",
-    "BAG": "BAG", "BAGS": "BAG", "BG": "BAG",
-    "BOTTLE": "BTL", "BOTTLES": "BTL", "BTL": "BTL",
-    "BARREL": "BBL", "BARRELS": "BBL", "BBL": "BBL", "BBLS": "BBL",
-    "GALLON": "GAL", "GALLONS": "GAL", "GAL": "GAL",
-    "SQUARE METER": "M2", "SQUARE METERS": "M2", "SQM": "M2", "M2": "M2", "SQ M": "M2",
-    "SQUARE FOOT": "FT2", "SQUARE FEET": "FT2", "SQFT": "FT2", "FT2": "FT2", "SQ FT": "FT2",
-    "CUBIC METER": "M3", "CUBIC METERS": "M3", "CBM": "M3", "M3": "M3", "CU M": "M3",
-    "CUBIC FOOT": "FT3", "CUBIC FEET": "FT3", "CBFT": "FT3", "FT3": "FT3", "CU FT": "FT3",
-    "HOUR": "H", "HOURS": "H", "HR": "H", "HRS": "H",
-    "DAY": "DAY", "DAYS": "DAY",
-    "MONTH": "MON", "MONTHS": "MON",
-    "YEAR": "ANN", "YEARS": "ANN",
-}
-
-CURRENCY_MAP: Dict[str, str] = {
-    "INDIAN RUPEE": "INR",
-    "RUPEE": "INR",
-    "RUPEES": "INR",
-    "RS": "INR",
-    "US DOLLAR": "USD",
-    "DOLLAR": "USD",
-    "EUROS": "EUR",
-    "EURO": "EUR",
-    "POUND": "GBP",
-    "STERLING": "GBP",
-    "YEN": "JPY",
-    "YUAN": "CNY",
-    "RMB": "CNY",
-    "DIRHAM": "AED",
-    "RIYAL": "SAR",
-    "FRANC": "CHF",
-    "AUS DOLLAR": "AUD",
-    "CANADIAN DOLLAR": "CAD",
-}
-
-PAYMENT_TERMS_MAP: Dict[str, str] = {
-    "NET30": "NT30",
-    "NET 30": "NT30",
-    "30 DAYS": "NT30",
-    "30DAYS": "NT30",
-    "NET45": "NT45",
-    "NET 45": "NT45",
-    "45 DAYS": "NT45",
-    "NET60": "NT60",
-    "NET 60": "NT60",
-    "60 DAYS": "NT60",
-    "NET15": "NT15",
-    "NET7": "NT07",
-    "IMMEDIATE": "NT00",
-    "CASH": "NT00",
-    "COD": "NT00",
-    "DUE ON RECEIPT": "NT00",
-    "2/10 NET30": "2001",
-}
-
-MATERIAL_TYPE_MAP: Dict[str, str] = {
-    "RAW MATERIAL": "ROH",
-    "RAW": "ROH",
-    "RM": "ROH",
-    "SEMI-FINISHED": "HALB",
-    "SEMI FINISHED": "HALB",
-    "WIP": "HALB",
-    "FINISHED GOODS": "FERT",
-    "FINISHED": "FERT",
-    "FG": "FERT",
-    "TRADING GOODS": "HAWA",
-    "TRADING": "HAWA",
-    "SERVICE": "DIEN",
-    "OPERATING SUPPLIES": "HIBE",
-    "CONSUMABLE": "HIBE",
-    "HIBE": "HIBE",
-}
+from constants import (
+    COUNTRY_MAP, COUNTRY_MAP_3, CURRENCY_MAP
+)
 
 
 # ══════════════════════════════════════════════════════════
@@ -306,13 +145,6 @@ def _tf_currency(v: Any) -> str:
     s = str(v).strip().upper() if v is not None and str(v) != "nan" else ""
     return CURRENCY_MAP.get(s, s)
 
-def _tf_payterm(v: Any) -> str:
-    s = str(v).strip().upper() if v is not None and str(v) != "nan" else ""
-    return PAYMENT_TERMS_MAP.get(s, s)
-
-def _tf_mattype(v: Any) -> str:
-    s = str(v).strip().upper() if v is not None and str(v) != "nan" else ""
-    return MATERIAL_TYPE_MAP.get(s, s)
 
 def _tf_date8(v: Any) -> str:
     s = str(v) if v is not None and str(v) != "nan" else ""
@@ -334,9 +166,6 @@ def _tf_trunc35(v: Any) -> str:
     s = str(v) if v is not None and str(v) != "nan" else ""
     return s[:35]
 
-def _tf_quantity(v: Any) -> str:
-    s = str(v).strip().upper() if v is not None and str(v) != "nan" else ""
-    return QUANTITY_MAP.get(s, s)
 
 
 TRANSFORMS: Dict[str, Callable] = {
@@ -346,10 +175,6 @@ TRANSFORMS: Dict[str, Callable] = {
     "pad10": _tf_pad10,
     "country": _tf_country,
     "currency": _tf_currency,
-    "payterm": _tf_payterm,
-    "mattype": _tf_mattype,
-    "quantity": _tf_quantity,
-    "uom": _tf_quantity,
     "date8": _tf_date8,
     "phone": _tf_phone,
     "trunc35": _tf_trunc35,
@@ -810,33 +635,6 @@ class HarmonizationAgent:
                 target_cols.append(col)
         return target_cols
 
-    def _find_payterm_columns(self, df: pd.DataFrame) -> List[str]:
-        target_cols = []
-        schema_fields = [f.upper() for f in self.schema.get("payterm_fields", [])]
-        for col in df.columns:
-            col_upper = col.upper()
-            base = col_upper.split(".")[-1] if "." in col_upper else col_upper
-            if base in schema_fields or base in ["ZTERM", "PAYMENT_TERMS", "PAY_TERMS", "PAYTERMS", "PAY_TERM", "TERMS"] or "ZTERM" in col_upper or "PAY" in base:
-                target_cols.append(col)
-                continue
-            sample_vals = [str(v).strip().upper() for v in df[col].dropna().head(15)]
-            if any(v in PAYMENT_TERMS_MAP for v in sample_vals if v):
-                target_cols.append(col)
-        return target_cols
-
-    def _find_mattype_columns(self, df: pd.DataFrame) -> List[str]:
-        target_cols = []
-        schema_fields = [f.upper() for f in self.schema.get("mattype_fields", [])]
-        for col in df.columns:
-            col_upper = col.upper()
-            base = col_upper.split(".")[-1] if "." in col_upper else col_upper
-            if base in schema_fields or base in ["MTART", "MATERIAL_TYPE", "MAT_TYPE", "MATTYPE", "MAT_GROUP"] or "MTART" in col_upper or "MAT_TYPE" in base or "MTART" in base:
-                target_cols.append(col)
-                continue
-            sample_vals = [str(v).strip().upper() for v in df[col].dropna().head(15)]
-            if any(v in MATERIAL_TYPE_MAP for v in sample_vals if v):
-                target_cols.append(col)
-        return target_cols
 
     def _rule_1_dedup(self, df: pd.DataFrame) -> pd.DataFrame:
         """Rule 1: Key-based dedup — remove rows with duplicate key field, keep first."""
@@ -927,41 +725,6 @@ class HarmonizationAgent:
             df[col] = mapped_series
         return df
 
-    def _rule_5_payterms_sap(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None) -> pd.DataFrame:
-        """Rule 5: Payment Terms → SAP format (Vectorized)."""
-        payterm_cols = target_fields if target_fields else self._find_payterm_columns(df)
-        for col in payterm_cols:
-            if col not in df.columns:
-                continue
-            s_clean = df[col].astype(str).str.strip().str.upper()
-            mapped_series = s_clean.map(lambda v: PAYMENT_TERMS_MAP.get(v, v))
-            diff_mask = (s_clean != mapped_series) & (s_clean != "") & (s_clean != "NAN")
-            if diff_mask.any():
-                for idx in df.index[diff_mask]:
-                    raw = s_clean.at[idx]
-                    mapped = mapped_series.at[idx]
-                    key_info = self._row_key_info(df, idx)
-                    self.fix_log.append(f"[PayTerms→SAP] Row {idx + 1}{key_info} ({col}): '{raw}' → '{mapped}'")
-            df[col] = mapped_series
-        return df
-
-    def _rule_6_mattype_sap(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None) -> pd.DataFrame:
-        """Rule 6: Material Type → SAP format (Vectorized)."""
-        mattype_cols = target_fields if target_fields else self._find_mattype_columns(df)
-        for col in mattype_cols:
-            if col not in df.columns:
-                continue
-            s_clean = df[col].astype(str).str.strip().str.upper()
-            mapped_series = s_clean.map(lambda v: MATERIAL_TYPE_MAP.get(v, v))
-            diff_mask = (s_clean != mapped_series) & (s_clean != "") & (s_clean != "NAN")
-            if diff_mask.any():
-                for idx in df.index[diff_mask]:
-                    raw = s_clean.at[idx]
-                    mapped = mapped_series.at[idx]
-                    key_info = self._row_key_info(df, idx)
-                    self.fix_log.append(f"[MatType→SAP] Row {idx + 1}{key_info} ({col}): '{raw}' → '{mapped}'")
-            df[col] = mapped_series
-        return df
 
     def _rule_7_whitespace_trim(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None, mode: str = "both") -> pd.DataFrame:
         """Rule 7: Trim whitespace on fields (Vectorized). Mode: 'both', 'left', 'right'."""
@@ -1040,24 +803,6 @@ class HarmonizationAgent:
                 target_cols.append(col)
         return target_cols
 
-    def _find_uom_columns(self, df: pd.DataFrame) -> List[str]:
-        """Auto-detect unit-of-measure columns by name patterns and data sampling."""
-        UOM_NAMES = ["MEINS", "BSTME", "GEWEI", "VOLEH", "LMEIN"]
-        target_cols = []
-        for col in df.columns:
-            col_upper = col.upper()
-            base = col_upper.split(".")[-1] if "." in col_upper else col_upper
-            if base in UOM_NAMES:
-                target_cols.append(col)
-                continue
-            if any(kw in base for kw in ["_UOM", "UNIT_OF", "_UNIT", "BASE_UNIT", "UOM"]):
-                target_cols.append(col)
-                continue
-            sample_vals = [str(v).strip().upper() for v in df[col].dropna().head(10) if str(v).strip() and str(v) != "nan"]
-            if sample_vals and all(v in QUANTITY_MAP for v in sample_vals if v):
-                if len([v for v in sample_vals if v in QUANTITY_MAP]) >= 3:
-                    target_cols.append(col)
-        return target_cols
 
     def _find_text_columns(self, df: pd.DataFrame) -> List[str]:
         """Auto-detect name/address text fields that should be truncated to 35 chars."""
@@ -1114,23 +859,6 @@ class HarmonizationAgent:
             df[col] = cleaned
         return df
 
-    def _rule_10_uom_normalize(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None) -> pd.DataFrame:
-        """Rule 10: UOM → SAP format on unit-of-measure columns."""
-        uom_cols = target_fields if target_fields else self._find_uom_columns(df)
-        for col in uom_cols:
-            if col not in df.columns:
-                continue
-            s_clean = df[col].astype(str).str.strip().str.upper()
-            mapped_series = s_clean.map(lambda v: QUANTITY_MAP.get(v, v))
-            diff_mask = (s_clean != mapped_series) & (s_clean != "") & (s_clean != "NAN")
-            if diff_mask.any():
-                for idx in df.index[diff_mask]:
-                    raw = s_clean.at[idx]
-                    mapped = mapped_series.at[idx]
-                    key_info = self._row_key_info(df, idx)
-                    self.fix_log.append(f"[UOM→SAP] Row {idx + 1}{key_info} ({col}): '{raw}' → '{mapped}'")
-            df[col] = mapped_series
-        return df
 
     def _rule_11_trunc35(self, df: pd.DataFrame, target_fields: Optional[List[str]] = None, max_length: int = 35) -> pd.DataFrame:
         """Rule 11: Truncate name/address fields to max_length characters (SAP standard)."""

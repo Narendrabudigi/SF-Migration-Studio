@@ -117,6 +117,18 @@
       "severity": "ERROR",
       "source": "cleanser_dynamic_rule",
       "target_object": "Global SF Object"
+    },
+    {
+      "created_at": "2026-09-21T06:26:08.332328+00:00",
+      "description": "Converts the value of the 'lastModifiedBy' field to uppercase.",
+      "field": "GENERAL",
+      "id": "DYNAMIC_HARM_1",
+      "label": "LastModifiedBy must be in uppercase only",
+      "priority": 100,
+      "project_id": "609caf0d-70e3-49e1-af6a-12ec3c3593aa",
+      "python_code": "def transform(value, row):\n    return value.upper()",
+      "source": "harmonization_dynamic_rule",
+      "target_object": "Biographical Info"
     }
   ],
   "version": "1.0"

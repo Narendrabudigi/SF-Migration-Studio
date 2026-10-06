@@ -12,10 +12,10 @@ import os
 # SUCCESSFACTORS CREDENTIALS & CONFIGURATION
 # (Hardcoded for testing as requested - do not use in production!)
 # ============================================================================
-SF_API_URL = "https://api10preview.sapsf.com/odata/v2" # Replace with your actual base URL
+SF_API_URL = "https://api10preview.sapsf.com/odata/v2/" # Replace with your actual base URL
 SF_COMPANY_ID = "rainindustT1"
 SF_USERNAME = "ADMINAPI"
-SF_PASSWORD = "Welcome@01"
+SF_PASSWORD = "Welcome@432124$"
 ENTITY_NAME = "PerPerson" # e.g., 'User', 'PerPerson', 'EmpEmployment', etc.
 
 def get_auth_credentials():
@@ -88,7 +88,7 @@ def clean_payload(payload_dict):
             continue # Skip null values or you can map them to None
             
         # SuccessFactors cannot accept primitive values for navigation properties or metadata
-        if str(key).endswith('Nav') or key == '__metadata':
+        if str(key).endswith('Nav') or key == '__metadata' or str(key).upper() == 'STATUS':
             continue
         
         is_date_col = "date" in str(key).lower()
@@ -121,8 +121,15 @@ def process_excel(file_path, sheet_name=0, max_workers=5):
     try:
         # Read the excel file
         ext = os.path.splitext(file_path)[1].lower()
-        engine = 'xlrd' if ext == '.xls' else 'openpyxl'
-        df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
+        if ext == '.csv':
+            try:
+                df = pd.read_csv(file_path, encoding='utf-8')
+            except UnicodeDecodeError:
+                # Fallback for CSVs exported from Excel on Windows
+                df = pd.read_csv(file_path, encoding='cp1252')
+        else:
+            engine = 'xlrd' if ext == '.xls' else 'openpyxl'
+            df = pd.read_excel(file_path, sheet_name=sheet_name, engine=engine)
         
         success_count = 0
         error_count = 0

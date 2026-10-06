@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useMigration } from '@/store/migration-store';
+import { useMigration, isMock0Completed, isMock1Completed } from '@/store/migration-store';
 import { cn } from '@/lib/utils';
-import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { STEPS } from '@/config/steps';
+import { Check, ChevronLeft, ChevronRight, X, Lock } from 'lucide-react';
+import { MOCK_CONFIGS } from '@/config/steps';
+import { useToast } from '@/components/ui/toast';
 
 interface StepNavigationProps {
   mobileOpen?: boolean;
@@ -12,13 +13,24 @@ interface StepNavigationProps {
 }
 
 export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNavigationProps = {}) {
-  const { state } = useMigration();
+  const { state, dispatch } = useMigration();
   const location = useLocation();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
-  const currentStepIndex = STEPS.findIndex(s => s.path === location.pathname);
+  const isMock0Unlocked = true;
+  const isMock1Unlocked = isMock0Completed(state);
+  const isMock2Unlocked = isMock1Completed(state);
+
+  const activeMock = state.activeMock || 'mock-0';
+  const currentMockConfig = MOCK_CONFIGS[activeMock] || MOCK_CONFIGS['mock-0'];
+  const activeSteps = currentMockConfig.steps;
+
+  const currentStepIndex = activeSteps.findIndex(
+    s => s.path === location.pathname || (s.path !== '/' && location.pathname.startsWith(s.path))
+  );
   const activeStep = currentStepIndex === -1 ? 0 : currentStepIndex;
-  const progress = (activeStep / 8) * 100;
+  const progress = activeSteps.length > 1 ? (activeStep / (activeSteps.length - 1)) * 100 : 100;
 
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -26,6 +38,93 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
   useEffect(() => {
     onCloseMobile?.();
   }, [location.pathname]);
+
+  const handleMockSwitch = (newMock: 'mock-0' | 'mock-1' | 'mock-2') => {
+    if (newMock === 'mock-1' && !isMock1Unlocked) {
+      toast('Mock 1 is locked. Complete all Mock 0 steps including Step 9 Tech Docs first.', 'err');
+      return;
+    }
+    if (newMock === 'mock-2' && !isMock2Unlocked) {
+      toast('Mock 2 is locked. Complete Mock 1 first.', 'err');
+      return;
+    }
+
+    dispatch({ type: 'SET_FIELD', field: 'activeMock', value: newMock });
+    if (newMock === 'mock-0') {
+      navigate('/');
+    } else if (newMock === 'mock-1') {
+      navigate('/mock-1');
+    } else if (newMock === 'mock-2') {
+      navigate('/mock-2');
+    }
+  };
+
+  const renderMockSwitcher = (inDrawer = false) => (
+    <div className={`p-3 shrink-0 ${inDrawer ? 'border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/20' : 'border-b border-[var(--border)] bg-[var(--bg-tertiary)]/20'}`}>
+      {!isCollapsed || inDrawer ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider px-1">
+            <span>Pipeline Mock</span>
+            <span className="font-mono text-primary-600 dark:text-primary-400 font-bold">{currentMockConfig.name}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1 bg-[var(--bg-tertiary)]/60 p-1 rounded-xl border border-[var(--border)]">
+            {(['mock-0', 'mock-1', 'mock-2'] as const).map((m) => {
+              const isSelected = activeMock === m;
+              const isUnlocked = m === 'mock-0' ? true : (m === 'mock-1' ? isMock1Unlocked : isMock2Unlocked);
+              const label = m === 'mock-0' ? 'Mock 0' : m === 'mock-1' ? 'Mock 1' : 'Mock 2';
+              const sub = !isUnlocked ? 'Locked' : (m === 'mock-0' ? 'Standard' : m === 'mock-1' ? 'Agentic' : 'Options');
+              return (
+                <button
+                  key={m}
+                  onClick={() => handleMockSwitch(m)}
+                  className={cn(
+                    'py-1.5 px-1 rounded-lg text-center transition-all flex flex-col items-center justify-center relative cursor-pointer',
+                    isSelected
+                      ? 'bg-primary-600 text-white font-bold shadow-xs'
+                      : isUnlocked
+                        ? 'text-[var(--text-secondary)] hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)]'
+                        : 'text-[var(--text-tertiary)] opacity-60 hover:opacity-100 hover:bg-amber-500/10'
+                  )}
+                  title={!isUnlocked ? `${MOCK_CONFIGS[m].name} is Locked` : MOCK_CONFIGS[m].subtitle}
+                >
+                  <div className="flex items-center gap-0.5">
+                    <span className="text-[11px] leading-tight font-black">{label}</span>
+                    {!isUnlocked && <Lock className="w-2.5 h-2.5 text-amber-500" />}
+                  </div>
+                  <span className={cn(
+                    "text-[8px] font-mono leading-tight mt-0.5",
+                    isSelected ? "text-primary-100" : isUnlocked ? "text-[var(--text-tertiary)]" : "text-amber-500 font-semibold"
+                  )}>
+                    {sub}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-1">
+          <button
+            onClick={() => {
+              if (activeMock === 'mock-0') {
+                if (isMock1Unlocked) handleMockSwitch('mock-1');
+                else toast('Mock 1 is locked. Complete all Mock 0 steps including Step 9 Tech Docs first.', 'err');
+              } else if (activeMock === 'mock-1') {
+                if (isMock2Unlocked) handleMockSwitch('mock-2');
+                else handleMockSwitch('mock-0');
+              } else {
+                handleMockSwitch('mock-0');
+              }
+            }}
+            className="w-8 h-8 rounded-lg bg-primary-600 text-white text-[10px] font-black flex items-center justify-center shadow-xs cursor-pointer relative"
+            title={`Active: ${currentMockConfig.name} - Click to switch`}
+          >
+            {activeMock.replace('mock-', 'M')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -44,19 +143,26 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
               <div className="text-sm font-black tracking-tight text-[var(--text-primary)]">
                 Migration Studio
               </div>
+              <div className="font-mono text-[9px] tracking-wider text-[var(--text-tertiary)] uppercase mt-0.5">
+                SuccessFactors Edition
+              </div>
             </div>
           )}
         </div>
 
+        {/* Mock Switcher */}
+        {renderMockSwitcher()}
+
         {/* Steps List */}
-        <div className="flex-1 overflow-y-auto px-3 py-6 space-y-1.5 scrollbar-none">
+        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5 scrollbar-none">
           {!isCollapsed && (
-            <div className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-widest px-3 mb-4 whitespace-nowrap">
-              Pipeline Steps
+            <div className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-widest px-3 mb-3 whitespace-nowrap flex items-center justify-between">
+              <span>{currentMockConfig.name} Stages</span>
+              <span className="text-[9px] font-mono text-[var(--text-tertiary)]">({activeSteps.length})</span>
             </div>
           )}
 
-          {STEPS.map((step, i) => {
+          {activeSteps.map((step, i) => {
             const Icon = step.icon;
             const isActive = activeStep === i;
             const isDone = activeStep > i;
@@ -92,7 +198,16 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
                 >
                   {isDone ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
                 </div>
-                {!isCollapsed && <span className="relative z-10 text-[13px] whitespace-nowrap">{step.label}</span>}
+                {!isCollapsed && (
+                  <div className="relative z-10 flex-1 min-w-0">
+                    <div className="text-[13px] whitespace-nowrap truncate">{step.label}</div>
+                    {step.desc && (
+                      <div className="text-[10px] text-[var(--text-tertiary)] font-normal truncate">
+                        {step.desc}
+                      </div>
+                    )}
+                  </div>
+                )}
               </button>
             );
           })}
@@ -100,9 +215,9 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
 
         {/* Bottom Progress */}
         {!isCollapsed && (
-          <div className="p-5 border-t border-[var(--border)] bg-[var(--bg-tertiary)]/30 shrink-0">
+          <div className="p-4 border-t border-[var(--border)] bg-[var(--bg-tertiary)]/30 shrink-0">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-bold text-[var(--text-secondary)]">Progress</span>
+              <span className="text-[11px] font-bold text-[var(--text-secondary)]">Pipeline Progress</span>
               <span className="text-[11px] font-mono text-primary-600 dark:text-primary-400 font-bold">{Math.round(progress)}%</span>
             </div>
             <div className="h-1.5 w-full bg-[var(--border)] rounded-full overflow-hidden">
@@ -159,7 +274,7 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
                       Migration Studio
                     </div>
                     <div className="text-[10px] font-medium text-[var(--text-tertiary)] mt-1">
-                      SAP DMS Pipeline
+                      SuccessFactors Edition
                     </div>
                   </div>
                 </div>
@@ -172,13 +287,17 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
                 </button>
               </div>
 
+              {/* Mock Switcher */}
+              {renderMockSwitcher(true)}
+
               {/* Steps List */}
               <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1 scrollbar-none">
-                <div className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-widest px-3 mb-2.5">
-                  Pipeline Steps
+                <div className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-widest px-3 mb-2.5 flex items-center justify-between">
+                  <span>{currentMockConfig.name} Stages</span>
+                  <span className="text-[9px] font-mono text-[var(--text-tertiary)]">({activeSteps.length})</span>
                 </div>
 
-                {STEPS.map((step, i) => {
+                {activeSteps.map((step, i) => {
                   const Icon = step.icon;
                   const isActive = activeStep === i;
                   const isDone = activeStep > i;
@@ -207,7 +326,14 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
                       >
                         {isDone ? <Check className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
                       </div>
-                      <span className="text-[13px] font-medium">{step.label}</span>
+                      <div className="relative z-10 flex-1 min-w-0">
+                        <div className="text-[13px] font-medium whitespace-nowrap truncate">{step.label}</div>
+                        {step.desc && (
+                          <div className="text-[10px] text-[var(--text-tertiary)] font-normal truncate mt-0.5">
+                            {step.desc}
+                          </div>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -216,7 +342,7 @@ export function StepNavigation({ mobileOpen = false, onCloseMobile }: StepNaviga
               {/* Bottom Progress */}
               <div className="p-4 border-t border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">Progress</span>
+                  <span className="text-[11px] font-bold text-[var(--text-secondary)]">Pipeline Progress</span>
                   <span className="text-[11px] font-mono text-primary-600 dark:text-primary-400 font-bold">{Math.round(progress)}%</span>
                 </div>
                 <div className="h-1.5 w-full bg-[var(--border)] rounded-full overflow-hidden">

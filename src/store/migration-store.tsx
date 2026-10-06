@@ -2,8 +2,14 @@
 // MIGRATION STORE — Global state (ported from S{})
 // ═══════════════════════════════════════════════════════
 
-import React, { createContext, useContext, useReducer, useEffect, type ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState, type ReactNode } from 'react';
+import localforage from 'localforage';
 
+localforage.config({
+  name: 'SF-DMS',
+  storeName: 'migration_store',
+  description: 'Stores massive data tables for the migration app'
+});
 export interface MappingEntry {
   src: string;
   sap: string;
@@ -25,6 +31,7 @@ export interface ValidationEntry {
 }
 
 export interface MigrationState {
+  activeMock: 'mock-0' | 'mock-1' | 'mock-2';
   projectId: string | null;
   projectName: string | null;
   connUrl: string;
@@ -80,9 +87,13 @@ export interface MigrationState {
   cleansingSummary: any;
   transformSummary: any;
   isTransformedSaved: boolean;
+  techDocId?: string;
+  isTechDocsSaved: boolean;
+  isMock1Completed: boolean;
 }
 
 const defaultState: MigrationState = {
+  activeMock: 'mock-0',
   projectId: null,
   projectName: null,
   connUrl: '',
@@ -138,19 +149,11 @@ const defaultState: MigrationState = {
   cleansingSummary: null,
   transformSummary: null,
   isTransformedSaved: false,
+  isTechDocsSaved: false,
+  isMock1Completed: false,
 };
 
 const getInitialState = (): MigrationState => {
-  if (typeof window !== 'undefined') {
-    try {
-      const saved = sessionStorage.getItem('migration_state');
-      if (saved) {
-        return { ...defaultState, ...JSON.parse(saved) };
-      }
-    } catch (e) {
-      console.warn('Failed to load state from session storage', e);
-    }
-  }
   return defaultState;
 };
 
@@ -180,14 +183,60 @@ const MigrationContext = createContext<{
 
 export function MigrationProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, defaultState, getInitialState);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    try {
-      sessionStorage.setItem('migration_state', JSON.stringify(state));
-    } catch (e) {
-      console.warn('Failed to save state to session storage. It might be too large.', e);
-    }
-  }, [state]);
+    localforage.getItem<Partial<MigrationState>>('migration_state')
+      .then((saved) => {
+        if (saved) {
+          dispatch({ type: 'BATCH_UPDATE', updates: saved });
+        }
+      })
+      .catch((e) => {
+        console.warn('Failed to load state from localforage', e);
+      })
+      .finally(() => {
+        setIsReady(true);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!isReady) return;
+    
+    const timeoutId = setTimeout(() => {
+      // Strip out massive arrays before saving to prevent structured clone freezing
+      const {
+        rawData,
+        uploadedData,
+        extracted,
+        extractedTables,
+        harmonized,
+        validated,
+        cleaned,
+        transformed,
+        dmcRows,
+        ...lightweightState
+      } = state;
+
+      localforage.setItem('migration_state', lightweightState)
+        .catch((e) => {
+          console.warn('Failed to save state to localforage.', e);
+        });
+    }, 500);
+    
+    return () => clearTimeout(timeoutId);
+  }, [state, isReady]);
+
+  if (!isReady) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-slate-900 text-white font-mono text-sm">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+          <span>Loading Migration Workspace...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <MigrationContext.Provider value={{ state, dispatch }}>
@@ -201,3 +250,12 @@ export function useMigration() {
   if (!ctx) throw new Error('useMigration must be used within MigrationProvider');
   return ctx;
 }
+
+export function isMock0Completed(state: MigrationState) {
+  return state.isMappingSaved && state.isDataSaved && state.isHarmonizedSaved && state.isValidatedSaved && state.isCleansedSaved && state.isTransformedSaved;
+}
+
+export function isMock1Completed(state: MigrationState) {
+  return state.isMock1Completed;
+}
+

@@ -15,6 +15,9 @@ import { Step7Transform } from '@/pages/Step7_Transform';
 import { Step8DMCExport } from '@/pages/Step8_DMCExport';
 import { Step9TechDocs } from '@/pages/Step9_TechDocs';
 import { InsertMapping } from '@/pages/InsertMapping';
+import { WrapperDashboard } from '@/pages/WrapperDashboard';
+import { Mock1Agentic } from '@/pages/Mock1_Agentic';
+import { Mock2Options } from '@/pages/Mock2_Options';
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -53,6 +56,10 @@ function AppContent() {
         <Route path="/docs/:id" element={<Step9TechDocs />} />
         <Route path="/docs" element={<Step9TechDocs />} />
         <Route path="/insert" element={<InsertMapping />} />
+        <Route path="/wrapper" element={<WrapperDashboard />} />
+        <Route path="/dashboard" element={<WrapperDashboard />} />
+        <Route path="/mock-1" element={<Mock1Agentic />} />
+        <Route path="/mock-2" element={<Mock2Options />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>

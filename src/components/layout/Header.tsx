@@ -1,8 +1,9 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import { useMigration } from '@/store/migration-store';
-import { Sun, Moon, Settings, Bell, Search, Menu } from 'lucide-react';
+import { Sun, Moon, Settings, Bell, Search, Menu, LayoutDashboard } from 'lucide-react';
 import { STEPS } from '@/config/steps';
+import { useNavigate } from 'react-router-dom';
 
 interface HeaderProps {
   onOpenMobileMenu?: () => void;
@@ -11,6 +12,7 @@ interface HeaderProps {
 export function Header({ onOpenMobileMenu }: HeaderProps = {}) {
   const { state, dispatch } = useMigration();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const toggleTheme = () => {
     const next = state.theme === 'light' ? 'dark' : 'light';
@@ -55,6 +57,10 @@ export function Header({ onOpenMobileMenu }: HeaderProps = {}) {
           <Bell className="w-4 h-4" />
         </button>
 
+        <button onClick={() => navigate('/dashboard')} className="w-9 h-9 flex items-center justify-center rounded-full bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-primary-500 hover:bg-primary-500/10 hover:border-primary-500/30 shadow-sm transition-all" title="Executive Dashboard">
+          <LayoutDashboard className="w-4 h-4" />
+        </button>
+
         <button className="w-9 h-9 flex items-center justify-center rounded-full bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] shadow-sm transition-all" title="Settings">
           <Settings className="w-4 h-4" />
         </button>
@@ -63,7 +69,7 @@ export function Header({ onOpenMobileMenu }: HeaderProps = {}) {
           {state.theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
         </button>
 
-        <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-white text-[12px] font-bold shadow-sm ml-2 cursor-pointer hover:bg-primary-700 transition-colors">
+        <div onClick={() => navigate('/dashboard')} className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-white text-[12px] font-bold shadow-sm ml-2 cursor-pointer hover:bg-primary-700 transition-colors" title="Go to Dashboard">
           NB
         </div>
       </div>

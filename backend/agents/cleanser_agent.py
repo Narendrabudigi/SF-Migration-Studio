@@ -23,398 +23,20 @@ from typing import Any, Callable
 import pandas as pd
 
 from services.cleanser_dynamic_rules import get_relevant_rules_for_cleanser
+from services.dynamic_guardrails import (
+    validate_cleansing_fixer_ast,
+    SAFE_DYNAMIC_BUILTINS,
+)
 
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-COUNTRY_MAP: dict[str, str] = {
-    "INDIA": "IN",
-    "IN": "IN",
-    "UNITED STATES": "US",
-    "USA": "US",
-    "US": "US",
-    "UNITED KINGDOM": "GB",
-    "UK": "GB",
-    "GB": "GB",
-    "GERMANY": "DE",
-    "DE": "DE",
-    "FRANCE": "FR",
-    "FR": "FR",
-    "AUSTRALIA": "AU",
-    "AU": "AU",
-    "CANADA": "CA",
-    "CA": "CA",
-    "JAPAN": "JP",
-    "JP": "JP",
-    "CHINA": "CN",
-    "CN": "CN",
-    "SINGAPORE": "SG",
-    "SG": "SG",
-    "UAE": "AE",
-    "UNITED ARAB EMIRATES": "AE",
-    "AE": "AE",
-    "NETHERLANDS": "NL",
-    "NL": "NL",
-    "SWEDEN": "SE",
-    "SE": "SE",
-    "SWITZERLAND": "CH",
-    "CH": "CH",
-    "ITALY": "IT",
-    "IT": "IT",
-    "SPAIN": "ES",
-    "ES": "ES",
-    "BRAZIL": "BR",
-    "BR": "BR",
-    "SOUTH KOREA": "KR",
-    "KR": "KR",
-}
-
-CURR_MAP: dict[str, str] = {
-    "INDIAN RUPEE": "INR",
-    "RUPEE": "INR",
-    "RUPEES": "INR",
-    "RS": "INR",
-    "INR": "INR",
-    "US DOLLAR": "USD",
-    "DOLLAR": "USD",
-    "USD": "USD",
-    "EURO": "EUR",
-    "EUROS": "EUR",
-    "EUR": "EUR",
-    "POUND": "GBP",
-    "STERLING": "GBP",
-    "GBP": "GBP",
-    "YEN": "JPY",
-    "JPY": "JPY",
-    "YUAN": "CNY",
-    "RMB": "CNY",
-    "CNY": "CNY",
-    "DIRHAM": "AED",
-    "AED": "AED",
-    "RIYAL": "SAR",
-    "SAR": "SAR",
-    "FRANC": "CHF",
-    "CHF": "CHF",
-    "AUS DOLLAR": "AUD",
-    "AUD": "AUD",
-    "CANADIAN DOLLAR": "CAD",
-    "CAD": "CAD",
-    "SGD": "SGD",
-}
-
-PAYMENT_TERM_MAP: dict[str, str] = {
-    "NT30": "NT30",
-    "NET30": "NT30",
-    "NET 30": "NT30",
-    "NT45": "NT45",
-}
-
-MATERIAL_TYPE_MAP: dict[str, str] = {
-    "ROH": "ROH",
-    "RAW MATERIAL": "ROH",
-    "RAW": "ROH",
-    "HALB": "HALB",
-    "SEMI-FINISHED": "HALB",
-    "SEMI FINISHED": "HALB",
-    "FERT": "FERT",
-    "FINISHED GOODS": "FERT",
-    "FINISHED": "FERT",
-    "HAWA": "HAWA",
-    "TRADING GOODS": "HAWA",
-    "TRADING": "HAWA",
-}
-
-FIELD_LENGTHS: dict[str, int] = {
-    "KUNNR": 10,
-    "LIFNR": 10,
-    "KTOKD": 4,
-    "KTOKK": 4,
-    "NAME1": 35,
-    "NAME2": 35,
-    "LAND1": 3,
-    "ORT01": 35,
-    "PSTLZ": 10,
-    "REGIO": 3,
-    "STRAS": 35,
-    "TELF1": 16,
-    "SMTP_ADDR": 241,
-    "BUKRS": 4,
-    "VKORG": 4,
-    "EKORG": 4,
-    "VTWEG": 2,
-    "SPART": 2,
-    "WAERS": 5,
-    "ZTERM": 4,
-    "STCD1": 16,
-    "STCD2": 16,
-    "TAXKD": 1,
-    "ERDAT": 8,
-    "MATNR": 40,
-    "MBRSH": 1,
-    "MTART": 4,
-    "MAKTX": 40,
-    "MEINS": 3,
-    "MATKL": 9,
-    "WERKS": 4,
-    "LGORT": 4,
-    "GEWEI": 3,
-    "EKGRP": 3,
-    "BKLAS": 4,
-}
-
-IDENTIFIER_LENGTHS: dict[str, int] = {
-    "KUNNR": 10,
-    "LIFNR": 10,
-}
-
-FIELD_DEFAULTS: dict[str, str] = {}
-
-COUNTRY_FIELD_NAMES = {"LAND1", "COUNTRY", "COUNTRY_CODE", "BANKS"}
-CURRENCY_FIELD_NAMES = {"WAERS", "CURRENCY", "CURRENCY_CODE", "CURR"}
-PAYMENT_TERM_FIELD_NAMES = {"ZTERM", "PAYMENT_TERMS", "PAY_TERMS"}
-MATERIAL_TYPE_FIELD_NAMES = {"MTART", "MATERIAL_TYPE", "MAT_TYPE"}
-CODE_FIELD_NAMES = {
-    "KTOKD",
-    "KTOKK",
-    "LAND1",
-    "REGIO",
-    "BUKRS",
-    "VKORG",
-    "EKORG",
-    "WERKS",
-    "VTWEG",
-    "SPART",
-    "WAERS",
-    "ZTERM",
-    "TAXKD",
-    "MBRSH",
-    "MTART",
-    "MEINS",
-    "MATKL",
-    "LGORT",
-    "GEWEI",
-    "EKGRP",
-    "BKLAS",
-}
-
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-EMAIL_DOMAINS = {
-    "gmail": "gmail.com",
-    "yahoo": "yahoo.com",
-    "outlook": "outlook.com",
-    "hotmail": "hotmail.com",
-    "icloud": "icloud.com",
-    "rediffmail": "rediffmail.com",
-}
-UNSAFE_DEFAULT_FIELDS = {
-    "KUNNR",
-    "LIFNR",
-    "BUKRS",
-    "VKORG",
-    "EKORG",
-    "WERKS",
-    "KTOKD",
-    "KTOKK",
-    "ERDAT",
-    "AEDAT",
-}
-
-# Configuration
-# =============================================================================
-
-COUNTRY_MAP: dict[str, str] = {
-    "INDIA": "IN",
-    "IN": "IN",
-    "UNITED STATES": "US",
-    "USA": "US",
-    "US": "US",
-    "UNITED KINGDOM": "GB",
-    "UK": "GB",
-    "GB": "GB",
-    "GERMANY": "DE",
-    "DE": "DE",
-    "FRANCE": "FR",
-    "FR": "FR",
-    "AUSTRALIA": "AU",
-    "AU": "AU",
-    "CANADA": "CA",
-    "CA": "CA",
-    "JAPAN": "JP",
-    "JP": "JP",
-    "CHINA": "CN",
-    "CN": "CN",
-    "SINGAPORE": "SG",
-    "SG": "SG",
-    "UAE": "AE",
-    "UNITED ARAB EMIRATES": "AE",
-    "AE": "AE",
-    "NETHERLANDS": "NL",
-    "NL": "NL",
-    "SWEDEN": "SE",
-    "SE": "SE",
-    "SWITZERLAND": "CH",
-    "CH": "CH",
-    "ITALY": "IT",
-    "IT": "IT",
-    "SPAIN": "ES",
-    "ES": "ES",
-    "BRAZIL": "BR",
-    "BR": "BR",
-    "SOUTH KOREA": "KR",
-    "KR": "KR",
-}
-
-CURR_MAP: dict[str, str] = {
-    "INDIAN RUPEE": "INR",
-    "RUPEE": "INR",
-    "RUPEES": "INR",
-    "RS": "INR",
-    "INR": "INR",
-    "US DOLLAR": "USD",
-    "DOLLAR": "USD",
-    "USD": "USD",
-    "EURO": "EUR",
-    "EUROS": "EUR",
-    "EUR": "EUR",
-    "POUND": "GBP",
-    "STERLING": "GBP",
-    "GBP": "GBP",
-    "YEN": "JPY",
-    "JPY": "JPY",
-    "YUAN": "CNY",
-    "RMB": "CNY",
-    "CNY": "CNY",
-    "DIRHAM": "AED",
-    "AED": "AED",
-    "RIYAL": "SAR",
-    "SAR": "SAR",
-    "FRANC": "CHF",
-    "CHF": "CHF",
-    "AUS DOLLAR": "AUD",
-    "AUD": "AUD",
-    "CANADIAN DOLLAR": "CAD",
-    "CAD": "CAD",
-    "SGD": "SGD",
-}
-
-PAYMENT_TERM_MAP: dict[str, str] = {
-    "NT30": "NT30",
-    "NET30": "NT30",
-    "NET 30": "NT30",
-    "NT45": "NT45",
-}
-
-MATERIAL_TYPE_MAP: dict[str, str] = {
-    "ROH": "ROH",
-    "RAW MATERIAL": "ROH",
-    "RAW": "ROH",
-    "HALB": "HALB",
-    "SEMI-FINISHED": "HALB",
-    "SEMI FINISHED": "HALB",
-    "FERT": "FERT",
-    "FINISHED GOODS": "FERT",
-    "FINISHED": "FERT",
-    "HAWA": "HAWA",
-    "TRADING GOODS": "HAWA",
-    "TRADING": "HAWA",
-}
-
-FIELD_LENGTHS: dict[str, int] = {
-    "KUNNR": 10,
-    "LIFNR": 10,
-    "KTOKD": 4,
-    "KTOKK": 4,
-    "NAME1": 35,
-    "NAME2": 35,
-    "LAND1": 3,
-    "ORT01": 35,
-    "PSTLZ": 10,
-    "REGIO": 3,
-    "STRAS": 35,
-    "TELF1": 16,
-    "SMTP_ADDR": 241,
-    "BUKRS": 4,
-    "VKORG": 4,
-    "EKORG": 4,
-    "VTWEG": 2,
-    "SPART": 2,
-    "WAERS": 5,
-    "ZTERM": 4,
-    "STCD1": 16,
-    "STCD2": 16,
-    "TAXKD": 1,
-    "ERDAT": 8,
-    "MATNR": 40,
-    "MBRSH": 1,
-    "MTART": 4,
-    "MAKTX": 40,
-    "MEINS": 3,
-    "MATKL": 9,
-    "WERKS": 4,
-    "LGORT": 4,
-    "GEWEI": 3,
-    "EKGRP": 3,
-    "BKLAS": 4,
-}
-
-IDENTIFIER_LENGTHS: dict[str, int] = {
-    "KUNNR": 10,
-    "LIFNR": 10,
-}
-
-FIELD_DEFAULTS: dict[str, str] = {}
-
-COUNTRY_FIELD_NAMES = {"LAND1", "COUNTRY", "COUNTRY_CODE", "BANKS"}
-CURRENCY_FIELD_NAMES = {"WAERS", "CURRENCY", "CURRENCY_CODE", "CURR"}
-PAYMENT_TERM_FIELD_NAMES = {"ZTERM", "PAYMENT_TERMS", "PAY_TERMS"}
-MATERIAL_TYPE_FIELD_NAMES = {"MTART", "MATERIAL_TYPE", "MAT_TYPE"}
-CODE_FIELD_NAMES = {
-    "KTOKD",
-    "KTOKK",
-    "LAND1",
-    "REGIO",
-    "BUKRS",
-    "VKORG",
-    "EKORG",
-    "WERKS",
-    "VTWEG",
-    "SPART",
-    "WAERS",
-    "ZTERM",
-    "TAXKD",
-    "MBRSH",
-    "MTART",
-    "MEINS",
-    "MATKL",
-    "LGORT",
-    "GEWEI",
-    "EKGRP",
-    "BKLAS",
-}
-
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-EMAIL_DOMAINS = {
-    "gmail": "gmail.com",
-    "yahoo": "yahoo.com",
-    "outlook": "outlook.com",
-    "hotmail": "hotmail.com",
-    "icloud": "icloud.com",
-    "rediffmail": "rediffmail.com",
-}
-UNSAFE_DEFAULT_FIELDS = {
-    "KUNNR",
-    "LIFNR",
-    "BUKRS",
-    "VKORG",
-    "EKORG",
-    "WERKS",
-    "KTOKD",
-    "KTOKK",
-    "ERDAT",
-    "AEDAT",
-}
+from constants import (
+    COUNTRY_MAP, CURR_MAP, COUNTRY_FIELD_NAMES, CURRENCY_FIELD_NAMES,
+    PAYMENT_TERM_FIELD_NAMES, EMAIL_RE, EMAIL_DOMAINS
+)
 
 
 # =============================================================================
@@ -743,24 +365,8 @@ def _iter_existing_fields(df: pd.DataFrame, configured_fields: set[str]) -> list
     return [col for col in df.columns if _field_key(col) in configured]
 
 
-def _default_for_field(field_name: str) -> str | None:
-    key = _field_key(field_name)
-    if key in UNSAFE_DEFAULT_FIELDS or key in IDENTIFIER_LENGTHS:
-        return None
-    if key in FIELD_DEFAULTS:
-        return FIELD_DEFAULTS[key]
+def _default_for_field(field_name: str) -> Any:
     return None
-
-
-def _normalize_identifier(value: Any, field_name: str, row_number: int) -> str | None:
-    key = _field_key(field_name)
-    length = IDENTIFIER_LENGTHS.get(key, FIELD_LENGTHS.get(key, 10))
-    digits = re.sub(r"\D", "", _stringify(value))
-    if not digits:
-        return None
-    if len(digits) > length:
-        digits = digits[-length:]
-    return digits.zfill(length)
 
 
 def _normalize_country(value: Any) -> str | None:
@@ -783,44 +389,6 @@ def _normalize_currency(value: Any) -> str | None:
     return None
 
 
-def _normalize_payment_term(value: Any) -> str | None:
-    raw = _stringify(value).strip().upper()
-    if not raw:
-        return None
-    key = _clean_key(raw)
-    if key in PAYMENT_TERM_MAP:
-        return PAYMENT_TERM_MAP[key]
-    
-    # 1. Already valid SAP term format e.g. NT30, NT45, NT60, NT90
-    if re.fullmatch(r"NT\d{2}", raw):
-        return raw
-
-    # 2. NETXX or NXX e.g. NET30, NET 30, N30, NET90, N90
-    m_net = re.fullmatch(r"(?:NET|N)\s*(\d{1,2})", raw)
-    if m_net:
-        days = m_net.group(1).zfill(2)
-        return f"NT{days}"
-
-    # 3. Pure digits e.g. "90", "0090", "30", "45", "60"
-    digits = re.sub(r"\D", "", raw)
-    if digits:
-        try:
-            val_int = int(digits)
-            if 0 <= val_int <= 99:
-                return f"NT{str(val_int).zfill(2)}"
-        except ValueError:
-            pass
-
-    return None
-
-
-def _normalize_material_type(value: Any) -> str | None:
-    key = _clean_key(value)
-    if key in MATERIAL_TYPE_MAP:
-        return MATERIAL_TYPE_MAP[key]
-    if key in {"ROH", "FERT", "HALB", "HAWA"}:
-        return key
-    return None
 
 
 def _normalize_date(value: Any) -> str | None:
@@ -1047,37 +615,6 @@ def fix_date_yyyymmdd_format(
     _warn_skipped(summary, rule_code, issue["row"], field_name, "date value does not match YYYYMMDD 8-digit format")
 
 
-def fix_field_length(
-    df: pd.DataFrame,
-    issue: dict[str, Any],
-    summary: CleaningSummary,
-    rule_code: str,
-) -> None:
-    field_name = issue["field"]
-    idx = _row_index(issue["row"])
-    max_length = FIELD_LENGTHS.get(_field_key(field_name))
-    if max_length is None:
-        summary.warnings.append(f"No max length configured for {field_name}; skipped row {issue['row']}.")
-        return
-    value = _get_value(df, idx, field_name)
-    if len(value) > max_length:
-        _set_value(df, idx, field_name, value[:max_length], summary, "validation", rule_code)
-
-
-def fix_payment_terms_format(
-    df: pd.DataFrame,
-    issue: dict[str, Any],
-    summary: CleaningSummary,
-    rule_code: str,
-) -> None:
-    field_name = issue["field"]
-    idx = _row_index(issue["row"])
-    value = _get_value(df, idx, field_name)
-    normalized = _normalize_payment_term(value)
-    if normalized is not None:
-        _set_value(df, idx, field_name, normalized, summary, "validation", rule_code)
-    else:
-        _warn_skipped(summary, rule_code, issue["row"], field_name, f"payment term value '{value}' cannot be auto-formatted to SAP key")
 
 
 # =============================================================================
@@ -1115,52 +652,6 @@ def apply_currency_to_iso(df: pd.DataFrame, summary: CleaningSummary, rule_code:
                 _set_value(df, idx, field_name, normalized, summary, "cleanser", rule_code)
 
 
-def apply_payment_terms_to_sf(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
-    for field_name in _iter_existing_fields(df, PAYMENT_TERM_FIELD_NAMES):
-        for idx in df.index:
-            value = _get_value(df, idx, field_name)
-            if not _is_empty(value):
-                normalized = _normalize_payment_term(value)
-                if normalized is None:
-                    _warn_skipped(summary, rule_code, idx + 1, field_name, "payment term value is unsupported")
-                    continue
-                _set_value(df, idx, field_name, normalized, summary, "cleanser", rule_code)
-
-apply_payment_terms_to_sap = apply_payment_terms_to_sf
-
-
-def apply_material_type_to_sf(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
-    for field_name in _iter_existing_fields(df, MATERIAL_TYPE_FIELD_NAMES):
-        for idx in df.index:
-            value = _get_value(df, idx, field_name)
-            if not _is_empty(value):
-                normalized = _normalize_material_type(value)
-                if normalized is None:
-                    _warn_skipped(summary, rule_code, idx + 1, field_name, "material type value is unsupported")
-                    continue
-                _set_value(df, idx, field_name, normalized, summary, "cleanser", rule_code)
-
-apply_material_type_to_sap = apply_material_type_to_sf
-
-
-def apply_pad_numeric_identifier(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
-    for field_name in _iter_existing_fields(df, set(IDENTIFIER_LENGTHS)):
-        for idx in df.index:
-            value = _get_value(df, idx, field_name)
-            if not _is_empty(value):
-                normalized = _normalize_identifier(value, field_name, idx + 1)
-                if normalized is None:
-                    _warn_skipped(summary, rule_code, idx + 1, field_name, "identifier has no recoverable numeric content")
-                    continue
-                _set_value(df, idx, field_name, normalized, summary, "cleanser", rule_code)
-
-
-def apply_uppercase_code_fields(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
-    for field_name in _iter_existing_fields(df, CODE_FIELD_NAMES):
-        for idx in df.index:
-            value = _get_value(df, idx, field_name)
-            if not _is_empty(value):
-                _set_value(df, idx, field_name, value.upper(), summary, "cleanser", rule_code)
 
 
 def apply_clean_tax_number(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
@@ -1173,15 +664,6 @@ def apply_clean_tax_number(df: pd.DataFrame, summary: CleaningSummary, rule_code
                 _set_value(df, idx, field_name, cleaned, summary, "cleanser", rule_code)
 
 
-def apply_truncate_overlength(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
-    for field_name in df.columns:
-        max_length = FIELD_LENGTHS.get(_field_key(field_name))
-        if max_length is None:
-            continue
-        for idx in df.index:
-            value = _get_value(df, idx, field_name)
-            if len(value) > max_length:
-                _set_value(df, idx, field_name, value[:max_length], summary, "cleanser", rule_code)
 
 
 def apply_fill_empty_fields(df: pd.DataFrame, summary: CleaningSummary, rule_code: str, params: dict[str, Any] | None = None) -> None:
@@ -1236,8 +718,6 @@ VALIDATION_FIXERS: dict[str, ValidationFixer] = {
     "VAL_CURRENCY_CODE_FORMAT": fix_currency_code_format,
     "VAL_EMAIL_ADDRESS_FORMAT": fix_email_address_format,
     "VAL_DATE_YYYYMMDD_FORMAT": fix_date_yyyymmdd_format,
-    "VAL_FIELD_LENGTH": fix_field_length,
-    "VAL_PAYMENT_TERMS_FORMAT": fix_payment_terms_format,
     "VAL_GENDER_CODE": fix_gender_code,
     "VAL_GENDER_FORMAT": fix_gender_code,
 }
@@ -1252,8 +732,6 @@ VALIDATION_FIXERS.update({
     "CURRENCY_ISO": fix_currency_code_format,
     "EMAIL_FORMAT": fix_email_address_format,
     "DATE_FORMAT": fix_date_yyyymmdd_format,
-    "FIELD_LENGTH": fix_field_length,
-    "PAYMENT_TERMS": fix_payment_terms_format,
     "GENDER_CODE": fix_gender_code,
     "GENDER_FORMAT": fix_gender_code,
     "Gender Format": fix_gender_code,
@@ -1262,14 +740,7 @@ VALIDATION_FIXERS.update({
 
 CLEANSER_RULES: list[tuple[str, CleanserRule]] = [
     ("CL_TRIM_WHITESPACE", apply_trim_whitespace),
-    ("CL_PAYMENT_TERMS_TO_SF", apply_payment_terms_to_sf),
-    ("CL_MATERIAL_TYPE_TO_SF", apply_material_type_to_sf),
-    ("CL_PAYMENT_TERMS_TO_SAP", apply_payment_terms_to_sap),
-    ("CL_MATERIAL_TYPE_TO_SAP", apply_material_type_to_sap),
-    ("CL_PAD_NUMERIC_IDENTIFIER", apply_pad_numeric_identifier),
-    ("CL_UPPERCASE_CODE_FIELDS", apply_uppercase_code_fields),
     ("CL_CLEAN_TAX_NUMBER", apply_clean_tax_number),
-    ("CL_TRUNCATE_OVERLENGTH", apply_truncate_overlength),
     ("CL_FILL_EMPTY_FIELDS", apply_fill_empty_fields),
 ]
 
@@ -1281,14 +752,7 @@ CLEANSER_RULES: list[tuple[str, CleanserRule]] = [
 SEMANTIC_CLEANSER_RULE_FIELDS: dict[str, set[str]] = {
     "CL_COUNTRY_TO_ISO": COUNTRY_FIELD_NAMES,
     "CL_CURRENCY_TO_ISO": CURRENCY_FIELD_NAMES,
-    "CL_PAYMENT_TERMS_TO_SF": PAYMENT_TERM_FIELD_NAMES,
-    "CL_MATERIAL_TYPE_TO_SF": MATERIAL_TYPE_FIELD_NAMES,
-    "CL_PAYMENT_TERMS_TO_SAP": PAYMENT_TERM_FIELD_NAMES,
-    "CL_MATERIAL_TYPE_TO_SAP": MATERIAL_TYPE_FIELD_NAMES,
-    "CL_PAD_NUMERIC_IDENTIFIER": set(IDENTIFIER_LENGTHS),
-    "CL_UPPERCASE_CODE_FIELDS": CODE_FIELD_NAMES,
     "CL_CLEAN_TAX_NUMBER": {"STCD1", "STCD2", "TAX_NUMBER", "PAN", "GST"},
-    "CL_TRUNCATE_OVERLENGTH": set(FIELD_LENGTHS),
 }
 
 
@@ -1758,49 +1222,7 @@ def _extract_dynamic_fixer_code(raw_response: str) -> str:
 
 
 def validate_dynamic_fixer_code(code: str) -> tuple[bool, str]:
-    """
-    Validate generated Python without executing it.
-
-    The only accepted contract is:
-        def fix_dynamic_rule(df, issue_rows):
-            ...
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        return False, f"Python syntax error: {exc}"
-
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    if len(functions) != 1 or functions[0].name != "fix_dynamic_rule":
-        return False, "Code must define exactly one function named fix_dynamic_rule."
-
-    function = functions[0]
-    arg_names = [arg.arg for arg in function.args.args]
-    if arg_names != ["df", "issue_rows"]:
-        return False, "fix_dynamic_rule must accept exactly df and issue_rows."
-    if function.decorator_list:
-        return False, "Decorators are not allowed."
-    if not any(isinstance(node, ast.Return) for node in ast.walk(function)):
-        return False, "fix_dynamic_rule must return a dataframe/result."
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            return False, "Imports are not allowed in dynamic fixer code."
-        if isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef, ast.Global, ast.Nonlocal, ast.Delete, ast.With, ast.AsyncWith)):
-            return False, f"{type(node).__name__} is not allowed in dynamic fixer code."
-        if isinstance(node, ast.Name):
-            if node.id.startswith("__") or node.id in FORBIDDEN_DYNAMIC_FIXER_NAMES:
-                return False, f"Forbidden name used: {node.id}"
-        if isinstance(node, ast.Attribute):
-            if node.attr.startswith("__"):
-                return False, f"Forbidden attribute used: {node.attr}"
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_DYNAMIC_FIXER_CALLS:
-                return False, f"Forbidden call used: {node.func.id}"
-            if isinstance(node.func, ast.Attribute) and node.func.attr in FORBIDDEN_DYNAMIC_FIXER_METHODS:
-                return False, f"Forbidden method call used: {node.func.attr}"
-
-    return True, "ok"
+    return validate_cleansing_fixer_ast(code)
 
 
 def _build_dynamic_fixer_prompts(rule_item: dict[str, Any], issue_group: dict[str, Any]) -> tuple[str, str]:
@@ -1976,34 +1398,6 @@ def generate_dynamic_fixers_from_plan(
 # Dynamic Fixer Execution
 # =============================================================================
 
-SAFE_DYNAMIC_BUILTINS = {
-    "abs": abs,
-    "all": all,
-    "any": any,
-    "bool": bool,
-    "dict": dict,
-    "enumerate": enumerate,
-    "float": float,
-    "int": int,
-    "isinstance": isinstance,
-    "len": len,
-    "list": list,
-    "max": max,
-    "min": min,
-    "range": range,
-    "set": set,
-    "str": str,
-    "sum": sum,
-    "tuple": tuple,
-    "zip": zip,
-    "print": print,
-    "Exception": Exception,
-    "ValueError": ValueError,
-    "TypeError": TypeError,
-    "KeyError": KeyError,
-    "IndexError": IndexError,
-    "AttributeError": AttributeError,
-}
 
 
 def _resolve_target_columns(df: pd.DataFrame, field_name: str, issues: list[dict[str, Any]] | None = None, description: str = "") -> list[str]:

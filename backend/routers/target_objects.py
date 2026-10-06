@@ -782,3 +782,15 @@ def confirm_import_target_object(req: ConfirmImportRequest):
     except Exception as e:
         logger.error(f"Failed to confirm target object import: {e}")
         raise HTTPException(status_code=500, detail=f"Database import failed: {str(e)}")
+
+
+@router.get("/list")
+def list_target_objects():
+    client = supabase_service.get_client()
+    try:
+        res = client.table("sf_objects").select("id, name, description").order("name").execute()
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Failed to list target objects: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
